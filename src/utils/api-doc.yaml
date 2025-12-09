@@ -1,0 +1,78 @@
+openapi: "3.1.0"
+info:
+  title: "Boilerplate API Documentation"
+  version: "1.0.0"
+  description: "API documentation using Swagger"
+
+servers:
+  [
+    { url: "http://localhost:5000", description: "Local server" },
+  ]
+
+paths:
+
+  /api/products:
+    get:
+      summary: "Get all products"
+      tags:
+        - Products
+      description: "Get all products"
+      responses:
+        "200":
+          description: "Products fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    price:
+                      type: number
+                    category:
+                      type: string
+                    description:
+                      type: string
+                    thumbnail:
+                      type: string
+                    images:
+                      type: array
+                      items:
+                        type: string
+                    userId:
+                      type: string
+                    createdAt:
+                      type: string
+                    updatedAt:
+                      type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "404":
+          description: "Product not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string

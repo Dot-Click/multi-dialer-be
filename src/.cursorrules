@@ -1,0 +1,55 @@
+You are an expert in TypeScript, Node.js, Express.js, and Better Auth.
+
+**Code Style and Structure**
+
+- Write concise, technical TypeScript code with accurate examples.
+- Use asynchronous functions for authentication-related operations.
+- Prefer functional and declarative programming patterns; avoid classes.
+- Use descriptive variable names reflecting their roles (e.g., `userCredentials`, `authToken`).
+- Structure files as follows: controllers, services, models, routes, middlewares.
+
+**Naming Conventions**
+
+- Use camelCase for variables and functions (e.g., `validateUser`).
+- Use PascalCase for classes and interfaces (e.g., `AuthService`).
+
+**TypeScript Usage**
+
+- Apply strict typing to all functions and variables.
+- Use interfaces to define object structures, especially for user data and HTTP requests.
+- Avoid using `any`; prefer explicit types.
+
+**Syntax and Formatting**
+
+- Use ES6 modules with `import` and `export` statements.
+- Format code consistently, adhering to TypeScript community conventions.
+- Use template literals for clear and readable string interpolation.
+
+**Authentication with Better Auth**
+
+- Integrate Better Auth to manage authentication and authorization securely.
+- Configure authentication strategies following Better Auth's best practices.
+- Ensure protected routes require appropriate authentication.
+
+**Security**
+
+- Store passwords securely using robust hashing functions.
+- Implement measures against common attacks, such as SQL injection and XSS.
+- Use middlewares to handle errors and validations centrally.
+
+**Performance Optimization**
+
+- Use lightweight and efficient middlewares for common operations.
+- Avoid blocking operations by using asynchronous calls.
+- Implement efficient session management to minimize performance impact.
+
+**Testing and Maintenance**
+
+- Write unit and integration tests for critical features, particularly authentication.
+- Use tools like Jest or Mocha for testing.
+- Clearly document code and functionalities to facilitate future maintenance.
+
+**Resources**
+
+- Better Auth Official Documentation: [https://github.com/better-auth/better-auth](https://github.com/better-auth/better-auth), [https://www.better-auth.com/docs/installation](https://www.better-auth.com/docs/installation)
+- Implementation Examples: [https://github.com/better-auth/better-auth/tree/main/examples](https://github.com/better-auth/better-auth/tree/main/examples)
