@@ -5,7 +5,7 @@ import { insertScriptInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateScriptSchema } from "../../../zod/script.schema";
 
-export const getAllScriptsOfSpecificUser = async (req: Request, res: Response) => {
+export const getAllScriptsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId } = req.user!;
     
@@ -15,7 +15,8 @@ export const getAllScriptsOfSpecificUser = async (req: Request, res: Response) =
     });
 
     if (!library) {
-      return errorResponse(res, "Library not found for user", 404);
+      errorResponse(res, "Library not found for user", 404);
+      return;
     }
 
     // Get all scripts from user's library
@@ -37,16 +38,16 @@ export const getAllScriptsOfSpecificUser = async (req: Request, res: Response) =
         },
       },
     });
-    return successResponse(res, 200, "Scripts fetched", scripts);
+    successResponse(res, 200, "Scripts fetched", scripts);
   } catch (error: any) {
-    return errorResponse(res, error.message, 500);
+    errorResponse(res, error.message, 500);
   }
 };
 
 
 
 
-export const getAllScriptsOfAllUsers = async (req: Request, res: Response) => {
+export const getAllScriptsOfAllUsers = async (req: Request, res: Response): Promise<void> => {
   try {
     // Get all scripts from all users
     const scripts = await prisma.script.findMany({
@@ -65,15 +66,15 @@ export const getAllScriptsOfAllUsers = async (req: Request, res: Response) => {
         },
       },
     });
-    return successResponse(res, 200, "All scripts fetched", scripts);
+    successResponse(res, 200, "All scripts fetched", scripts);
   } catch (error: any) {
-    return errorResponse(res, error.message, 500);
+    errorResponse(res, error.message, 500);
   }
 };
 
 
 
-export const getScriptById = async (req: Request, res: Response) => {
+export const getScriptById = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { id: userId } = req.user!;
@@ -84,7 +85,8 @@ export const getScriptById = async (req: Request, res: Response) => {
     });
 
     if (!library) {
-      return errorResponse(res, "Library not found for user", 404);
+      errorResponse(res, "Library not found for user", 404);
+      return;
     }
 
     const script = await prisma.script.findFirst({
@@ -108,18 +110,19 @@ export const getScriptById = async (req: Request, res: Response) => {
     });
     
     if (!script) {
-      return errorResponse(res, "Script not found", 404);
+      errorResponse(res, "Script not found", 404);
+      return;
     }
-    return successResponse(res, 200, "Script fetched", script);
+    successResponse(res, 200, "Script fetched", script);
   } catch (error: any) {
-    return errorResponse(res, error.message, 500);
+    errorResponse(res, error.message, 500);
   }
 };
 
 
 
 
-export const createScript = async (req: Request, res: Response) => {
+export const createScript = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId } = req.user!;
 
@@ -129,7 +132,8 @@ export const createScript = async (req: Request, res: Response) => {
     });
 
     if (!userExists) {
-      return errorResponse(res, "User not found", 404);
+      errorResponse(res, "User not found", 404);
+      return;
     }
       
     const payload = { ...req.body };
@@ -153,16 +157,16 @@ export const createScript = async (req: Request, res: Response) => {
       },
     });
     
-    return successResponse(res, 201, "Script created", populatedScript);
+    successResponse(res, 201, "Script created", populatedScript);
     
   } catch (error: any) {
-    return errorResponse(res, error.message || error, 500);
+    errorResponse(res, error.message || error, 500);
   }
 };
 
 
 
-export const updateScript = async (req: Request, res: Response) => {
+export const updateScript = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { id: userId } = req.user!;
@@ -185,7 +189,8 @@ export const updateScript = async (req: Request, res: Response) => {
 
     // If script doesn't exist, return error
     if (!script) {
-      return errorResponse(res, "Script not found", 404);
+      errorResponse(res, "Script not found", 404);
+      return;
     }
 
     // Get user's library
@@ -194,12 +199,14 @@ export const updateScript = async (req: Request, res: Response) => {
     });
 
     if (!library) {
-      return errorResponse(res, "Library not found for user", 404);
+      errorResponse(res, "Library not found for user", 404);
+      return;
     }
 
     // Check if script belongs to the user's library
     if (script.libraryId !== library.id) {
-      return errorResponse(res, "you can only update your script not other script", 403);
+      errorResponse(res, "you can only update your script not other script", 403);
+      return;
     }
 
     // Validate payload with Zod
@@ -207,7 +214,8 @@ export const updateScript = async (req: Request, res: Response) => {
     const result = await validateData(updateScriptSchema, payload) as any;
 
     if (!('data' in result)) {
-      return errorResponse(res, "Validation error", 400);
+      errorResponse(res, "Validation error", 400);
+      return;
     }
 
     const data = result.data;
@@ -233,14 +241,14 @@ export const updateScript = async (req: Request, res: Response) => {
       },
     });
 
-    return successResponse(res, 200, "Script updated", updatedScript);
+    successResponse(res, 200, "Script updated", updatedScript);
     
   } catch (error: any) {
-    return errorResponse(res, error.message, 500);
+    errorResponse(res, error.message, 500);
   }
 };
 
-export const deleteScript = async (req: Request, res: Response) => {
+export const deleteScript = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { id: userId } = req.user!;
@@ -263,7 +271,8 @@ export const deleteScript = async (req: Request, res: Response) => {
 
     // If script doesn't exist, return error
     if (!script) {
-      return errorResponse(res, "Script not found", 404);
+      errorResponse(res, "Script not found", 404);
+      return;
     }
 
     // Get user's library
@@ -272,12 +281,14 @@ export const deleteScript = async (req: Request, res: Response) => {
     });
 
     if (!library) {
-      return errorResponse(res, "Library not found for user", 404);
+      errorResponse(res, "Library not found for user", 404);
+      return;
     }
 
     // Check if script belongs to the user's library
     if (script.libraryId !== library.id) {
-      return errorResponse(res, "you can only delete your script not other script", 403);
+      errorResponse(res, "you can only delete your script not other script", 403);
+      return;
     }
 
     // Delete the script
@@ -285,9 +296,9 @@ export const deleteScript = async (req: Request, res: Response) => {
       where: { id },
     });
 
-    return successResponse(res, 200, "Script deleted successfully", null);
+    successResponse(res, 200, "Script deleted successfully", null);
     
   } catch (error: any) {
-    return errorResponse(res, error.message, 500);
+    errorResponse(res, error.message, 500);
   }
 };

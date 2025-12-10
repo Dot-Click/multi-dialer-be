@@ -45,6 +45,13 @@ enum SubscriptionStatus {
   PENDING
 }
 
+enum TeamAccess {
+  ALL
+  SALES
+  SUPPORT
+  PROJECT_MANAGER
+}
+
 model User {
   id            String     @id @default(uuid())
   fullName      String?                    
@@ -183,7 +190,30 @@ model Library {
   @@map("libraries")
 }
 
+model Script {
+  id          String   @id @default(uuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
 
+  scriptName  String   @unique
+  scriptText  String
+  status      Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model SMSTemplate {
+  id          String   @id @default(uuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  templateName  String   @unique
+  content  String
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
 
 model Report_Analytic {
   id        String   @id @default(uuid())
@@ -211,6 +241,8 @@ model System_Setting {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  numberSettings NumberSettings[]
 
   @@map("system_settings")
 }
@@ -320,29 +352,42 @@ model PlanFeature {
 
 
 
-model Script {
-  id          String   @id @default(uuid())
-  libraryId   String
-  library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-
-  scriptName  String   @unique
-  scriptText  String
-  status      Boolean  @default(true)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
 
 
+model NumberSettings {
+  id                          String   @id @default(cuid())
+  label                       String
 
-model SMSTemplate {
-  id          String   @id @default(uuid())
-  libraryId   String
-  library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  // Array for which teams can use this number
+  availableTo                 TeamAccess[]
 
-  templateName  String   @unique
-  content  String
+  // Recording dropdowns as simple strings
+  onHoldRecording1            String?
+  onHoldRecording2            String?
+  ivrRecording                String?
+  answeringMachineRecording   String?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  enableAutoPause             Boolean  @default(false)
+  enableRecording             Boolean  @default(false)
+  sendOutlookAppointment      Boolean  @default(false)
+
+  allowDncCalls               Boolean  @default(false)
+
+  callerId                    String?
+  countryCode                 String
+
+  numberOfLines               Int       @default(1)
+  ringTime                    Int       @default(30)
+  callScriptId                String?
+  
+  sendEmail                   Boolean   @default(false)
+  sendText                    Boolean   @default(false)
+
+  systemSettingId             String
+  systemSetting               System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@map("number_settings")
 }
