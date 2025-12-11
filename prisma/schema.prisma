@@ -126,6 +126,7 @@ model Verification {
   expiresAt  DateTime
   createdAt  DateTime? @default(now())
   updatedAt  DateTime? @updatedAt
+  
 
   @@map("verifications")
 }
@@ -242,7 +243,7 @@ model System_Setting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  numberSettings NumberSettings[]
+  caller_id CallerId[]
 
   @@map("system_settings")
 }
@@ -354,7 +355,7 @@ model PlanFeature {
 
 
 
-model NumberSettings {
+model CallerId {
   id                          String   @id @default(cuid())
   label                       String
 
@@ -389,5 +390,5 @@ model NumberSettings {
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 
-  @@map("number_settings")
+  @@map("caller_id")
 }

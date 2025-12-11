@@ -151,7 +151,7 @@ export const createSms = async (req: Request, res: Response): Promise<void> => {
       select: {
         id: true,
         templateName: true,
-        content: true,
+        content: true,    
         createdAt: true,
         updatedAt: true,
         library: {
@@ -204,7 +204,7 @@ export const updateSms = async (req: Request, res: Response): Promise<void> => {
 
     // Get user's library
     const library = await prisma.library.findFirst({
-      where: { userId },
+      where: { userId },  
     });
 
     if (!library) {
@@ -248,7 +248,7 @@ export const updateSms = async (req: Request, res: Response): Promise<void> => {
               select: {
                 id: true,
                 fullName: true,
-                email: true,
+                email: true,   
               },
             },
           },

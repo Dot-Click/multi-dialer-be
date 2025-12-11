@@ -408,7 +408,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: User;
-      apiClient?: { id: string; role: string };
+      apiClient?: { id: string; role: string};
     }
   }
 }
@@ -465,7 +465,7 @@ export const protectRoute = async (
       headers.set("user-agent", req.headers["user-agent"]);
 
     const session = await auth.api.getSession({ headers });
-
+                                                                                                                                                                                                                                                                                                                                          
     if (session?.user?.id) {
       const dbUser = await prisma.user.findUnique({
         where: { id: session.user.id },
