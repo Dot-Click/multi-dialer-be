@@ -6,7 +6,7 @@ info:
 
 servers:
   [
-    { url: "http://localhost:5000", description: "Local server" },
+    { url: "http://localhost:3000", description: "Local server" },
   ]
 
 paths:
@@ -76,3 +76,2255 @@ paths:
                 properties:
                   message:
                     type: string
+
+  /api/library/script/create:
+    post:
+      summary: "Create a new script"
+      tags:
+        - Library Scripts
+      description: "Create a new script in the authenticated user's library"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - scriptName
+                - scriptText
+              properties:
+                scriptName:
+                  type: string
+                  description: "Name of the script"
+                  example: "Sales Introduction Script"
+                scriptText:
+                  type: string
+                  description: "Content/text of the script"
+                  example: "Hello, this is a sales call..."
+                status:
+                  type: boolean
+                  description: "Status of the script (active/inactive)"
+                  default: true
+      responses:
+        "201":
+          description: "Script created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      scriptName:
+                        type: string
+                      scriptText:
+                        type: string
+                      status:
+                        type: boolean
+                      libraryId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      library:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "User not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/library/script/all:
+    get:
+      summary: "Get all scripts of all users"
+      tags:
+        - Library Scripts
+      description: "Retrieve all scripts from all users (requires authentication)"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All scripts fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scriptName:
+                          type: string
+                        scriptText:
+                          type: string
+                        status:
+                          type: boolean
+                        libraryId:
+                          type: string
+                        createdAt:
+                          type: string
+                        updatedAt:
+                          type: string
+                        library:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            userId:
+                              type: string
+                            user:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                fullName:
+                                  type: string
+                                email:
+                                  type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/library/script:
+    get:
+      summary: "Get all scripts of specific user"
+      tags:
+        - Library Scripts
+      description: "Retrieve all scripts belonging to the authenticated user's library"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Scripts fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        scriptName:
+                          type: string
+                        scriptText:
+                          type: string
+                        status:
+                          type: boolean
+                        libraryId:
+                          type: string
+                        createdAt:
+                          type: string
+                        updatedAt:
+                          type: string
+                        library:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            userId:
+                              type: string
+                            user:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                fullName:
+                                  type: string
+                                email:
+                                  type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Library not found for user"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/library/script/{id}:
+    get:
+      summary: "Get a script by ID"
+      tags:
+        - Library Scripts
+      description: "Retrieve a specific script by its ID (must belong to authenticated user's library)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "Script ID"
+      responses:
+        "200":
+          description: "Script fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      scriptName:
+                        type: string
+                      scriptText:
+                        type: string
+                      status:
+                        type: boolean
+                      libraryId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      library:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Script not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    put:
+      summary: "Update a script by ID"
+      tags:
+        - Library Scripts
+      description: "Update a specific script (must belong to authenticated user's library)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "Script ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scriptName:
+                  type: string
+                  description: "Name of the script"
+                  example: "Updated Sales Script"
+                scriptText:
+                  type: string
+                  description: "Content/text of the script"
+                  example: "Updated script content..."
+                status:
+                  type: boolean
+                  description: "Status of the script (active/inactive)"
+      responses:
+        "200":
+          description: "Script updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      scriptName:
+                        type: string
+                      scriptText:
+                        type: string
+                      status:
+                        type: boolean
+                      libraryId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      library:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot update another user's script"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Script not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    delete:
+      summary: "Delete a script by ID"
+      tags:
+        - Library Scripts
+      description: "Delete a specific script (must belong to authenticated user's library)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "Script ID"
+      responses:
+        "200":
+          description: "Script deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: null
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot delete another user's script"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Script not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/library/sms/create:
+    post:
+      summary: "Create a new SMS template"
+      tags:
+        - Library SMS
+      description: "Create a new SMS template in the authenticated user's library"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - templateName
+                - content
+              properties:
+                templateName:
+                  type: string
+                  description: "Name of the SMS template"
+                  example: "Welcome SMS"
+                content:
+                  type: string
+                  description: "Content/text of the SMS template"
+                  example: "Hello, welcome to our service!"
+      responses:
+        "201":
+          description: "SMS template created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      templateName:
+                        type: string
+                      content:
+                        type: string
+                      libraryId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      library:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "User not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/library/sms/all:
+    get:
+      summary: "Get all SMS templates of all users"
+      tags:
+        - Library SMS
+      description: "Retrieve all SMS templates from all users (requires authentication)"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All SMS templates fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        templateName:
+                          type: string
+                        content:
+                          type: string
+                        libraryId:
+                          type: string
+                        createdAt:
+                          type: string
+                        updatedAt:
+                          type: string
+                        library:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            userId:
+                              type: string
+                            user:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                fullName:
+                                  type: string
+                                email:
+                                  type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/library/sms:
+    get:
+      summary: "Get all SMS templates of specific user"
+      tags:
+        - Library SMS
+      description: "Retrieve all SMS templates belonging to the authenticated user's library"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "SMS templates fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        templateName:
+                          type: string
+                        content:
+                          type: string
+                        libraryId:
+                          type: string
+                        createdAt:
+                          type: string
+                        updatedAt:
+                          type: string
+                        library:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            userId:
+                              type: string
+                            user:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                fullName:
+                                  type: string
+                                email:
+                                  type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Library not found for user"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/library/sms/{id}:
+    get:
+      summary: "Get an SMS template by ID"
+      tags:
+        - Library SMS
+      description: "Retrieve a specific SMS template by its ID (must belong to authenticated user's library)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "SMS template ID"
+      responses:
+        "200":
+          description: "SMS template fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      templateName:
+                        type: string
+                      content:
+                        type: string
+                      libraryId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      library:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "SMS template not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    put:
+      summary: "Update an SMS template by ID"
+      tags:
+        - Library SMS
+      description: "Update a specific SMS template (must belong to authenticated user's library)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "SMS template ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                templateName:
+                  type: string
+                  description: "Name of the SMS template"
+                  example: "Updated Welcome SMS"
+                content:
+                  type: string
+                  description: "Content/text of the SMS template"
+                  example: "Updated SMS content..."
+      responses:
+        "200":
+          description: "SMS template updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      templateName:
+                        type: string
+                      content:
+                        type: string
+                      libraryId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      library:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot update another user's SMS template"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "SMS template not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    delete:
+      summary: "Delete an SMS template by ID"
+      tags:
+        - Library SMS
+      description: "Delete a specific SMS template (must belong to authenticated user's library)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "SMS template ID"
+      responses:
+        "200":
+          description: "SMS template deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: null
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot delete another user's SMS template"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "SMS template not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/caller-id/create:
+    post:
+      summary: "Create a new CallerId"
+      tags:
+        - SystemSettings CallerId
+      description: "Create a new CallerId in the authenticated user's system settings"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - label
+                - countryCode
+              properties:
+                label:
+                  type: string
+                  description: "Label for the CallerId"
+                  example: "Main Sales Line"
+                availableTo:
+                  type: array
+                  items:
+                    type: string
+                    enum: ["ALL", "SALES", "SUPPORT", "PROJECT_MANAGER"]
+                  description: "Array of teams that can use this number"
+                  example: ["ALL", "SALES"]
+                onHoldRecording1:
+                  type: string
+                  description: "First on-hold recording"
+                  example: "recording_on_hold_1.mp3"
+                onHoldRecording2:
+                  type: string
+                  description: "Second on-hold recording"
+                  example: "recording_on_hold_2.mp3"
+                ivrRecording:
+                  type: string
+                  description: "IVR recording"
+                  example: "ivr_welcome_message.mp3"
+                answeringMachineRecording:
+                  type: string
+                  description: "Answering machine recording"
+                  example: "answering_machine_greeting.mp3"
+                enableAutoPause:
+                  type: boolean
+                  description: "Enable auto pause"
+                  default: false
+                enableRecording:
+                  type: boolean
+                  description: "Enable recording"
+                  default: false
+                sendOutlookAppointment:
+                  type: boolean
+                  description: "Send Outlook appointment"
+                  default: false
+                allowDncCalls:
+                  type: boolean
+                  description: "Allow DNC calls"
+                  default: false
+                callerId:
+                  type: string
+                  description: "Caller ID number"
+                  example: "+1234567890"
+                countryCode:
+                  type: string
+                  description: "Country code"
+                  example: "US"
+                numberOfLines:
+                  type: integer
+                  description: "Number of lines"
+                  default: 1
+                  minimum: 1
+                ringTime:
+                  type: integer
+                  description: "Ring time in seconds"
+                  default: 30
+                  minimum: 1
+                callScriptId:
+                  type: string
+                  description: "Call script ID"
+                  example: "script-uuid-here"
+                sendEmail:
+                  type: boolean
+                  description: "Send email"
+                  default: false
+                sendText:
+                  type: boolean
+                  description: "Send text"
+                  default: false
+      responses:
+        "201":
+          description: "CallerId created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      label:
+                        type: string
+                      availableTo:
+                        type: array
+                        items:
+                          type: string
+                      systemSettingId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      systemSetting:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "User not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/caller-id/all:
+    get:
+      summary: "Get all CallerIds of all users"
+      tags:
+        - SystemSettings CallerId
+      description: "Retrieve all CallerIds from all users (requires authentication)"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All CallerIds fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/caller-id:
+    get:
+      summary: "Get all CallerIds of specific user"
+      tags:
+        - SystemSettings CallerId
+      description: "Retrieve all CallerIds belonging to the authenticated user's system settings"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "CallerIds fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "SystemSettings not found for user"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/caller-id/{id}:
+    get:
+      summary: "Get a CallerId by ID"
+      tags:
+        - SystemSettings CallerId
+      description: "Retrieve a specific CallerId by its ID (must belong to authenticated user's system settings)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "CallerId ID"
+      responses:
+        "200":
+          description: "CallerId fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "CallerId not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    put:
+      summary: "Update a CallerId by ID"
+      tags:
+        - SystemSettings CallerId
+      description: "Update a specific CallerId (must belong to authenticated user's system settings)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "CallerId ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                availableTo:
+                  type: array
+                  items:
+                    type: string
+                    enum: ["ALL", "SALES", "SUPPORT", "PROJECT_MANAGER"]
+                countryCode:
+                  type: string
+                enableAutoPause:
+                  type: boolean
+                enableRecording:
+                  type: boolean
+                sendOutlookAppointment:
+                  type: boolean
+                allowDncCalls:
+                  type: boolean
+                callerId:
+                  type: string
+                numberOfLines:
+                  type: integer
+                  minimum: 1
+                ringTime:
+                  type: integer
+                  minimum: 1
+                callScriptId:
+                  type: string
+                sendEmail:
+                  type: boolean
+                sendText:
+                  type: boolean
+      responses:
+        "200":
+          description: "CallerId updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot update another user's CallerId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "CallerId not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    delete:
+      summary: "Delete a CallerId by ID"
+      tags:
+        - SystemSettings CallerId
+      description: "Delete a specific CallerId (must belong to authenticated user's system settings)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "CallerId ID"
+      responses:
+        "200":
+          description: "CallerId deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: null
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot delete another user's CallerId"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "CallerId not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/call-settings/create:
+    post:
+      summary: "Create a new CallSettings"
+      tags:
+        - SystemSettings CallSettings
+      description: "Create a new CallSettings in the authenticated user's system settings"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - label
+                - countryCode
+              properties:
+                label:
+                  type: string
+                  description: "Label for the CallSettings"
+                  example: "Main Sales Line"
+                onHoldRecording1:
+                  type: string
+                  description: "First on-hold recording"
+                  example: "recording_on_hold_1.mp3"
+                onHoldRecording2:
+                  type: string
+                  description: "Second on-hold recording"
+                  example: "recording_on_hold_2.mp3"
+                ivrRecording:
+                  type: string
+                  description: "IVR recording"
+                  example: "ivr_welcome_message.mp3"
+                answeringMachineRecording:
+                  type: string
+                  description: "Answering machine recording"
+                  example: "answering_machine_greeting.mp3"
+                enableAutoPause:
+                  type: boolean
+                  description: "Enable auto pause"
+                  default: false
+                enableRecording:
+                  type: boolean
+                  description: "Enable recording"
+                  default: false
+                sendOutlookAppointment:
+                  type: boolean
+                  description: "Send Outlook appointment"
+                  default: false
+                allowDncCalls:
+                  type: boolean
+                  description: "Allow DNC calls"
+                  default: false
+                callerId:
+                  type: string
+                  description: "Caller ID number"
+                  example: "+1234567890"
+                countryCode:
+                  type: string
+                  description: "Country code"
+                  example: "US"
+                numberOfLines:
+                  type: integer
+                  description: "Number of lines"
+                  default: 1
+                  minimum: 1
+                ringTime:
+                  type: integer
+                  description: "Ring time in seconds"
+                  default: 30
+                  minimum: 1
+                callScriptId:
+                  type: string
+                  description: "Call script ID"
+                  example: "script-uuid-here"
+                sendEmail:
+                  type: boolean
+                  description: "Send email"
+                  default: false
+                sendText:
+                  type: boolean
+                  description: "Send text"
+                  default: false
+      responses:
+        "201":
+          description: "CallSettings created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      label:
+                        type: string
+                      systemSettingId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+                      systemSetting:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          userId:
+                            type: string
+                          user:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              fullName:
+                                type: string
+                              email:
+                                type: string
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "User not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/call-settings/all:
+    get:
+      summary: "Get all CallSettings of all users"
+      tags:
+        - SystemSettings CallSettings
+      description: "Retrieve all CallSettings from all users (requires authentication)"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All CallSettings fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/call-settings:
+    get:
+      summary: "Get all CallSettings of specific user"
+      tags:
+        - SystemSettings CallSettings
+      description: "Retrieve all CallSettings belonging to the authenticated user's system settings"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "CallSettings fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "SystemSettings not found for user"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /api/system-settings/call-settings/{id}:
+    get:
+      summary: "Get a CallSettings by ID"
+      tags:
+        - SystemSettings CallSettings
+      description: "Retrieve a specific CallSettings by its ID (must belong to authenticated user's system settings)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "CallSettings ID"
+      responses:
+        "200":
+          description: "CallSettings fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "CallSettings not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    put:
+      summary: "Update a CallSettings by ID"
+      tags:
+        - SystemSettings CallSettings
+      description: "Update a specific CallSettings (must belong to authenticated user's system settings)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "CallSettings ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                countryCode:
+                  type: string
+                enableAutoPause:
+                  type: boolean
+                enableRecording:
+                  type: boolean
+                sendOutlookAppointment:
+                  type: boolean
+                allowDncCalls:
+                  type: boolean
+                callerId:
+                  type: string
+                numberOfLines:
+                  type: integer
+                  minimum: 1
+                ringTime:
+                  type: integer
+                  minimum: 1
+                callScriptId:
+                  type: string
+                sendEmail:
+                  type: boolean
+                sendText:
+                  type: boolean
+      responses:
+        "200":
+          description: "CallSettings updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot update another user's CallSettings"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "CallSettings not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+    delete:
+      summary: "Delete a CallSettings by ID"
+      tags:
+        - SystemSettings CallSettings
+      description: "Delete a specific CallSettings (must belong to authenticated user's system settings)"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "CallSettings ID"
+      responses:
+        "200":
+          description: "CallSettings deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: null
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden - Cannot delete another user's CallSettings"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "CallSettings not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

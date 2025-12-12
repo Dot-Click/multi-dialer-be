@@ -6,17 +6,18 @@ declare global {
 
 const prisma = new PrismaClient({log:["error", "warn"]});
 
-// Middleware to auto-create library when user is created
+// Middleware to auto-create library and systemSettings when user is created
 prisma.$use(async (params, next) => {
   const result = await next(params);
   
-  // After user creation, automatically create library
+  // After user creation, automatically create library and systemSettings
   if (params.model === 'User' && params.action === 'create' && result) {
-    console.log("🔍 Prisma Middleware: User created, checking for library...", result.id);
+    console.log("🔍 Prisma Middleware: User created, checking for library and systemSettings...", result.id);
     try {
       // Small delay to ensure user is fully committed to database
       await new Promise(resolve => setTimeout(resolve, 100));
       
+      // Create Library
       const existingLibrary = await prisma.library.findFirst({
         where: { userId: result.id },
       });
@@ -31,10 +32,26 @@ prisma.$use(async (params, next) => {
       } else {
         console.log("ℹ️ Library already exists for User:", result.id);
       }
+
+      // Create SystemSettings
+      const existingSystemSettings = await prisma.system_Setting.findFirst({
+        where: { userId: result.id },
+      });
+
+      if (!existingSystemSettings) {
+        const newSystemSettings = await prisma.system_Setting.create({
+          data: {
+            userId: result.id,
+          },
+        });
+        console.log("✅ Auto SystemSettings Created For User:", result.id, "SystemSettings ID:", newSystemSettings.id);
+      } else {
+        console.log("ℹ️ SystemSettings already exists for User:", result.id);
+      }
     } catch (err: any) {
-      console.error("❌ Library Create Error in Middleware:", err?.message || err);
+      console.error("❌ Library/SystemSettings Create Error in Middleware:", err?.message || err);
       console.error("Error details:", err);
-      // Don't throw - library creation failure shouldn't break user signup
+      // Don't throw - library/systemSettings creation failure shouldn't break user signup
     }
   }
   

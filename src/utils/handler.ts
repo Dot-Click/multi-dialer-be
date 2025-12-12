@@ -41,7 +41,8 @@ export const errorResponse = (res: Response, error: any, statusCode = 500) => {
       });
     }
   
-    const message = error.message || 'Internal server error';
+    // Handle string messages directly
+    const message = typeof error === 'string' ? error : (error.message || 'Internal server error');
   
     return res.status(statusCode).json({
       success: false,

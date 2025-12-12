@@ -59,6 +59,7 @@ export const getAllScriptsOfAllUsers = async (req: Request, res: Response): Prom
                 id: true,
                 fullName: true,
                 email: true,
+
               },
             },
           },
@@ -94,8 +95,8 @@ export const getScriptById = async (req: Request, res: Response): Promise<void> 
         libraryId: library.id, // Ensure script belongs to user's library
       },
       include: {
-        lirary: {
-          inbclude: {
+        library: {
+          include: {
             user: {
               select: {
                 id: true,
@@ -285,7 +286,7 @@ export const deleteScript = async (req: Request, res: Response): Promise<void> =
     }
 
     // Check if script belongs to the user's library
-    if (script.libraryId !== library.id ) {
+    if (script.libraryId !== library.id) {
       errorResponse(res, "you can only delete your script not other script", 403);
       return;
     }
@@ -294,8 +295,6 @@ export const deleteScript = async (req: Request, res: Response): Promise<void> =
     await prisma.script.delete({
       where: { id },
     });
-
-    
 
     successResponse(res, 200, "Script deleted successfully", null);
     
