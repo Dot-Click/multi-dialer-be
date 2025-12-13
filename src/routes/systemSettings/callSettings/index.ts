@@ -1,33 +1,33 @@
 import { Router } from "express";
-import { 
-  createCallSettings, 
-  getAllCallSettingsOfAllUsers, 
-  getAllCallSettingsOfSpecificUser, 
-  getCallSettingsById, 
-  updateCallSettings, 
-  deleteCallSettings 
+import {
+  createCallSettings,
+  getAllCallSettingsOfAllUsers,
+  getAllCallSettingsOfSpecificUser,
+  getCallSettingsById,
+  updateCallSettings,
+  deleteCallSettings
 } from "./controller";
 import { protectRoute } from "../../../middlewares/auth.middleware";
 
 const router = Router();
 
 // Create a CallSettings
-router.post("/create", protectRoute, createCallSettings);
+router.post("/create", createCallSettings);
 
 // Get all CallSettings of all users
-router.get("/all", protectRoute, getAllCallSettingsOfAllUsers);
+router.get("/all", getAllCallSettingsOfAllUsers);
 
 // Get all CallSettings of specific user
-router.get("/", protectRoute, getAllCallSettingsOfSpecificUser);
+router.get("/", getAllCallSettingsOfSpecificUser);
 
 // Get a single CallSettings by ID
-router.get("/:id", protectRoute, getCallSettingsById);
+router.get("/:id", getCallSettingsById);
 
 // Update a CallSettings by ID
-router.put("/:id", protectRoute, updateCallSettings);
+router.put("/:id", updateCallSettings);
 
 // Delete a CallSettings by ID
-router.delete("/:id", protectRoute, deleteCallSettings);
+router.delete("/:id", deleteCallSettings);
 
 export default router;
 

@@ -125,18 +125,18 @@ export const protectRoute = async (
 
 export const checkRole = (reqRoles: string[]): any => {
   return async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const role: string = req?.user?.role || ''
-          if (!role) {
-              return errorResponse(res, {message: "Forbidden usage role not found"}, 403)
-          }
-          if (!reqRoles.includes(role)) {
-              return errorResponse(res, 'Unauthorized', 401)
-          }
-          return next()
-      } catch (error: any) {
-          console.log("error", error);
-          return errorResponse(res, error.message, 500)
+    try {
+      const role: string = req?.user?.role || ''
+      if (!role) {
+        return errorResponse(res, "You don't have permission to access this resource. Required roles: " + reqRoles.join(", "), 403)
       }
+      if (!reqRoles.includes(role)) {
+        return errorResponse(res, "You don't have permission to access this resource. Required roles: " + reqRoles.join(", "), 403)
+      }
+      return next()
+    } catch (error: any) {
+      console.log("error", error);
+      return errorResponse(res, error.message, 500)
+    }
   }
 }

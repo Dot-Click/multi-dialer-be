@@ -5,19 +5,19 @@ import { protectRoute, checkRole } from "../../../middlewares/auth.middleware";
 const router = Router();
 
 // Create an SMS template
-router.post("/create", protectRoute, createSms);
+router.post("/create", createSms);
 
 // Get all SMS templates of all users
-router.get("/all", protectRoute, getAllSmsOfAllUsers);
+router.get("/all", checkRole(["ADMIN", "OWNER"]), getAllSmsOfAllUsers);
 
 // Get all SMS templates of specific user
-router.get("/", protectRoute, getAllSmsOfSpecificUser);
+router.get("/", getAllSmsOfSpecificUser);
 
 // Get a single SMS template by ID
-router.get("/:id", protectRoute, getSmsById);
+router.get("/:id", getSmsById);
 
 // Update an SMS template by ID
-router.put("/:id", protectRoute, updateSms);
+router.put("/:id", updateSms);
 
 // Delete an SMS template by ID
 router.delete("/:id", protectRoute, deleteSms);

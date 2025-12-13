@@ -1,6 +1,7 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { createMediaCenterSchema } from "../../../zod/mediaCenter.schema";
+import { cloudinaryUploader } from "../../../utils/handler";
 import { Request } from "express";
 import fs from "fs";
 import path from "path";
@@ -110,14 +111,20 @@ export async function insertMediaCenterInDb(payload: any, userId: string, file: 
       });
     }
 
+    // Get file path for duration check and Cloudinary upload
+    const filePath = path.join("./uploads", file.filename);
+
     // Get file duration (if required)
     let duration: number | null = null;
     if (config.maxDuration !== null && config.fileCategory === "audio") {
       // Only validate duration for audio files that require it
-      const filePath = path.join("./uploads", file.filename);
       duration = await getFileDuration(filePath, file.mimetype);
       
       if (duration !== null && duration > config.maxDuration) {
+        // Clean up local file before throwing error
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
         throw {
           errors: [
             {
@@ -129,15 +136,53 @@ export async function insertMediaCenterInDb(payload: any, userId: string, file: 
       }
     }
 
-    // Generate file URL (adjust based on your file serving setup)
-    const fileUrl = `/uploads/${file.filename}`;
+    // Upload file to Cloudinary with appropriate resource type
+    let cloudinaryResult;
+    try {
+      // Determine resource type based on file category
+      const resourceType = config.fileCategory === "video" ? "video" : "auto";
+      
+      // Import cloudinary directly for custom upload options
+      const { v2: cloudinary } = await import("cloudinary");
+      
+      cloudinaryResult = await cloudinary.uploader.upload(filePath, {
+        resource_type: resourceType,
+        folder: "media-center", // Organize files in Cloudinary folder
+      });
+      
+      if (!cloudinaryResult || !cloudinaryResult.secure_url) {
+        throw new Error("Failed to upload file to Cloudinary");
+      }
+    } catch (cloudinaryError: any) {
+      // Clean up local file if Cloudinary upload fails
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      throw {
+        errors: [
+          {
+            message: `Failed to upload file to Cloudinary: ${cloudinaryError.message || "Unknown error"}`,
+            path: ["file"],
+          },
+        ],
+      };
+    }
+
+    // Delete local file after successful Cloudinary upload
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    // Use Cloudinary URL
+    const fileUrl = cloudinaryResult.secure_url;
+    const fileName = cloudinaryResult.public_id || file.filename;
 
     // Insert MediaCenter into DB with libraryId
     const mediaCenter = await prisma.mediaCenter.create({
       data: {
         templateName: data.templateName,
         mediaType: data.mediaType,
-        fileName: file.filename,
+        fileName: fileName,
         fileUrl: fileUrl,
         fileSize: file.size,
         duration: duration,
@@ -152,7 +197,11 @@ export async function insertMediaCenterInDb(payload: any, userId: string, file: 
     if (file && file.filename) {
       const filePath = path.join("./uploads", file.filename);
       if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+        try {
+          fs.unlinkSync(filePath);
+        } catch (unlinkError) {
+          console.error("Error deleting local file:", unlinkError);
+        }
       }
     }
     throw error;

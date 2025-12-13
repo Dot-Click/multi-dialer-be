@@ -160,6 +160,11 @@ export const createScript = async (req: Request, res: Response): Promise<void> =
     successResponse(res, 201, "Script created", populatedScript);
     
   } catch (error: any) {
+    // Handle unique constraint error with user-friendly message
+    if (error.message === "Script name already exists") {
+      errorResponse(res, error.message, 409);
+      return;
+    }
     errorResponse(res, error.message || error, 500);
   }
 };
@@ -244,6 +249,16 @@ export const updateScript = async (req: Request, res: Response): Promise<void> =
     successResponse(res, 200, "Script updated", updatedScript);
     
   } catch (error: any) {
+    // Handle unique constraint error with user-friendly message
+    if (error.code === 'P2002' && error.meta?.target?.includes('scriptName')) {
+      errorResponse(res, "Script name already exists", 409);
+      return;
+    }
+    // Check if it's a Prisma error related to record not found
+    if (error.code === 'P2025') {
+      errorResponse(res, "Script not found", 404);
+      return;
+    }
     errorResponse(res, error.message, 500);
   }
 };

@@ -36,7 +36,14 @@ export async function insertSmsTemplateInDb(payload: any, userId: string) {
     });
 
     return smsTemplate;
-  } catch (error) {
+  } catch (error: any) {
+    // Handle Prisma unique constraint error
+    if (error.code === 'P2002') {
+      // Check which field caused the unique constraint violation
+      if (error.meta?.target?.includes('templateName')) {
+        throw { message: "Template name already exists" };
+      }
+    }
     throw error;
   }
 }

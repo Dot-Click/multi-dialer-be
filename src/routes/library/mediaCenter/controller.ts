@@ -225,18 +225,31 @@ export const updateMediaCenter = async (req: Request, res: Response): Promise<vo
     const result = await validateData(updateMediaCenterSchema, payload) as any;
 
     if (!('data' in result)) {
-      errorResponse(res, "Validation error", 400);
+      errorResponse(res, { errors: result }, 400);
       return;
     }
 
     const data = result.data;
 
+    // Check if there's any data to update
+    if (!data || Object.keys(data).length === 0) {
+      errorResponse(res, "No fields provided to update", 400);
+      return;
+    }
+
+    // Filter out undefined values to ensure only valid fields are updated
+    const updateData: any = {};
+    if (data.templateName !== undefined) {
+      updateData.templateName = data.templateName;
+    }
+    if (data.mediaType !== undefined) {
+      updateData.mediaType = data.mediaType;
+    }
+
     // Update the media center item
     const updatedMediaCenter = await prisma.mediaCenter.update({
       where: { id },
-      data: {
-        ...data,
-      },
+      data: updateData,
       include: {
         library: {
           include: {

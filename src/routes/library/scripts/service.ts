@@ -36,7 +36,14 @@ export async function insertScriptInDb(payload: any, userId: string) {
     });
 
     return script;
-  } catch (error) {
+  } catch (error: any) {
+    // Handle Prisma unique constraint error
+    if (error.code === 'P2002') {
+      // Check which field caused the unique constraint violation
+      if (error.meta?.target?.includes('scriptName')) {
+        throw { message: "Script name already exists" };
+      }
+    }
     throw error;
   }
 }
