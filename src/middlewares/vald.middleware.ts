@@ -1,7 +1,7 @@
 import _ from 'lodash';
 import { z, ZodError } from 'zod';
 
-export function validateData(schema: z.ZodObject<any, any>, payload:any) {
+export function validateData(schema: z.ZodTypeAny, payload:any) {
     try {
       const parsedData = schema.parse(payload);
       return {data: parsedData};

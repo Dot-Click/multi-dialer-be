@@ -394,6 +394,19 @@ enum TeamAccess {
   PROJECT_MANAGER
 }
 
+enum MediaType {
+  VOICE_MAIL
+  ON_HOLD
+  CALLBACK_MESSAGE
+  EMAIL_VIDEO
+}
+
+enum FileCategory {
+  audio
+  video
+}
+
+
 model User {
   id            String     @id @default(uuid())
   fullName      String?
@@ -523,6 +536,7 @@ model Library {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   scripts     Script[] 
   smsTemplate SMSTemplate[] 
+  mediaCenter MediaCenter[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -548,6 +562,26 @@ model SMSTemplate {
   content      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+
+
+
+model MediaCenter {
+  id           String       @id @default(uuid())
+  libraryId   String
+  library     Library      @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  templateName String
+  mediaType   MediaType
+  fileName    String
+  fileUrl     String?
+  fileSize    Int          // in bytes
+  duration    Int?          // in seconds, nullable
+  fileCategory FileCategory
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("media_center")
 }
 
 model Report_Analytic {
@@ -579,6 +613,7 @@ model System_Setting {
 
   caller_id    CallerId[]
   callSettings CallSettings[]
+  miscFields   MiscField[]
 
   @@map("system_settings")
 }
@@ -736,4 +771,21 @@ model CallSettings {
   updatedAt DateTime @updatedAt
 
   @@map("call_settings")
+}
+
+
+model MiscField {
+  id              String         @id @default(uuid())
+  type            String
+  fieldName       String
+  options         String[]
+  countFrom       Int?
+  countTo         Int?
+  allowPastDates  Boolean?
+  systemSettingId String
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("misc_fields")
 }

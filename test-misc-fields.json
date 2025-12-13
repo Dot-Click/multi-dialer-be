@@ -1,0 +1,23 @@
+{
+  "textField": {
+    "type": "text",
+    "fieldName": "Customer Notes"
+  },
+  "dropdown": {
+    "type": "dropdown",
+    "fieldName": "Priority Level",
+    "options": ["Low", "Medium", "High", "Urgent"]
+  },
+  "counter": {
+    "type": "counter",
+    "fieldName": "Call Attempts",
+    "countFrom": 1,
+    "countTo": 10
+  },
+  "date": {
+    "type": "date",
+    "fieldName": "Follow-up Date",
+    "allowPastDates": false
+  }
+}
+
