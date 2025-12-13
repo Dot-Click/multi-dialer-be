@@ -262,7 +262,7 @@ export const updateMediaCenter = async (req: Request, res: Response): Promise<vo
             },
           },
         },
-      },
+      }, 
     });
 
     successResponse(res, 200, "Media center item updated", updatedMediaCenter);
