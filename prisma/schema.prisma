@@ -340,6 +340,7 @@
 //   updatedAt   DateTime @updatedAt
 // }
 
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -534,14 +535,17 @@ model Library {
   id     String @id @default(uuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  scripts     Script[] 
-  smsTemplate SMSTemplate[] 
-  mediaCenter MediaCenter[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  scripts         Script[] 
+  smsTemplate     SMSTemplate[] 
+  mediaCenter     MediaCenter[]
+  emailTemplate   EmailTemplate[]
+  callbackPrompts CallbackPrompt[]   
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@map("libraries")
 }
+
 
 model Script {
   id        String  @id @default(uuid())
@@ -564,7 +568,41 @@ model SMSTemplate {
   updatedAt DateTime @updatedAt
 }
 
+model EmailTemplate {
+  id        String  @id @default(uuid())
+  libraryId String
+  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  templateName String
+  subject   String
+  content   String
+  status    Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  @@unique([libraryId, templateName])
+  @@map("email_templates")
+}
+
+
+model CallbackPrompt {
+  id           String   @id @default(uuid())
+  libraryId    String
+  library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  templateName String
+  recordingType RecordingType
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([libraryId, templateName])
+  @@map("callback_prompts")
+}
+
+enum RecordingType {
+  VOICE_MAIL
+  ON_HOLD
+  EMAIL_VIDEO
+}
 
 
 model MediaCenter {

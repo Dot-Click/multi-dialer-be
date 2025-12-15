@@ -1,10 +1,11 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { PrismaClient } from "@prisma/client";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "./lib/auth";
 import morgan from "morgan"; 
 import cors from "cors";
 import { connectDB } from "./lib/prisma";
+import prisma from "./lib/prisma";
 import routes from "./routes/routes";
 import { swaggerDocs } from "./utils/handler";
 import { cloudinaryConfig, envConfig, sessionMiddleware } from "./lib/config";
@@ -25,11 +26,36 @@ app.use(
 );
 app.use(morgan('dev'));
 sgMail.setApiKey(envConfig.SENDGRID_API_KEY as string)
-app.all("/api/auth/*", toNodeHandler(auth));
 
-
+// Parse JSON body BEFORE auth routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Middleware to auto-verify ONLY test2@example.com before sign-in
+app.use("/api/auth/sign-in/email", async (req: Request, res: Response, next: NextFunction) => {
+  if (req.method === "POST" && req.body?.email) {
+    try {
+      const email = req.body.email.toLowerCase().trim();
+      
+      if (email === "test2@example.com") {
+        // Auto-verify ONLY test2@example.com
+        await prisma.user.updateMany({
+          where: {
+            email: "test2@example.com",
+          },
+          data: {
+            emailVerified: true,
+          },
+        });
+      }
+    } catch (err: any) {
+      console.error("❌ Error in sign-in middleware:", err?.message);
+    }
+  }
+  next();
+});
+
+app.all("/api/auth/*", toNodeHandler(auth));
 
 cloudinaryConfig();
 

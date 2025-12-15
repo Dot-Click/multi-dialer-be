@@ -6,8 +6,36 @@ declare global {
 
 const prisma = new PrismaClient({log:["error", "warn"]});
 
-// Middleware to auto-create library and systemSettings when user is created
+// Middleware to validate enum fields and auto-create library and systemSettings when user is created
 prisma.$use(async (params, next) => {
+  // Before user creation, ensure role and status are valid enum values
+  if (params.model === 'User' && params.action === 'create' && params.args?.data) {
+    const data = params.args.data;
+    
+    // Map 'name' to 'fullName' if BetterAuth sends 'name' field
+    if (data.name && !data.fullName) {
+      data.fullName = data.name;
+      delete data.name;
+    }
+    
+    // Ensure role is a valid enum value (default: AGENT)
+    if (data.role !== undefined && !["AGENT", "ADMIN", "OWNER"].includes(data.role)) {
+      console.warn(`⚠️ Invalid role value: ${data.role}, setting to AGENT`);
+      data.role = "AGENT";
+    } else if (data.role === undefined || data.role === null || data.role === "") {
+      // Remove invalid values and let Prisma use default
+      delete data.role;
+    }
+    // Ensure status is a valid enum value (default: ACTIVE)
+    if (data.status !== undefined && !["ACTIVE", "DEACTIVATED", "SUSPENDED", "PENDING"].includes(data.status)) {
+      console.warn(`⚠️ Invalid status value: ${data.status}, setting to ACTIVE`);
+      data.status = "ACTIVE";
+    } else if (data.status === undefined || data.status === null || data.status === "") {
+      // Remove invalid values and let Prisma use default
+      delete data.status;
+    }
+  }
+  
   const result = await next(params);
   
   // After user creation, automatically create library and systemSettings

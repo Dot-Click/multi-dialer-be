@@ -136,6 +136,10 @@ export const auth = betterAuth({
         type: "string",
         required: false,
       },
+      status: {
+        type: "string",
+        required: false,
+      },
     },
   },
 
@@ -162,6 +166,18 @@ export const auth = betterAuth({
     requireEmailVerification: true,
     headers: {
       "Content-Type": "application/json",
+    },
+    
+    // Custom hook to bypass email verification for test2@example.com
+    onBeforeSignIn: async ({ user }: { user: any }) => {
+      if (user?.email?.toLowerCase() === "test2@example.com") {
+        // Auto-verify test2@example.com before sign-in check
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { emailVerified: true },
+        });
+      }
+      return { user };
     },
 
     password: {
@@ -234,6 +250,18 @@ export const auth = betterAuth({
           return;
         }
 
+        // Auto-verify email ONLY for test2@example.com
+        // All other users need to verify their email normally
+        if (user.email && user.email.toLowerCase() === "test2@example.com") {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { emailVerified: true },
+          });
+          console.log("✅ Better-Auth Event: Test email auto-verified for User:", user.id, user.email);
+        } else {
+          console.log("ℹ️ Better-Auth Event: Email verification required for User:", user.id, user.email);
+        }
+
         // Check if library already exists (avoid duplicates)
         const existingLibrary = await prisma.library.findFirst({
           where: { userId: user.id },
@@ -257,7 +285,7 @@ export const auth = betterAuth({
         });
 
         if (!existingSystemSettings) {
-          // Create user systemSettings
+    
           const newSystemSettings = await prisma.system_Setting.create({
             data: {
               userId: user.id,
@@ -270,9 +298,7 @@ export const auth = betterAuth({
       } catch (err: any) {
         console.error("❌ Better-Auth Event: Library/SystemSettings Create Error:", err?.message || err);
         console.error("Error stack:", err?.stack);
-        // Don't throw - library/systemSettings creation failure shouldn't break user signup
-        // The service layer will create it as a fallback when user tries to create a script/callerId
-      }
+          }
     },
   },
 
