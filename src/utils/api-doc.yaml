@@ -4382,6 +4382,8 @@
 #       type: http
 #       scheme: bearer
 #       bearerFormat: JWT
+
+
 openapi: "3.1.0"
 info:
   title: "Boilerplate API Documentation"
@@ -9354,6 +9356,253 @@ paths:
                 properties:
                   success:
                     type: boolean
+                 # ... previous code ...
+                    message:
+                      type: string
+  # <--- Move all the way back here (usually 2 spaces indentation)
+  /api/system-settings/dialer-settings/{systemSettingId}:
+    get:
+      summary: "Get Dialer Settings"
+      # ... rest of the code
+      tags:
+        - SystemSettings DialerSetting
+      description: "Retrieve dialer settings (Time shield, audio settings, etc.) for a specific system setting ID"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: systemSettingId
+          required: true
+          schema:
+            type: string
+          description: "System Setting UUID"
+      responses:
+        "200":
+          description: "Dialer settings fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Dialer settings fetched successfully"
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      useTimeShield:
+                        type: boolean
+                      timeShieldStartTime:
+                        type: string
+                        example: "10:00"
+                      timeShieldEndTime:
+                        type: string
+                        example: "06:00"
+                      useAnswerNotificationTone:
+                        type: boolean
+                      deleteDisconnectedNumbers:
+                        type: boolean
+                      deleteFaxNumbers:
+                        type: boolean
+                      useCallSessionTimer:
+                        type: boolean
+                      systemSettingId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Unauthorized"
+        "403":
+          description: "Forbidden - Insufficient permissions"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+        "404":
+          description: "Settings not found"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+
+    post:
+      summary: "Create or Update Dialer Settings"
+      tags:
+        - SystemSettings DialerSetting
+      description: "Upsert dialer settings. Creates if not exists, updates if exists."
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: systemSettingId
+          required: true
+          schema:
+            type: string
+          description: "System Setting UUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                useTimeShield:
+                  type: boolean
+                  description: "Enable Time Shield to restrict calling hours"
+                  default: false
+                timeShieldStartTime:
+                  type: string
+                  description: "Start time for allowed calls (HH:mm)"
+                  example: "10:00"
+                timeShieldEndTime:
+                  type: string
+                  description: "End time for allowed calls (HH:mm)"
+                  example: "06:00"
+                useAnswerNotificationTone:
+                  type: boolean
+                  description: "Play sound when a live person answers"
+                  default: false
+                deleteDisconnectedNumbers:
+                  type: boolean
+                  description: "Automatically remove disconnected numbers"
+                  default: false
+                deleteFaxNumbers:
+                  type: boolean
+                  description: "Automatically remove fax numbers"
+                  default: false
+                useCallSessionTimer:
+                  type: boolean
+                  description: "Enable timer for calling sessions"
+                  default: false
+      responses:
+        "200":
+          description: "Dialer settings updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Dialer settings updated successfully"
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      useTimeShield:
+                        type: boolean
+                      timeShieldStartTime:
+                        type: string
+                      timeShieldEndTime:
+                        type: string
+                      useAnswerNotificationTone:
+                        type: boolean
+                      deleteDisconnectedNumbers:
+                        type: boolean
+                      deleteFaxNumbers:
+                        type: boolean
+                      useCallSessionTimer:
+                        type: boolean
+                      systemSettingId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+        "400":
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                  errors:
+                    type: array
+        "401":
+          description: "Unauthorized"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+        "403":
+          description: "Forbidden"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
                   message:
                     type: string
 

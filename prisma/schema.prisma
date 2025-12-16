@@ -641,6 +641,7 @@ model Compliance_DNC {
 
   @@map("compliance_dnc")
 }
+// ... existing models (CallerId, CallSettings, etc.) ...
 
 model System_Setting {
   id        String   @id @default(uuid())
@@ -649,11 +650,41 @@ model System_Setting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  caller_id    CallerId[]
-  callSettings CallSettings[]
-  miscFields   MiscField[]
+  caller_id      CallerId[]
+  callSettings   CallSettings[]
+  miscFields     MiscField[]
+ 
+  dialerSetting  DialerSetting? 
 
   @@map("system_settings")
+}
+
+model DialerSetting {
+  id        String   @id @default(uuid())
+  
+  // Time Shield Section
+  useTimeShield       Boolean @default(false)
+  timeShieldStartTime String? // Format: "HH:mm"
+  timeShieldEndTime   String? // Format: "HH:mm"
+
+  // Answer Notification Section
+  useAnswerNotificationTone Boolean @default(false)
+
+  // Auto-Remove Section
+  deleteDisconnectedNumbers Boolean @default(false)
+  deleteFaxNumbers          Boolean @default(false)
+
+  // Call Session Timer Section
+  useCallSessionTimer       Boolean @default(false)
+  
+  // Relationship
+  systemSettingId String         @unique // One dialer setting per system setting
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("dialer_settings")
 }
 
 model Billing {
