@@ -9359,128 +9359,97 @@ paths:
                  # ... previous code ...
                     message:
                       type: string
-  # <--- Move all the way back here (usually 2 spaces indentation)
-  /api/system-settings/dialer-settings/{systemSettingId}:
-    get:
-      summary: "Get Dialer Settings"
-      # ... rest of the code
+ # ------------------------------------------------------------------------------------------
+  # Route 1: Base Route (Create & Get)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/dialer-settings:
+    post:
+      summary: "Create Dialer Settings"
       tags:
         - SystemSettings DialerSetting
-      description: "Retrieve dialer settings (Time shield, audio settings, etc.) for a specific system setting ID"
+      description: "Create initial dialer settings for the authenticated user. This should only be called once."
       security:
         - bearerAuth: []
-      parameters:
-        - in: path
-          name: systemSettingId
-          required: true
-          schema:
-            type: string
-          description: "System Setting UUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - useTimeShield
+              properties:
+                useTimeShield:
+                  type: boolean
+                  default: false
+                timeShieldStartTime:
+                  type: string
+                  example: "09:00"
+                timeShieldEndTime:
+                  type: string
+                  example: "17:00"
+                useAnswerNotificationTone:
+                  type: boolean
+                  default: false
+                deleteDisconnectedNumbers:
+                  type: boolean
+                  default: false
+                deleteFaxNumbers:
+                  type: boolean
+                  default: false
+                useCallSessionTimer:
+                  type: boolean
+                  default: false
       responses:
-        "200":
-          description: "Dialer settings fetched successfully"
+        "201":
+          description: "Created successfully"
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  message:
-                    type: string
-                    example: "Dialer settings fetched successfully"
-                  data:
-                    type: object
-                    properties:
-                      id:
-                        type: string
-                      useTimeShield:
-                        type: boolean
-                      timeShieldStartTime:
-                        type: string
-                        example: "10:00"
-                      timeShieldEndTime:
-                        type: string
-                        example: "06:00"
-                      useAnswerNotificationTone:
-                        type: boolean
-                      deleteDisconnectedNumbers:
-                        type: boolean
-                      deleteFaxNumbers:
-                        type: boolean
-                      useCallSessionTimer:
-                        type: boolean
-                      systemSettingId:
-                        type: string
-                      createdAt:
-                        type: string
-                      updatedAt:
-                        type: string
+                $ref: '#/components/schemas/DialerSettingResponse'
+        "400":
+          description: "Settings already exist (Use PUT) or Validation Error"
         "401":
           description: "Unauthorized"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
-                    example: "Unauthorized"
         "403":
-          description: "Forbidden - Insufficient permissions"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
-        "404":
-          description: "Settings not found"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
-        "500":
-          description: "Internal server error"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
+          description: "Forbidden (Admin/Owner only)"
 
-    post:
-      summary: "Create or Update Dialer Settings"
+    get:
+      summary: "Get My Dialer Settings"
       tags:
         - SystemSettings DialerSetting
-      description: "Upsert dialer settings. Creates if not exists, updates if exists."
+      description: "Retrieve the dialer settings associated with the logged-in user's account."
       security:
         - bearerAuth: []
-      parameters:
-        - in: path
-          name: systemSettingId
-          required: true
-          schema:
-            type: string
-          description: "System Setting UUID"
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DialerSettingResponse'
+        "404":
+          description: "Settings not found"
+
+  # ------------------------------------------------------------------------------------------
+  # Route 2: ID Based Route (Update & Delete)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/dialer-settings/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        description: "The UUID of the Dialer Setting to update/delete"
+    
+    put:
+      summary: "Update Dialer Settings"
+      tags:
+        - SystemSettings DialerSetting
+      description: "Update existing dialer settings by ID."
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -9490,35 +9459,40 @@ paths:
               properties:
                 useTimeShield:
                   type: boolean
-                  description: "Enable Time Shield to restrict calling hours"
-                  default: false
                 timeShieldStartTime:
                   type: string
-                  description: "Start time for allowed calls (HH:mm)"
-                  example: "10:00"
                 timeShieldEndTime:
                   type: string
-                  description: "End time for allowed calls (HH:mm)"
-                  example: "06:00"
                 useAnswerNotificationTone:
                   type: boolean
-                  description: "Play sound when a live person answers"
-                  default: false
                 deleteDisconnectedNumbers:
                   type: boolean
-                  description: "Automatically remove disconnected numbers"
-                  default: false
                 deleteFaxNumbers:
                   type: boolean
-                  description: "Automatically remove fax numbers"
-                  default: false
                 useCallSessionTimer:
                   type: boolean
-                  description: "Enable timer for calling sessions"
-                  default: false
       responses:
         "200":
-          description: "Dialer settings updated successfully"
+          description: "Updated successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DialerSettingResponse'
+        "403":
+          description: "Forbidden (Not your settings)"
+        "404":
+          description: "Settings not found"
+
+    delete:
+      summary: "Delete Dialer Settings"
+      tags:
+        - SystemSettings DialerSetting
+      description: "Delete the dialer settings entry."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Deleted successfully"
           content:
             application/json:
               schema:
@@ -9529,83 +9503,171 @@ paths:
                     example: true
                   message:
                     type: string
-                    example: "Dialer settings updated successfully"
+                    example: "Settings deleted successfully"
                   data:
                     type: object
-                    properties:
-                      id:
-                        type: string
-                      useTimeShield:
-                        type: boolean
-                      timeShieldStartTime:
-                        type: string
-                      timeShieldEndTime:
-                        type: string
-                      useAnswerNotificationTone:
-                        type: boolean
-                      deleteDisconnectedNumbers:
-                        type: boolean
-                      deleteFaxNumbers:
-                        type: boolean
-                      useCallSessionTimer:
-                        type: boolean
-                      systemSettingId:
-                        type: string
-                      createdAt:
-                        type: string
-                      updatedAt:
-                        type: string
-        "400":
-          description: "Validation error"
+                    nullable: true
+        "404":
+          description: "Settings not found"
+          # ------------------------------------------------------------------------------------------
+  # Route 1: Base Route (Create & Get)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/notification-settings:
+    post:
+      summary: "Create Notification Settings"
+      tags:
+        - SystemSettings NotificationSetting
+      description: "Create initial notification settings (Email reminders, Reports, Alerts) for the authenticated user. This should only be called once."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enableAppointmentReminders:
+                  type: boolean
+                  default: false
+                  description: "Toggle for Appointment Reminder Emails"
+                appointmentReminderEmail:
+                  type: string
+                  format: email
+                  description: "Email address to receive appointment reminders"
+                enableCallActivityReport:
+                  type: boolean
+                  default: false
+                enableSessionSummaryReport:
+                  type: boolean
+                  default: false
+                includeAgentsWithNoActivity:
+                  type: boolean
+                  default: false
+                dailyCallReportEmail:
+                  type: string
+                  format: email
+                  description: "Email address to receive daily reports"
+                enableAppointmentNotifications:
+                  type: boolean
+                  default: false
+                  description: "In-App Notification toggle"
+                enableComplianceAlerts:
+                  type: boolean
+                  default: false
+                  description: "In-App Compliance Alert toggle"
+      responses:
+        "201":
+          description: "Created successfully"
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
-                  errors:
-                    type: array
+                $ref: '#/components/schemas/NotificationSettingResponse'
+        "400":
+          description: "Settings already exist (Use PUT) or Validation Error"
         "401":
           description: "Unauthorized"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
         "403":
-          description: "Forbidden"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
-        "500":
-          description: "Internal server error"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  message:
-                    type: string
+          description: "Forbidden (Admin/Owner only)"
 
+    get:
+      summary: "Get My Notification Settings"
+      tags:
+        - SystemSettings NotificationSetting
+      description: "Retrieve the notification settings associated with the logged-in user's account."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettingResponse'
+        "404":
+          description: "Settings not found"
+
+  # ------------------------------------------------------------------------------------------
+  # Route 2: ID Based Route (Update & Delete)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/notification-settings/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        description: "The UUID of the Notification Setting to update/delete"
+    
+    put:
+      summary: "Update Notification Settings"
+      tags:
+        - SystemSettings NotificationSetting
+      description: "Update existing notification settings by ID."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enableAppointmentReminders:
+                  type: boolean
+                appointmentReminderEmail:
+                  type: string
+                enableCallActivityReport:
+                  type: boolean
+                enableSessionSummaryReport:
+                  type: boolean
+                includeAgentsWithNoActivity:
+                  type: boolean
+                dailyCallReportEmail:
+                  type: string
+                enableAppointmentNotifications:
+                  type: boolean
+                enableComplianceAlerts:
+                  type: boolean
+      responses:
+        "200":
+          description: "Updated successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettingResponse'
+        "403":
+          description: "Forbidden (Not your settings)"
+        "404":
+          description: "Settings not found"
+
+    delete:
+      summary: "Delete Notification Settings"
+      tags:
+        - SystemSettings NotificationSetting
+      description: "Delete the notification settings entry."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Settings deleted successfully"
+                  data:
+                    type: object
+                    nullable: true
+        "404":
+          description: "Settings not found"
+ 
 components:
   securitySchemes:
     bearerAuth:

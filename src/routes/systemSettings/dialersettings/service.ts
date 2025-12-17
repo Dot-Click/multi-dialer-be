@@ -1,47 +1,44 @@
-import { PrismaClient, DialerSetting } from '@prisma/client';
+import prisma from "../../../lib/prisma";
 
-const prisma = new PrismaClient();
+// Create Dialer Settings (ensures SystemSetting exists)
+export async function createDialerSettingInDb(payload: any, userId: string) {
+  // Ensure SystemSetting exists for the user
+  let systemSetting = await prisma.system_Setting.findFirst({ where: { userId } });
+  
+  if (!systemSetting) {
+    systemSetting = await prisma.system_Setting.create({ data: { userId } });
+  }
 
-// Interface for the data coming from the frontend
-interface CreateOrUpdateDialerSettingDto {
-  useTimeShield?: boolean;
-  timeShieldStartTime?: string;
-  timeShieldEndTime?: string;
-  useAnswerNotificationTone?: boolean;
-  deleteDisconnectedNumbers?: boolean;
-  deleteFaxNumbers?: boolean;
-  useCallSessionTimer?: boolean;
+  // Create the Dialer Setting
+  return await prisma.dialerSetting.create({
+    data: {
+      ...payload,
+      systemSettingId: systemSetting.id,
+    },
+  });
 }
 
-export const DialerSettingService = {
-  /**
-   * Get Dialer Settings by System Setting ID
-   */
-  getDialerSettings: async (systemSettingId: string) => {
-    return await prisma.dialerSetting.findUnique({
-      where: { systemSettingId },
-    });
-  },
+// Get Dialer Settings
+export async function getDialerSettingFromDb(userId: string) {
+  const systemSetting = await prisma.system_Setting.findFirst({ where: { userId } });
+  if (!systemSetting) return null;
 
-  /**
-   * Upsert (Create or Update) Dialer Settings
-   */
-  upsertDialerSettings: async (
-    systemSettingId: string,
-    data: CreateOrUpdateDialerSettingDto
-  ) => {
-    // We use upsert to ensure we don't create duplicates for the same system setting
-    return await prisma.dialerSetting.upsert({
-      where: {
-        systemSettingId: systemSettingId,
-      },
-      update: {
-        ...data,
-      },
-      create: {
-        systemSettingId: systemSettingId,
-        ...data,
-      },
-    });
-  },
-};
+  return await prisma.dialerSetting.findFirst({
+    where: { systemSettingId: systemSetting.id },
+  });
+}
+
+// Update Dialer Settings
+export async function updateDialerSettingInDb(id: string, payload: any) {
+  return await prisma.dialerSetting.update({
+    where: { id },
+    data: payload,
+  });
+}
+
+// Delete Dialer Settings
+export async function deleteDialerSettingFromDb(id: string) {
+  return await prisma.dialerSetting.delete({
+    where: { id },
+  });
+}

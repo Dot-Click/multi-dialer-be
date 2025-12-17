@@ -310,8 +310,34 @@ model System_Setting {
 
   dialerSetting     DialerSetting?
   appearance Appearance?
+  notificationSetting NotificationSetting?
 
   @@map("system_settings")
+}
+
+// NEW MODEL: Specific to the UI Screenshot
+model NotificationSetting {
+  id              String         @id @default(uuid())
+  systemSettingId String         @unique
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  // Section 1: Appointment Reminder Emails
+  enableAppointmentReminders Boolean @default(false)
+  appointmentReminderEmail   String? // The "Send to" input
+
+  // Section 2: Daily Call Reports
+  enableCallActivityReport    Boolean @default(false)
+  enableSessionSummaryReport  Boolean @default(false)
+  includeAgentsWithNoActivity Boolean @default(false)
+  dailyCallReportEmail        String? // The "Send to" input
+
+  // Section 3: In-App Notifications
+  enableAppointmentNotifications Boolean @default(false)
+  enableComplianceAlerts         Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("notification_settings")
 }
 
 model DialerSetting {

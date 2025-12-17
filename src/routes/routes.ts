@@ -11,6 +11,7 @@ import callbackPromptRoutes from "./library/callBackPrompt/index";
 import miscFieldsRoutes from "./systemSettings/miscFields/index"
 import appearanceRoutes from "./systemSettings/appearance/index"
 import dialerSettingRoute from "./systemSettings/dialersettings/index"
+import  notificationRoute from "./systemSettings/notification/index"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 
 const router = Router()
@@ -31,6 +32,7 @@ router.use("/system-settings/dialer-settings",protectRoute, checkRole(["ADMIN", 
 router.use("/system-settings/call-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), callSettingsRoutes)
 router.use("/system-settings/misc-fields", protectRoute, checkRole(["ADMIN", "OWNER"]), miscFieldsRoutes)
 router.use("/system-settings/appearance", protectRoute, checkRole(["ADMIN", "OWNER"]), appearanceRoutes)
+router.use("/system-settings/notification-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), notificationRoute)
 
 
 export default router

@@ -1,85 +1,91 @@
-import { Request, Response } from 'express';
-import { DialerSettingService } from './service'; // Ensure path is correct
+import { Request, Response } from "express";
+import { successResponse, errorResponse } from "../../../utils/handler";
+import { validateData } from "../../../middlewares/vald.middleware";
+import { updateDialerSettingSchema } from "../../../zod/dialerSetting.schema"; // Ensure you have this Zod schema
+import { 
+  createDialerSettingInDb, 
+  getDialerSettingFromDb, 
+  updateDialerSettingInDb,
+  deleteDialerSettingFromDb
+} from "./service";
 
-// FIX: Use Omit to exclude the default 'user' type to avoid conflict
-interface AuthenticatedRequest extends Omit<Request, 'user'> {
-  user?: {
-    id: string;
-    role: 'OWNER' | 'ADMIN' | 'AGENT' | 'USER'; 
-  };
-}
+// Helper to check permissions
+const isAuthorized = (role?: string) => ["ADMIN", "OWNER"].includes(role || "");
 
-export const DialerSettingController = {
-  /**
-   * GET /api/system-settings/dialer-settings:systemSettingId
-   */
-  getSettings: async (req: Request, res: Response) => {
-    try {
-      // Cast req to our custom type to access the user safely
-      const authReq = req as AuthenticatedRequest;
-      const { systemSettingId } = authReq.params;
-      const userRole = authReq.user?.role;
+// Create Dialer Settings (Runs only once)
+export const createDialerSettings = async (req: Request, res: Response) => {
+  try {
+    const { id: userId, role } = req.user!;
 
-      // Access Control Check
-      const allowedRoles = ['OWNER', 'ADMIN', 'AGENT'];
-      if (!userRole || !allowedRoles.includes(userRole)) {
-        return res.status(403).json({ message: 'Access Denied: Insufficient permissions.' });
-      }
+    // 1. Permission Check
+    if (!isAuthorized(role)) return errorResponse(res, "Access Denied: Admin/Owner only", 403);
 
-      const settings = await DialerSettingService.getDialerSettings(systemSettingId);
+    // 2. Validate Payload
+    const result = await validateData(updateDialerSettingSchema, req.body) as any;
+    if (!('data' in result)) return errorResponse(res, { errors: result }, 400);
 
-      if (!settings) {
-        return res.status(404).json({ message: 'Dialer settings not found.' });
-      }
+    // 3. Check if already exists (Enforce 1-time creation)
+    const existing = await getDialerSettingFromDb(userId);
+    if (existing) return errorResponse(res, "Settings already exist. Use UPDATE instead.", 400);
 
-      return res.status(200).json(settings);
-    } catch (error) {
-      console.error('Error fetching dialer settings:', error);
-      return res.status(500).json({ message: 'Internal server error' });
-    }
-  },
+    // 4. Create
+    const newSettings = await createDialerSettingInDb(result.data, userId);
+    successResponse(res, 201, "Dialer settings created", newSettings);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
 
-  /**
-   * POST /api/system-settings/dialer-settings:systemSettingId
-   */
-  updateSettings: async (req: Request, res: Response) => {
-    try {
-      // Cast req to our custom type
-      const authReq = req as AuthenticatedRequest;
-      const { systemSettingId } = authReq.params;
-      const userRole = authReq.user?.role;
+// Get Dialer Settings
+export const getDialerSettings = async (req: Request, res: Response) => {
+  try {
+    const { id: userId, role } = req.user!;
+    
+    // Permission Check
+    if (!isAuthorized(role)) return errorResponse(res, "Access Denied", 403);
 
-      // Access Control Check
-      const allowedRoles = ['OWNER', 'ADMIN', 'AGENT'];
-      if (!userRole || !allowedRoles.includes(userRole)) {
-        return res.status(403).json({ message: 'Access Denied: Insufficient permissions.' });
-      }
+    const settings = await getDialerSettingFromDb(userId);
+    if (!settings) return errorResponse(res, "Settings not found", 404);
 
-      // Destructure body to ensure only valid fields are passed
-      const {
-        useTimeShield,
-        timeShieldStartTime,
-        timeShieldEndTime,
-        useAnswerNotificationTone,
-        deleteDisconnectedNumbers,
-        deleteFaxNumbers,
-        useCallSessionTimer
-      } = authReq.body;
+    successResponse(res, 200, "Settings fetched", settings);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
 
-      const updatedSettings = await DialerSettingService.upsertDialerSettings(systemSettingId, {
-        useTimeShield,
-        timeShieldStartTime,
-        timeShieldEndTime,
-        useAnswerNotificationTone,
-        deleteDisconnectedNumbers,
-        deleteFaxNumbers,
-        useCallSessionTimer
-      });
+// Update Dialer Settings
+export const updateDialerSettings = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.user!;
 
-      return res.status(200).json(updatedSettings);
-    } catch (error) {
-      console.error('Error updating dialer settings:', error);
-      return res.status(500).json({ message: 'Internal server error' });
-    }
-  },
+    // 1. Permission Check
+    if (!isAuthorized(role)) return errorResponse(res, "Access Denied", 403);
+
+    // 2. Validate Payload
+    const result = await validateData(updateDialerSettingSchema, req.body) as any;
+    if (!('data' in result)) return errorResponse(res, { errors: result }, 400);
+
+    // 3. Update
+    const updated = await updateDialerSettingInDb(id, result.data);
+    successResponse(res, 200, "Settings updated", updated);
+  } catch (error: any) {
+    errorResponse(res, "Settings not found or update failed", 500);
+  }
+};
+
+// Delete Dialer Settings
+export const deleteDialerSettings = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.user!;
+
+    // Permission Check
+    if (!isAuthorized(role)) return errorResponse(res, "Access Denied", 403);
+
+    await deleteDialerSettingFromDb(id);
+    successResponse(res, 200, "Settings deleted", null);
+  } catch (error: any) {
+    errorResponse(res, "Deletion failed", 500);
+  }
 };

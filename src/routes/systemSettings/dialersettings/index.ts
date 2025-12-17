@@ -1,11 +1,24 @@
-import { Router, RequestHandler } from 'express';
-import { DialerSettingController } from './controller';
+import { Router } from "express";
+import { 
+  createDialerSettings,
+  getDialerSettings, 
+  updateDialerSettings,
+  deleteDialerSettings
+} from "./controller";
+import { protectRoute } from "../../../middlewares/auth.middleware";
 
 const router = Router();
 
-// Route to Get Settings
-router.get('/:systemSettingId', (DialerSettingController.getSettings as unknown) as RequestHandler);
+// Create Settings (Only works once per user)
+router.post("/", protectRoute, createDialerSettings);
 
-router.post('/:systemSettingId', (DialerSettingController.updateSettings as unknown) as RequestHandler);
+// Get Settings
+router.get("/", protectRoute, getDialerSettings);
+
+// Update Settings
+router.put("/:id", protectRoute, updateDialerSettings);
+
+// Delete Settings
+router.delete("/:id", protectRoute, deleteDialerSettings);
 
 export default router;
