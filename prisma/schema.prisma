@@ -1,346 +1,3 @@
-// generator client {
-//   provider = "prisma-client-js"
-// }
-
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
-
-// enum UserStatus {
-//   ACTIVE
-//   DEACTIVATED
-//   SUSPENDED
-//   PENDING
-// }
-
-// enum UserRole {
-//   AGENT
-//   ADMIN
-//   OWNER
-// }
-
-// enum Plan {
-//   STARTER
-//   PROFESSIONAL
-//   ENTERPRISE
-// }
-
-// enum Status {
-//   PENDING
-//   PAID
-//   FAILED
-//   REFUNDED
-// }
-
-// enum BillingCycle {
-//   MONTHLY
-//   YEARLY
-// }
-
-// enum SubscriptionStatus {
-//   ACTIVE
-//   CANCELLED
-//   EXPIRED
-//   PENDING
-// }
-
-// model User {
-//   id            String     @id @default(uuid())
-//   fullName      String?                    
-//   email         String     @unique
-//   password      String?
-//   role          UserRole   @default(AGENT) 
-//   emailVerified Boolean    @default(false)
-//   image         String?
-//   status        UserStatus @default(ACTIVE)
-//   lastLogin     DateTime?
-//   createdAt     DateTime   @default(now())
-//   updatedAt     DateTime   @updatedAt
-
-//   // Relations
-//   sessions          Session[]
-//   accounts          Account[]
-//   leads             Lead[]
-//   contactDetails    ContactDetail[]
-//   dataDialers       DataDialer[]
-//   multiLineDialers  MultiLineDialer[]
-//   libraries         Library[]
-//   reportAnalytics   Report_Analytic[]
-//   complianceDNC     Compliance_DNC[]
-//   systemSettings    System_Setting[]
-//   billings          Billing[]
-//   leadStores        LeadStore[]
-//   userSubscriptions UserSubscription[]
-//   planFeatures      PlanFeature[]
-//   products          Product[]
-
-//   @@map("users")
-// }
-
-// model Session {
-//   id        String   @id @default(uuid())
-//   expiresAt DateTime 
-//   token     String   @unique
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-//   ipAddress String?
-//   userAgent String?
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-//   @@map("sessions")
-// }
-
-// model Account {
-//   id                    String    @id @default(uuid())
-//   accountId             String
-//   providerId            String
-//   userId                String
-//   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   accessToken           String?
-//   refreshToken          String?
-//   idToken               String?
-//   accessTokenExpiresAt  DateTime?
-//   refreshTokenExpiresAt DateTime?
-//   scope                 String?
-//   password              String?
-//   createdAt             DateTime  @default(now())
-//   updatedAt             DateTime  @updatedAt
-
-//   @@map("accounts")
-// }
-
-// model Verification {
-//   id         String    @id @default(uuid())
-//   identifier String
-//   value      String
-//   expiresAt  DateTime
-//   createdAt  DateTime? @default(now())
-//   updatedAt  DateTime? @updatedAt
-
-//   @@map("verifications")
-// }
-
-// model Product {
-//   id          String   @id @default(uuid())
-//   name        String
-//   price       Int
-//   category    String
-//   description String?
-//   thumbnail   String?
-//   images      String[]
-//   userId      String
-//   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   createdAt   DateTime @default(now())
-//   updatedAt   DateTime @updatedAt
-
-//   @@map("products")
-// }
-
-// model DataDialer {
-//   id        String   @id @default(uuid())
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@map("data_dialers")
-// }
-
-// model ContactDetail {
-//   id        String   @id @default(uuid())
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@map("contact_details")
-// }
-
-// model MultiLineDialer {
-//   id        String   @id @default(uuid())
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@map("multi_line_dialers")
-// }
-
-// model Library {
-//   id        String    @id @default(uuid())
-//   userId    String
-//   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-//   scripts   Script[]  // ⬅ One-to-many relation
-//   smsTemplate   SMSTemplate[]  // ⬅ One-to-many relation
-
-//   createdAt DateTime  @default(now())
-//   updatedAt DateTime  @updatedAt
-
-//   @@map("libraries")
-// }
-
-// model Report_Analytic {
-//   id        String   @id @default(uuid())
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@map("report_analytics")
-// }
-
-// model Compliance_DNC {
-//   id        String   @id @default(uuid())
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@map("compliance_dnc")
-// }
-
-// model System_Setting {
-//   id        String   @id @default(uuid())
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@map("system_settings")
-// }
-
-// model Billing {
-//   id              String       @id @default(uuid())
-//   userId          String
-//   user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   invoiceNumber   String       @unique
-//   plan            Plan
-//   amount          Int
-//   date            DateTime
-//   status          Status
-//   billingCycle    BillingCycle @default(MONTHLY)
-//   usersCount      Int          @default(1)
-//   nextBillingDate DateTime?
-//   createdAt       DateTime     @default(now())
-//   updatedAt       DateTime     @updatedAt
-
-//   // Relations
-//   leadStore        LeadStore?
-//   userSubscription UserSubscription?
-
-//   @@map("billings")
-// }
-
-// model LeadStore {
-//   id          String   @id @default(uuid())
-//   title       String
-//   description String
-//   price       Int
-//   isActive    Boolean  @default(true)
-//   userId      String
-//   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-//   billingId   String   @unique
-//   billing     Billing  @relation(fields: [billingId], references: [id])
-//   createdAt   DateTime @default(now())
-//   updatedAt   DateTime @updatedAt
-
-//   @@map("lead_stores")
-// }
-
-// model LeadStoreService {
-//   id          String   @id @default(uuid())
-//   name        String // "Expired Data", "Neighborhood Search" etc.
-//   price       Int // monthly price
-//   description String?
-//   isActive    Boolean  @default(true)
-//   createdAt   DateTime @default(now())
-//   updatedAt   DateTime @updatedAt
-
-//   @@map("lead_store_services")
-// }
-
-// model Lead {
-//   id        String   @id @default(uuid())
-//   fullName  String
-//   email     String
-//   phone     String
-//   address   String
-//   city      String
-//   state     String
-//   zip       String
-//   phoneType String
-//   userId    String
-//   user      User     @relation(fields: [userId], references: [id])
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   @@map("leads")
-// }
-
-// model UserSubscription {
-//   id           String             @id @default(uuid())
-//   userId       String
-//   user         User               @relation(fields: [userId], references: [id])
-//   plan         Plan
-//   status       SubscriptionStatus @default(ACTIVE)
-
-//   startDate    DateTime
-//   endDate      DateTime?
-//   usersCount   Int                @default(1)
-//   billingCycle BillingCycle       @default(MONTHLY)
-//   createdAt    DateTime           @default(now())
-//   updatedAt    DateTime           @updatedAt
-//   // Relation to billing for payment history
-//   billingId    String?            @unique
-//   billing      Billing?           @relation(fields: [billingId], references: [id])
-
-//   @@unique([userId, plan])
-//   @@map("user_subscriptions")
-// }
-
-// model PlanFeature {
-//   id          String   @id @default(uuid())
-//   plan        Plan
-//   featureName String
-//   isIncluded  Boolean  @default(true)
-//   description String?
-//   createdAt   DateTime @default(now())
-//   updatedAt   DateTime @updatedAt
-//   userId      String?
-//   user        User?    @relation(fields: [userId], references: [id])
-
-//   @@map("plan_features")
-// }
-
-// model Script {
-//   id          String   @id @default(uuid())
-//   libraryId   String
-//   library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-
-//   scriptName  String   @unique
-//   scriptText  String
-//   status      Boolean  @default(true)
-
-//   createdAt   DateTime @default(now())
-//   updatedAt   DateTime @updatedAt
-// }
-
-// model SMSTemplate {
-//   id          String   @id @default(uuid())
-//   libraryId   String
-//   library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-
-//   templateName  String   @unique
-//   content  String
-
-//   createdAt   DateTime @default(now())
-//   updatedAt   DateTime @updatedAt
-// }
-
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -406,7 +63,6 @@ enum FileCategory {
   audio
   video
 }
-
 
 model User {
   id            String     @id @default(uuid())
@@ -532,67 +188,65 @@ model MultiLineDialer {
 }
 
 model Library {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  scripts         Script[] 
-  smsTemplate     SMSTemplate[] 
+  id              String           @id @default(uuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scripts         Script[]
+  smsTemplate     SMSTemplate[]
   mediaCenter     MediaCenter[]
   emailTemplate   EmailTemplate[]
-  callbackPrompts CallbackPrompt[]   
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  callbackPrompts CallbackPrompt[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@map("libraries")
 }
 
-
 model Script {
-  id        String  @id @default(uuid())
-  libraryId String
-  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-  scriptName String  @unique
+  id         String   @id @default(uuid())
+  libraryId  String
+  library    Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  scriptName String   @unique
   scriptText String
-  status     Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model SMSTemplate {
-  id        String  @id @default(uuid())
-  libraryId String
-  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-  templateName String @unique
+  id           String   @id @default(uuid())
+  libraryId    String
+  library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  templateName String   @unique
   content      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model EmailTemplate {
-  id        String  @id @default(uuid())
-  libraryId String
-  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid())
+  libraryId    String
+  library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
   templateName String
-  subject   String
-  content   String
-  status    Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  subject      String
+  content      String
+  status       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([libraryId, templateName])
   @@map("email_templates")
 }
 
-
 model CallbackPrompt {
-  id           String   @id @default(uuid())
-  libraryId    String
-  library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-  templateName String
+  id            String        @id @default(uuid())
+  libraryId     String
+  library       Library       @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  templateName  String
   recordingType RecordingType
-  createdBy    String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdBy     String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   @@unique([libraryId, templateName])
   @@map("callback_prompts")
@@ -604,20 +258,19 @@ enum RecordingType {
   EMAIL_VIDEO
 }
 
-
 model MediaCenter {
   id           String       @id @default(uuid())
-  libraryId   String
-  library     Library      @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  libraryId    String
+  library      Library      @relation(fields: [libraryId], references: [id], onDelete: Cascade)
   templateName String
-  mediaType   MediaType
-  fileName    String
-  fileUrl     String?
-  fileSize    Int          // in bytes
-  duration    Int?          // in seconds, nullable
+  mediaType    MediaType
+  fileName     String
+  fileUrl      String?
+  fileSize     Int // in bytes
+  duration     Int? // in seconds, nullable
   fileCategory FileCategory
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   @@map("media_center")
 }
@@ -641,6 +294,7 @@ model Compliance_DNC {
 
   @@map("compliance_dnc")
 }
+
 // ... existing models (CallerId, CallSettings, etc.) ...
 
 model System_Setting {
@@ -650,18 +304,19 @@ model System_Setting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  caller_id      CallerId[]
-  callSettings   CallSettings[]
-  miscFields     MiscField[]
- 
-  dialerSetting  DialerSetting? 
+  caller_id    CallerId[]
+  callSettings CallSettings[]
+  miscFields   MiscField[]
+
+  dialerSetting     DialerSetting?
+  appearance Appearance?
 
   @@map("system_settings")
 }
 
 model DialerSetting {
-  id        String   @id @default(uuid())
-  
+  id String @id @default(uuid())
+
   // Time Shield Section
   useTimeShield       Boolean @default(false)
   timeShieldStartTime String? // Format: "HH:mm"
@@ -675,8 +330,8 @@ model DialerSetting {
   deleteFaxNumbers          Boolean @default(false)
 
   // Call Session Timer Section
-  useCallSessionTimer       Boolean @default(false)
-  
+  useCallSessionTimer Boolean @default(false)
+
   // Relationship
   systemSettingId String         @unique // One dialer setting per system setting
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
@@ -817,31 +472,30 @@ model CallerId {
 }
 
 model CallSettings {
-  id    String @id @default(cuid())
-  label String
+  id                        String         @id @default(cuid())
+  label                     String
   onHoldRecording1          String?
   onHoldRecording2          String?
   ivrRecording              String?
   answeringMachineRecording String?
-  enableAutoPause        Boolean @default(false)
-  enableRecording        Boolean @default(false)
-  sendOutlookAppointment Boolean @default(false)
-  allowDncCalls Boolean @default(false)
-  callerId    String?
-  countryCode String
-  numberOfLines Int     @default(1)
-  ringTime      Int     @default(30)
-  callScriptId  String?
-  sendEmail Boolean @default(false)
-  sendText  Boolean @default(false)
-  systemSettingId String
-  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  enableAutoPause           Boolean        @default(false)
+  enableRecording           Boolean        @default(false)
+  sendOutlookAppointment    Boolean        @default(false)
+  allowDncCalls             Boolean        @default(false)
+  callerId                  String?
+  countryCode               String
+  numberOfLines             Int            @default(1)
+  ringTime                  Int            @default(30)
+  callScriptId              String?
+  sendEmail                 Boolean        @default(false)
+  sendText                  Boolean        @default(false)
+  systemSettingId           String
+  systemSetting             System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
 
   @@map("call_settings")
 }
-
 
 model MiscField {
   id              String         @id @default(uuid())
@@ -857,4 +511,45 @@ model MiscField {
   updatedAt       DateTime       @updatedAt
 
   @@map("misc_fields")
+}
+
+model Appearance {
+  id String @id @default(uuid())
+
+  // Dashboard Sections Visibility
+  calendar               Boolean @default(true)
+  hotlist                Boolean @default(true)
+  callingGroupsWorkspace Boolean @default(true)
+  dialerHealth           Boolean @default(true)
+  callStatistics         Boolean @default(true)
+  foldersLists           Boolean @default(true)
+  recentActivity         Boolean @default(true)
+
+  // AI & Intelligence Sections
+  bestTimeToCall            Boolean @default(true)
+  leadIntelligence          Boolean @default(true)
+  aiCoachingCallAnalysis    Boolean @default(true)
+  callOutcomeIntelligence   Boolean @default(true)
+  efficiencyAutomation      Boolean @default(true)
+  complianceRiskMonitoring  Boolean @default(true)
+  callingGroupsAiSidekick   Boolean @default(true)
+  agentImprovementScores    Boolean @default(true)
+  pipelineAccelerationIndex Boolean @default(true)
+
+  // Additional Options
+  lockGroups    Boolean @default(false)
+  birthdays     Boolean @default(false)
+  homeCloseDate Boolean @default(false)
+
+  // Time Zone
+  timeZone String @default("CST")
+
+  // Relation
+  systemSettingId String         @unique
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("appearance")
 }

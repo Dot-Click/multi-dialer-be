@@ -15,7 +15,7 @@ export const getAllCallSettingsOfSpecificUser = async (req: Request, res: Respon
     });
 
     if (!systemSettings) {
-      errorResponse(res, "SystemSettings not found for user", 404);
+      errorResponse(res, "System Settings not found for user", 404);
       return;
     }
 
@@ -56,13 +56,14 @@ export const getAllCallSettingsOfAllUsers = async (req: Request, res: Response):
                 id: true,
                 fullName: true,
                 email: true,
+
               },
             },
           },
         },
       },
     });
-    successResponse(res, 200, "All CallSettings fetched", callSettings);
+    successResponse(res, 200, "All Call Settings fetched", callSettings);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
   }
@@ -104,7 +105,7 @@ export const getCallSettingsById = async (req: Request, res: Response): Promise<
     });
     
     if (!callSettings) {
-      errorResponse(res, "CallSettings not found", 404);
+      errorResponse(res, "Call Settings not found", 404);
       return;
     }
     successResponse(res, 200, "CallSettings fetched", callSettings);
