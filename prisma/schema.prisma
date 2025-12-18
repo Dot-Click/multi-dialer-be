@@ -311,8 +311,58 @@ model System_Setting {
   dialerSetting     DialerSetting?
   appearance Appearance?
   notificationSetting NotificationSetting?
+  integrations        Integration[]
 
   @@map("system_settings")
+}
+
+// 1. The 8 Providers from your Figma
+enum IntegrationProvider {
+  TWILIO
+  GOOGLE_MAPS
+  REALTOR_DOT_COM
+  BOMB_BOMB
+  GMAIL
+  STANPP_DOT_COM
+  MY_PLUS_LEADS
+  ZAPIER
+}
+
+// 2. The Status for the UI (Green/Red/Yellow)
+enum IntegrationStatus {
+  CONNECTED
+  FAILED
+  PROCESSING
+  NEED_SETUP
+}
+
+// 3. The Integration Table
+model Integration {
+  id              String             @id @default(uuid())
+  
+  // Link to the Admin/Owner Settings
+  systemSettingId String
+  systemSetting   System_Setting     @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  // Which Provider? (Twilio, Google, etc.)
+  provider        IntegrationProvider
+
+  // Status for the Frontend UI
+  status          IntegrationStatus  @default(NEED_SETUP)
+
+  // 🔐 THE KEY STORAGE (The "Where do I paste it?" part)
+  // This stores the keys as JSON.
+  credentials     Json?
+
+  // Error message if connection failed
+  errorMessage    String?
+
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  // Rule: One Admin can only have ONE connection per provider
+  @@unique([systemSettingId, provider])
+  @@map("integrations")
 }
 
 // NEW MODEL: Specific to the UI Screenshot

@@ -9359,10 +9359,10 @@ paths:
                  # ... previous code ...
                     message:
                       type: string
- # ------------------------------------------------------------------------------------------
-  # Route 1: Base Route (Create & Get)
+# ------------------------------------------------------------------------------------------
+  # Route 1: Create (Post to /create)
   # ------------------------------------------------------------------------------------------
-  /api/system-settings/dialer-settings:
+  /api/system-settings/dialer-settings/create:
     post:
       summary: "Create Dialer Settings"
       tags:
@@ -9414,6 +9414,33 @@ paths:
         "403":
           description: "Forbidden (Admin/Owner only)"
 
+  # ------------------------------------------------------------------------------------------
+  # Route 2: Get All (For Admin/Owner)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/dialer-settings/all:
+    get:
+      summary: "Get All Dialer Settings"
+      tags:
+        - SystemSettings DialerSetting
+      description: "Admin/Owner only. Retrieve a list of dialer settings for all users."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DialerSettingResponse'
+        "403":
+          description: "Forbidden (Access Denied)"
+
+  # ------------------------------------------------------------------------------------------
+  # Route 3: Get My Settings (Root Route)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/dialer-settings:
     get:
       summary: "Get My Dialer Settings"
       tags:
@@ -9432,7 +9459,7 @@ paths:
           description: "Settings not found"
 
   # ------------------------------------------------------------------------------------------
-  # Route 2: ID Based Route (Update & Delete)
+  # Route 4: ID Based Routes (Get, Update, Delete specific ID)
   # ------------------------------------------------------------------------------------------
   /api/system-settings/dialer-settings/{id}:
     parameters:
@@ -9441,8 +9468,25 @@ paths:
         required: true
         schema:
           type: string
-        description: "The UUID of the Dialer Setting to update/delete"
+        description: "The UUID of the Dialer Setting"
     
+    get:
+      summary: "Get Dialer Setting by ID"
+      tags:
+        - SystemSettings DialerSetting
+      description: "Retrieve a specific dialer setting by its unique ID."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DialerSettingResponse'
+        "404":
+          description: "Settings not found"
+
     put:
       summary: "Update Dialer Settings"
       tags:
@@ -9479,7 +9523,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/DialerSettingResponse'
         "403":
-          description: "Forbidden (Not your settings)"
+          description: "Forbidden"
         "404":
           description: "Settings not found"
 
@@ -9509,15 +9553,15 @@ paths:
                     nullable: true
         "404":
           description: "Settings not found"
-          # ------------------------------------------------------------------------------------------
-  # Route 1: Base Route (Create & Get)
+         # ------------------------------------------------------------------------------------------
+  # Route 1: Create (Post to /create)
   # ------------------------------------------------------------------------------------------
-  /api/system-settings/notification-settings:
+  /api/system-settings/notification-settings/create:
     post:
       summary: "Create Notification Settings"
       tags:
         - SystemSettings NotificationSetting
-      description: "Create initial notification settings (Email reminders, Reports, Alerts) for the authenticated user. This should only be called once."
+      description: "Create initial notification settings. Admin/Owner only. This should only be called once per user."
       security:
         - bearerAuth: []
       requestBody:
@@ -9570,6 +9614,33 @@ paths:
         "403":
           description: "Forbidden (Admin/Owner only)"
 
+  # ------------------------------------------------------------------------------------------
+  # Route 2: Get All (For Admin/Owner)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/notification-settings/all:
+    get:
+      summary: "Get All Notification Settings"
+      tags:
+        - SystemSettings NotificationSetting
+      description: "Admin/Owner only. Retrieve a list of notification settings for all users."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationSettingResponse'
+        "403":
+          description: "Forbidden (Access Denied)"
+
+  # ------------------------------------------------------------------------------------------
+  # Route 3: Get My Settings (Root Route)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/notification-settings:
     get:
       summary: "Get My Notification Settings"
       tags:
@@ -9588,7 +9659,7 @@ paths:
           description: "Settings not found"
 
   # ------------------------------------------------------------------------------------------
-  # Route 2: ID Based Route (Update & Delete)
+  # Route 4: ID Based Routes (Get, Update, Delete specific ID)
   # ------------------------------------------------------------------------------------------
   /api/system-settings/notification-settings/{id}:
     parameters:
@@ -9597,13 +9668,30 @@ paths:
         required: true
         schema:
           type: string
-        description: "The UUID of the Notification Setting to update/delete"
+        description: "The UUID of the Notification Setting"
     
+    get:
+      summary: "Get Notification Setting by ID"
+      tags:
+        - SystemSettings NotificationSetting
+      description: "Retrieve a specific notification setting by its unique ID."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettingResponse'
+        "404":
+          description: "Settings not found"
+
     put:
       summary: "Update Notification Settings"
       tags:
         - SystemSettings NotificationSetting
-      description: "Update existing notification settings by ID."
+      description: "Update existing notification settings. Users can ONLY update their own settings."
       security:
         - bearerAuth: []
       requestBody:
@@ -9637,7 +9725,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/NotificationSettingResponse'
         "403":
-          description: "Forbidden (Not your settings)"
+          description: "Forbidden (You can only update your own settings)"
         "404":
           description: "Settings not found"
 
@@ -9645,7 +9733,7 @@ paths:
       summary: "Delete Notification Settings"
       tags:
         - SystemSettings NotificationSetting
-      description: "Delete the notification settings entry."
+      description: "Delete the notification settings entry. Users can ONLY delete their own settings."
       security:
         - bearerAuth: []
       responses:
@@ -9665,8 +9753,12 @@ paths:
                   data:
                     type: object
                     nullable: true
+        "403":
+          description: "Forbidden (You can only delete your own settings)"
         "404":
           description: "Settings not found"
+         
+
  
 components:
   securitySchemes:
