@@ -64,6 +64,12 @@ enum FileCategory {
   video
 }
 
+enum EventType {
+  START_ONLY
+  FROM_TO
+  ALL_DAY
+}
+
 model User {
   id            String     @id @default(uuid())
   fullName      String?
@@ -93,6 +99,8 @@ model User {
   userSubscriptions UserSubscription[]
   planFeatures      PlanFeature[]
   products          Product[]
+  calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
+  calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
 
   @@map("users")
 }
@@ -628,4 +636,25 @@ model Appearance {
   updatedAt DateTime @updatedAt
 
   @@map("appearance")
+}
+
+
+model Calendar {
+  id          String     @id @default(cuid())
+  title       String
+  description String
+  color       String
+  eventType   EventType
+  startDate   DateTime
+  endDate     DateTime?
+
+  assignToId   String
+  assignTo     User       @relation("CalendarAssignTo", fields: [assignToId], references: [id], onDelete: Cascade)
+  assignById   String
+  assignBy     User       @relation("CalendarAssignBy", fields: [assignById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("calendar")
 }
