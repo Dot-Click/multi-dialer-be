@@ -9757,12 +9757,251 @@ paths:
           description: "Forbidden (You can only delete your own settings)"
         "404":
           description: "Settings not found"
+
+
+
+# ------------------------------------------------------------------------------------------
+  # DATA & DIALER - CREATE CONTACT
+  # ------------------------------------------------------------------------------------------
+  /api/data-dialer/create-contact/create:
+    post:
+      summary: "Create a new contact"
+      tags:
+        - Data & Dialer - Create Contact
+      description: "Creates a new contact/lead and links it to a specific Data Dialer session."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContactRequest'
+      responses:
+        "201":
+          description: "Contact created successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+        "400":
+          $ref: '#/components/responses/ValidationError'
+
+  /api/data-dialer/create-contact/all:
+    get:
+      summary: "Get all contacts of all users (Admin/Owner only)"
+      tags:
+        - Data & Dialer - Create Contact
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All contacts fetched"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContactObject'
+        "403":
+          description: "Forbidden - Role unauthorized"
+
+  /api/data-dialer/create-contact:
+    get:
+      summary: "Get all contacts of authenticated user"
+      tags:
+        - Data & Dialer - Create Contact
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "User contacts fetched"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContactObject'
+
+  /api/data-dialer/create-contact/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "The unique ID of the contact"
+    
+    get:
+      summary: "Get a contact by ID"
+      tags:
+        - Data & Dialer - Create Contact
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contact details fetched"
+        "404":
+          description: "Contact not found"
+
+    put:
+      summary: "Full update of a contact"
+      tags:
+        - Data & Dialer - Create Contact
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContactRequest'
+      responses:
+        "200":
+          description: "Contact fully updated"
+
+    patch:
+      summary: "Partial update of a contact"
+      tags:
+        - Data & Dialer - Create Contact
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContactRequest'
+      responses:
+        "200":
+          description: "Contact partially updated"
+
+    delete:
+      summary: "Delete a contact"
+      tags:
+        - Data & Dialer - Create Contact
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contact deleted successfully"
+
+# # ------------------------------------------------------------------------------------------
+# # COMPONENTS UPDATES (Add these to your existing components section)
+# # ------------------------------------------------------------------------------------------
+# components:
+#   schemas:
+#     CreateContactRequest:
+#       type: object
+#       required: [dataDialerId, fullName, email, phone, address, city, state, zip]
+#       properties:
+#         dataDialerId: { type: string, format: uuid }
+#         fullName: { type: string, example: "John Doe" }
+#         email: { type: string, format: email, example: "john@example.com" }
+#         phone: { type: string, example: "1234567890" }
+#         phoneType: { type: string, enum: ["Mobile", "Home", "Work", "Other"], default: "Mobile" }
+#         address: { type: string, example: "123 Main St" }
+#         city: { type: string, example: "New York" }
+#         state: { type: string, example: "NY" }
+#         zip: { type: string, example: "10001" }
+#         folderId: { type: string, format: uuid, nullable: true }
+#         listId: { type: string, format: uuid, nullable: true }
+#         groupId: { type: string, format: uuid, nullable: true }
+
+#     UpdateContactRequest:
+#       type: object
+#       description: "Partial update - all fields are optional"
+#       properties:
+#         fullName: { type: string }
+#         email: { type: string, format: email }
+#         phone: { type: string }
+#         address: { type: string }
+#         city: { type: string }
+#         state: { type: string }
+#         zip: { type: string }
+
+#     ContactObject:
+#       type: object
+#       properties:
+#         id: { type: string, format: uuid }
+#         fullName: { type: string }
+#         email: { type: string }
+#         phone: { type: string }
+#         dataDialerId: { type: string, format: uuid }
+#         createdAt: { type: string, format: date-time }
+#         updatedAt: { type: string, format: date-time }
          
 
- 
+ # ------------------------------------------------------------------------------------------
+# COMPONENTS (Only ONE 'components:' block allowed)
+# ------------------------------------------------------------------------------------------
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+
+  # responses:
+  #   ValidationError:
+  #     description: "Validation failed"
+  #     content:
+  #       application/json:
+  #         schema:
+  #           type: object
+  #           properties:
+  #             success: { type: boolean, example: false }
+  #             message: { type: string, example: "Validation Error" }
+  #             errors: { type: array, items: { type: object } }
+
+  # schemas:
+  #   StandardResponse:
+  #     type: object
+  #     properties:
+  #       success: { type: boolean }
+  #       message: { type: string }
+  #       data: { type: object }
+
+    # CreateContactRequest:
+    #   type: object
+    #   required: [dataDialerId, fullName, email, phone, address, city, state, zip]
+    #   properties:
+    #     dataDialerId: { type: string, format: uuid }
+    #     fullName: { type: string, example: "John Doe" }
+    #     email: { type: string, format: email, example: "john@example.com" }
+    #     phone: { type: string, example: "1234567890" }
+    #     phoneType: { type: string, enum: ["Mobile", "Home", "Work", "Other"], default: "Mobile" }
+    #     address: { type: string, example: "123 Main St" }
+    #     city: { type: string, example: "New York" }
+    #     state: { type: string, example: "NY" }
+    #     zip: { type: string, example: "10001" }
+    #     folderId: { type: string, format: uuid, nullable: true }
+    #     listId: { type: string, format: uuid, nullable: true }
+    #     groupId: { type: string, format: uuid, nullable: true }
+
+    # UpdateContactRequest:
+    #   type: object
+    #   properties:
+    #     fullName: { type: string }
+    #     email: { type: string, format: email }
+    #     phone: { type: string }
+    #     # ... other update fields
+
+    # ContactObject:
+    #   type: object
+    #   properties:
+    #     id: { type: string, format: uuid }
+    #     fullName: { type: string }
+    #     email: { type: string }
+    #     phone: { type: string }
+    #     dataDialerId: { type: string, format: uuid }
+    #     createdAt: { type: string, format: date-time }
+    #     updatedAt: { type: string, format: date-time }

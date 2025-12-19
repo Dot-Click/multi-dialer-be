@@ -12,6 +12,7 @@ import miscFieldsRoutes from "./systemSettings/miscFields/index"
 import appearanceRoutes from "./systemSettings/appearance/index"
 import dialerSettingRoute from "./systemSettings/dialersettings/index"
 import  notificationRoute from "./systemSettings/notification/index"
+import  createcontactRoute from "./data&dialer/createcontact/index"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 
 const router = Router()
@@ -35,7 +36,8 @@ router.use("/system-settings/appearance", protectRoute, checkRole(["ADMIN", "OWN
 router.use("/system-settings/notification-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), notificationRoute)
 
 
+
+router.use("/data-dialer/create-contact", protectRoute, checkRole(["ADMIN", "OWNER"]), createcontactRoute)
+
+
 export default router
-
-
-

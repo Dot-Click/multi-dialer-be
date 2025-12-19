@@ -101,6 +101,7 @@ model User {
   products          Product[]
   calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
   calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
+   createContacts     CreateContact[]
 
   @@map("users")
 }
@@ -169,10 +170,44 @@ model DataDialer {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+
+  contacts  CreateContact[] 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("data_dialers")
+}
+
+
+model CreateContact {
+  id        String   @id @default(uuid())
+  fullName  String
+  email     String
+  phone     String
+  phoneType String   @default("Mobile")
+  address   String
+  city      String
+  state     String
+  zip       String
+
+  // Relationships to your UI panels
+  folderId  String?
+  listId    String?
+  groupId   String?
+
+  // NEW: Link to DataDialer (Like Script belongs to Library)
+  dataDialerId String
+  dataDialer   DataDialer @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
+
+  // Ownership
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("create_contacts")
 }
 
 model ContactDetail {
@@ -358,8 +393,7 @@ model Integration {
   // Status for the Frontend UI
   status          IntegrationStatus  @default(NEED_SETUP)
 
-  // 🔐 THE KEY STORAGE (The "Where do I paste it?" part)
-  // This stores the keys as JSON.
+
   credentials     Json?
 
   // Error message if connection failed
