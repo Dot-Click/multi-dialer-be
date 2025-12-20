@@ -13,12 +13,14 @@ import appearanceRoutes from "./systemSettings/appearance/index"
 import dialerSettingRoute from "./systemSettings/dialersettings/index"
 import  notificationRoute from "./systemSettings/notification/index"
 import  createcontactRoute from "./data&dialer/createcontact/index"
+import calendarRoutes from "./calender/index"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 
 const router = Router()
 
 
 
+router.use("/calendar", protectRoute, calendarRoutes)
 router.use("/library/script", protectRoute, scriptRoutes)
 router.use("/library/sms", protectRoute, smsRoutes)
 router.use("/library/email", protectRoute, emailRoutes)
