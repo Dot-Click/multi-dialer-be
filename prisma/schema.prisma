@@ -70,6 +70,31 @@ enum EventType {
   ALL_DAY
 }
 
+enum PhoneType {
+  MOBILE
+  TELEPHONE
+}
+
+// 1. The 8 Providers from your Figma
+enum IntegrationProvider {
+  TWILIO
+  GOOGLE_MAPS
+  REALTOR_DOT_COM
+  BOMB_BOMB
+  GMAIL
+  STANPP_DOT_COM
+  MY_PLUS_LEADS
+  ZAPIER
+}
+
+// 2. The Status for the UI (Green/Red/Yellow)
+enum IntegrationStatus {
+  CONNECTED
+  FAILED
+  PROCESSING
+  NEED_SETUP
+}
+
 model User {
   id            String     @id @default(uuid())
   fullName      String?
@@ -87,7 +112,10 @@ model User {
   sessions          Session[]
   accounts          Account[]
   leads             Lead[]
-  contactDetails    ContactDetail[]
+  contacts          Contact[]
+  folders           Folder[]
+  contactLists      ContactList[]
+  groups            Group[]
   dataDialers       DataDialer[]
   multiLineDialers  MultiLineDialer[]
   libraries         Library[]
@@ -105,6 +133,99 @@ model User {
  
 
   @@map("users")
+}
+
+model Contact {
+  id            String        @id @default(uuid())
+  fullName      String?
+  phoneType     PhoneType?
+  phone         String?
+  email         String?
+  address       String?
+  city          String?
+  state         String?
+  zip           String?
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataDialerId  String
+  dataDialer    DataDialer    @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
+  contactDetail ContactDetail?
+  contactLists  ContactList[] @relation("ListContacts")
+  folders       Folder[]      @relation("FolderContacts")
+  groups        Group[]       @relation("GroupContacts")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([dataDialerId])
+  @@index([phone])
+  @@index([email])
+  @@map("contacts")
+}
+
+model Folder {
+  id           String    @id @default(uuid())
+  name         String
+  parentId     String?
+  parent       Folder?   @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children     Folder[]  @relation("FolderHierarchy")
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataDialerId String
+  dataDialer   DataDialer @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
+  contactLists ContactList[]
+  contacts     Contact[] @relation("FolderContacts")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([dataDialerId])
+  @@map("folders")
+}
+
+model ContactList {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  folderId    String?
+  folder      Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  contacts    Contact[] @relation("ListContacts")
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataDialerId String
+  dataDialer   DataDialer @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([dataDialerId])
+  @@map("contact_lists")
+}
+
+model Group {
+  id        String    @id @default(uuid())
+  name      String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contacts  Contact[] @relation("GroupContacts")
+  dataDialerId String
+  dataDialer   DataDialer @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([dataDialerId])
+  @@map("groups")
+}
+
+model ContactDetail {
+  id           String   @id @default(uuid())
+  contactId    String   @unique
+  contact      Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("contact_details")
 }
 
 model Session {
@@ -171,25 +292,17 @@ model DataDialer {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contacts  Contact[]
+  folders   Folder[]
+  contactLists ContactList[]
+  groups    Group[]
 
-
-  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("data_dialers")
 }
 
-
-model ContactDetail {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("contact_details")
-}
 
 model MultiLineDialer {
   id        String   @id @default(uuid())
@@ -309,7 +422,7 @@ model Compliance_DNC {
   @@map("compliance_dnc")
 }
 
-// ... existing models (CallerId, CallSettings, etc.) ...
+
 
 model System_Setting {
   id        String   @id @default(uuid())
@@ -330,25 +443,7 @@ model System_Setting {
   @@map("system_settings")
 }
 
-// 1. The 8 Providers from your Figma
-enum IntegrationProvider {
-  TWILIO
-  GOOGLE_MAPS
-  REALTOR_DOT_COM
-  BOMB_BOMB
-  GMAIL
-  STANPP_DOT_COM
-  MY_PLUS_LEADS
-  ZAPIER
-}
 
-// 2. The Status for the UI (Green/Red/Yellow)
-enum IntegrationStatus {
-  CONNECTED
-  FAILED
-  PROCESSING
-  NEED_SETUP
-}
 
 // 3. The Integration Table
 model Integration {
