@@ -9758,6 +9758,114 @@ paths:
         "404":
           description: "Settings not found"
 
+          # ------------------------------------------------------------------------------------------
+  # SYSTEM SETTINGS - ACTION PLANS (Screens 1-5)
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/action-plans:
+    get:
+      summary: "Get all Action Plans"
+      tags:
+        - SystemSettings ActionPlans
+      description: "Retrieve a list of all action plans for the table view (Screen 1). Admin/Owner only."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "List of action plans fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActionPlanResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      summary: "Create a new Action Plan"
+      tags:
+        - SystemSettings ActionPlans
+      description: "Save a new action plan with all its steps (The Wizard Save - Screen 5)."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPlanRequest'
+      responses:
+        "201":
+          description: "Action Plan created successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPlanResponse'
+
+  /api/system-settings/action-plans/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        description: "The UUID of the Action Plan"
+    
+    get:
+      summary: "Get Action Plan Details"
+      tags:
+        - SystemSettings ActionPlans
+      description: "Retrieve specific action plan details and its steps for editing."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Details fetched successfully"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPlanResponse'
+        "404":
+          description: "Action Plan not found"
+
+    put:
+      summary: "Update Action Plan"
+      tags:
+        - SystemSettings ActionPlans
+      description: "Update an existing action plan and replace its steps (The Edit Save)."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPlanRequest'
+      responses:
+        "200":
+          description: "Updated successfully"
+        "404":
+          description: "Plan not found"
+
+    delete:
+      summary: "Delete Action Plan"
+      tags:
+        - SystemSettings ActionPlans
+      description: "Remove the action plan and all associated steps."
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: "Deleted successfully"
+
+  responses:
+    Unauthorized:
+      description: "Token missing or invalid"
+    Forbidden:
+      description: "Access Denied - Admins/Owners only"
+
 
 # # ------------------------------------------------------------------------------------------
 # # DATA & DIALER - CREATE CONTACT

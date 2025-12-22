@@ -95,6 +95,35 @@ enum IntegrationStatus {
   NEED_SETUP
 }
 
+
+
+// --- NEW ENUMS FOR ACTION PLANS ---
+enum ActionSchedType {
+  FREQUENCY_BASED
+  DATE_BASED
+}
+
+enum ActionStepType {
+  EMAIL
+  PHONE_CALL
+  TASK
+  LETTER
+  MAILING_LABEL
+}
+
+enum ActionTriggerType {
+  NONE
+  CALLING_LIST
+  GROUP
+}
+
+enum ActionEndLogic {
+  DO_NOTHING
+  REPEAT_PLAN
+  START_OTHER_PLAN
+}
+
+
 model User {
   id            String     @id @default(uuid())
   fullName      String?
@@ -121,6 +150,7 @@ model User {
   libraries         Library[]
   reportAnalytics   Report_Analytic[]
   complianceDNC     Compliance_DNC[]
+  
   systemSettings    System_Setting[]
   billings          Billing[]
   leadStores        LeadStore[]
@@ -434,6 +464,9 @@ model System_Setting {
   caller_id    CallerId[]
   callSettings CallSettings[]
   miscFields   MiscField[]
+
+// Link to Action Plans
+  actionPlans  ActionPlan[] // <--- ADDED THIS RELATION
 
   dialerSetting     DialerSetting?
   appearance Appearance?
@@ -757,4 +790,53 @@ model Calendar {
   updatedAt DateTime @updatedAt
 
   @@map("calendar")
+}
+
+
+
+// --- NEW ACTION PLAN MODELS ---
+
+model ActionPlan {
+  id                    String            @id @default(uuid())
+  
+  // Link to System Settings (and thus the User)
+  systemSettingId       String
+  systemSetting         System_Setting    @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  name                  String            // Screen 2: Label
+  schedulingType        ActionSchedType   @default(FREQUENCY_BASED)
+  schedulingLogic       ActionSchedType   @default(FREQUENCY_BASED)
+  weekendScheduling      ActionSchedType   @default(FREQUENCY_BASED)
+  
+  // Trigger logic (Screen 4)
+  triggerType           ActionTriggerType @default(NONE)
+  triggerSourceId       String?           // ID of Calling List or Group
+  removeOnTriggerExit   Boolean           @default(false)
+
+  // End logic (Screen 5)
+  endLogic              ActionEndLogic    @default(DO_NOTHING)
+  assignGroupEnabled    Boolean           @default(false)
+  assignGroupId         String?           // Selected Group ID from dropdown
+
+  steps                 ActionStep[]
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  @@map("action_plans")
+}
+
+model ActionStep {
+  id           String         @id @default(uuid())
+  order        Int            // sequence: 1, 2, 3...
+  actionType   ActionStepType
+  contentValue String         // Stores TemplateID, ScriptID, or Subject text (Screen 3)
+  dayOffset    Int            @default(0) // "Begin on Day"
+  
+  planId       String
+  plan         ActionPlan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@map("action_steps")
 }
