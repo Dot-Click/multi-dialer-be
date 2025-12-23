@@ -1,0 +1,164 @@
+{
+  "info": {
+    "_postman_id": "b8e4f5a5-7b3a-4c7d-9d9c-2f4d7f3e2a11",
+    "name": "multi-dialer-be - ContactList (List) CRUD",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "token", "value": "PUT_YOUR_JWT_TOKEN_HERE" },
+    { "key": "listId", "value": "PASTE_LIST_ID_HERE" }
+  ],
+  "item": [
+    {
+      "name": "Create List",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/contactlist/create",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "contactlist", "create"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"January Calling List\",\n  \"tag\": \"FOLLOW_UP\",\n  \"agentIds\": [\"<agentUserId1>\", \"<agentUserId2>\"]\n}\n"
+        }
+      },
+      "response": [
+        {
+          "name": "201 - Success",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/contactlist/create" }
+          },
+          "status": "Created",
+          "code": 201,
+          "_postman_previewlanguage": "json",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"success\": true,\n  \"message\": \"List created\",\n  \"data\": {\n    \"id\": \"<listId>\",\n    \"name\": \"January Calling List\",\n    \"tag\": \"FOLLOW_UP\",\n    \"agents\": [{ \"id\": \"<agentUserId1>\", \"fullName\": \"Agent One\", \"email\": \"agent1@example.com\", \"role\": \"AGENT\" }],\n    \"_count\": { \"contacts\": 0 }\n  }\n}\n"
+        },
+        {
+          "name": "400 - Validation error",
+          "status": "Bad Request",
+          "code": 400,
+          "_postman_previewlanguage": "json",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"success\": false,\n  \"message\": \"Validation error\"\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "Get All Lists",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/contactlist",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "contactlist"]
+        }
+      },
+      "response": [
+        {
+          "name": "200 - Success",
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"success\": true,\n  \"message\": \"Lists fetched\",\n  \"data\": [\n    {\n      \"id\": \"<listId>\",\n      \"name\": \"January Calling List\",\n      \"tag\": \"FOLLOW_UP\",\n      \"agents\": [],\n      \"_count\": { \"contacts\": 0 }\n    }\n  ]\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "Get List By Id",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/contactlist/{{listId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "contactlist", "{{listId}}"]
+        }
+      },
+      "response": [
+        {
+          "name": "200 - Success",
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"success\": true,\n  \"message\": \"List fetched\",\n  \"data\": {\n    \"id\": \"<listId>\",\n    \"name\": \"January Calling List\",\n    \"tag\": \"FOLLOW_UP\",\n    \"agents\": [],\n    \"contacts\": []\n  }\n}\n"
+        },
+        {
+          "name": "404 - Not found",
+          "status": "Not Found",
+          "code": 404,
+          "_postman_previewlanguage": "json",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"success\": false,\n  \"message\": \"List not found\"\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "Update List",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/contactlist/{{listId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "contactlist", "{{listId}}"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"January Calling List (Updated)\",\n  \"tag\": \"INTERESTED\",\n  \"agentIds\": [\"<agentUserId1>\"]\n}\n"
+        }
+      },
+      "response": [
+        {
+          "name": "200 - Success",
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"success\": true,\n  \"message\": \"List updated\",\n  \"data\": {\n    \"id\": \"<listId>\",\n    \"name\": \"January Calling List (Updated)\",\n    \"tag\": \"INTERESTED\",\n    \"agents\": [{ \"id\": \"<agentUserId1>\", \"fullName\": \"Agent One\", \"email\": \"agent1@example.com\", \"role\": \"AGENT\" }],\n    \"_count\": { \"contacts\": 0 }\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "name": "Delete List",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/api/contactlist/{{listId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "contactlist", "{{listId}}"]
+        }
+      },
+      "response": [
+        {
+          "name": "200 - Success",
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"success\": true,\n  \"message\": \"List deleted successfully\"\n}\n"
+        }
+      ]
+    }
+  ]
+}
+
+
