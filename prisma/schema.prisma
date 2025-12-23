@@ -75,6 +75,13 @@ enum PhoneType {
   TELEPHONE
 }
 
+enum ListTag {
+  INTERESTED
+  FOLLOW_UP
+  DNC
+  NOT_INTERESTED
+}
+
 // 1. The 8 Providers from your Figma
 enum IntegrationProvider {
   TWILIO
@@ -94,8 +101,6 @@ enum IntegrationStatus {
   PROCESSING
   NEED_SETUP
 }
-
-
 
 // --- NEW ENUMS FOR ACTION PLANS ---
 enum ActionSchedType {
@@ -132,7 +137,6 @@ enum LeadSheetQuestionType {
   DATETIME
 }
 
-
 model User {
   id            String     @id @default(uuid())
   fullName      String?
@@ -147,124 +151,67 @@ model User {
   updatedAt     DateTime   @updatedAt
 
   // Relations
-  sessions          Session[]
-  accounts          Account[]
-  leads             Lead[]
-  contacts          Contact[]
-  folders           Folder[]
-  contactLists      ContactList[]
-  groups            Group[]
-  dataDialers       DataDialer[]
-  multiLineDialers  MultiLineDialer[]
-  libraries         Library[]
-  reportAnalytics   Report_Analytic[]
-  complianceDNC     Compliance_DNC[]
-  
-  systemSettings    System_Setting[]
-  billings          Billing[]
-  leadStores        LeadStore[]
-  userSubscriptions UserSubscription[]
-  planFeatures      PlanFeature[]
-  products          Product[]
-  calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
-  calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
- 
- 
+  sessions Session[]
+  accounts Account[]
+  leads    Lead[]
+
+  dataDialers      DataDialer[]
+  multiLineDialers MultiLineDialer[]
+  libraries        Library[]
+  reportAnalytics  Report_Analytic[]
+  complianceDNC    Compliance_DNC[]
+
+  systemSettings     System_Setting[]
+  billings           Billing[]
+  leadStores         LeadStore[]
+  userSubscriptions  UserSubscription[]
+  planFeatures       PlanFeature[]
+  products           Product[]
+  calendarAssignedTo Calendar[]         @relation("CalendarAssignTo")
+  calendarAssignedBy Calendar[]         @relation("CalendarAssignBy")
+
+  // Lists where this user/agent is assigned
+  lists List[] @relation("ListAgents")
 
   @@map("users")
 }
 
-model Contact {
-  id            String        @id @default(uuid())
-  fullName      String?
-  phoneType     PhoneType?
-  phone         String?
-  email         String?
-  address       String?
-  city          String?
-  state         String?
-  zip           String?
-  userId        String
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dataDialerId  String
-  dataDialer    DataDialer    @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
-  contactDetail ContactDetail?
-  contactLists  ContactList[] @relation("ListContacts")
-  folders       Folder[]      @relation("FolderContacts")
-  groups        Group[]       @relation("GroupContacts")
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+model List {
+  id       String    @id @default(cuid())
+  name     String
+  tag      ListTag
+  // One list can have many contacts
+  contacts Contact[]
+  // Agents assigned to this list (many-to-many)
+  agents   User[]    @relation("ListAgents")
 
-  @@index([userId])
+  @@map("lists")
+}
+
+model Contact {
+  id          String    @id @default(cuid())
+  fullName    String
+  address     String
+  email       String
+  city        String
+  state       String
+  zip         String
+  phoneNumber String
+  phoneType   PhoneType
+
+  // Each contact belongs to one list (one-to-many)
+  listId String
+  list   List   @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  // Relation (required because DataDialer has `contacts Contact[]`)
+  dataDialerId String?
+  dataDialer   DataDialer? @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
+
+  @@index([listId])
   @@index([dataDialerId])
-  @@index([phone])
+  @@index([phoneNumber])
   @@index([email])
   @@map("contacts")
-}
-
-model Folder {
-  id           String    @id @default(uuid())
-  name         String
-  parentId     String?
-  parent       Folder?   @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
-  children     Folder[]  @relation("FolderHierarchy")
-  userId       String
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dataDialerId String
-  dataDialer   DataDialer @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
-  contactLists ContactList[]
-  contacts     Contact[] @relation("FolderContacts")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  @@index([userId])
-  @@index([dataDialerId])
-  @@map("folders")
-}
-
-model ContactList {
-  id          String    @id @default(uuid())
-  name        String
-  description String?
-  folderId    String?
-  folder      Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
-  contacts    Contact[] @relation("ListContacts")
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dataDialerId String
-  dataDialer   DataDialer @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@index([userId])
-  @@index([dataDialerId])
-  @@map("contact_lists")
-}
-
-model Group {
-  id        String    @id @default(uuid())
-  name      String
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  contacts  Contact[] @relation("GroupContacts")
-  dataDialerId String
-  dataDialer   DataDialer @relation(fields: [dataDialerId], references: [id], onDelete: Cascade)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  @@index([userId])
-  @@index([dataDialerId])
-  @@map("groups")
-}
-
-model ContactDetail {
-  id           String   @id @default(uuid())
-  contactId    String   @unique
-  contact      Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@map("contact_details")
 }
 
 model Session {
@@ -328,20 +275,16 @@ model Product {
 }
 
 model DataDialer {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  contacts  Contact[]
-  folders   Folder[]
-  contactLists ContactList[]
-  groups    Group[]
+  id       String    @id @default(uuid())
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contacts Contact[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("data_dialers")
 }
-
 
 model MultiLineDialer {
   id        String   @id @default(uuid())
@@ -461,8 +404,6 @@ model Compliance_DNC {
   @@map("compliance_dnc")
 }
 
-
-
 model System_Setting {
   id        String   @id @default(uuid())
   userId    String
@@ -474,14 +415,14 @@ model System_Setting {
   callSettings CallSettings[]
   miscFields   MiscField[]
 
-// Link to Action Plans
-  actionPlans  ActionPlan[] // <--- ADDED THIS RELATION
+  // Link to Action Plans
+  actionPlans ActionPlan[] // <--- ADDED THIS RELATION
 
   // Lead Sheets
-  leadSheets   LeadSheet[]
+  leadSheets LeadSheet[]
 
-  dialerSetting     DialerSetting?
-  appearance Appearance?
+  dialerSetting       DialerSetting?
+  appearance          Appearance?
   notificationSetting NotificationSetting?
   integrations        Integration[]
 
@@ -489,61 +430,58 @@ model System_Setting {
 }
 
 model LeadSheet {
-  id              String         @id @default(cuid())
-  title           String         @unique
+  id    String @id @default(cuid())
+  title String @unique
 
   // Link to System Settings (and thus the User)
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  questions       LeadSheetQuestion[]
+  questions LeadSheetQuestion[]
 
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("lead_sheets")
 }
 
 model LeadSheetQuestion {
-  id          String               @id @default(cuid())
-  text        String
-  type        LeadSheetQuestionType
-  options     String[]
-  required    Boolean?
+  id       String                @id @default(cuid())
+  text     String
+  type     LeadSheetQuestionType
+  options  String[]
+  required Boolean?
 
   leadSheetId String
-  leadSheet   LeadSheet            @relation(fields: [leadSheetId], references: [id], onDelete: Cascade)
+  leadSheet   LeadSheet @relation(fields: [leadSheetId], references: [id], onDelete: Cascade)
 
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("lead_sheet_questions")
 }
 
-
-
 // 3. The Integration Table
 model Integration {
-  id              String             @id @default(uuid())
-  
+  id String @id @default(uuid())
+
   // Link to the Admin/Owner Settings
   systemSettingId String
-  systemSetting   System_Setting     @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
   // Which Provider? (Twilio, Google, etc.)
-  provider        IntegrationProvider
+  provider IntegrationProvider
 
   // Status for the Frontend UI
-  status          IntegrationStatus  @default(NEED_SETUP)
+  status IntegrationStatus @default(NEED_SETUP)
 
-
-  credentials     Json?
+  credentials Json?
 
   // Error message if connection failed
-  errorMessage    String?
+  errorMessage String?
 
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Rule: One Admin can only have ONE connection per provider
   @@unique([systemSettingId, provider])
@@ -815,9 +753,8 @@ model Appearance {
   @@map("appearance")
 }
 
-
 model Calendar {
-  id          String     @id @default(cuid())
+  id          String    @id @default(cuid())
   title       String
   description String
   color       String
@@ -825,10 +762,10 @@ model Calendar {
   startDate   DateTime
   endDate     DateTime?
 
-  assignToId   String
-  assignTo     User       @relation("CalendarAssignTo", fields: [assignToId], references: [id], onDelete: Cascade)
-  assignById   String
-  assignBy     User       @relation("CalendarAssignBy", fields: [assignById], references: [id], onDelete: Cascade)
+  assignToId String
+  assignTo   User   @relation("CalendarAssignTo", fields: [assignToId], references: [id], onDelete: Cascade)
+  assignById String
+  assignBy   User   @relation("CalendarAssignBy", fields: [assignById], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -836,51 +773,49 @@ model Calendar {
   @@map("calendar")
 }
 
-
-
 // --- NEW ACTION PLAN MODELS ---
 
 model ActionPlan {
-  id                    String            @id @default(uuid())
-  
-  // Link to System Settings (and thus the User)
-  systemSettingId       String
-  systemSetting         System_Setting    @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+  id String @id @default(uuid())
 
-  name                  String            // Screen 2: Label
-  schedulingType        ActionSchedType   @default(FREQUENCY_BASED)
-  schedulingLogic       ActionSchedType   @default(FREQUENCY_BASED)
-  weekendScheduling      ActionSchedType   @default(FREQUENCY_BASED)
-  
+  // Link to System Settings (and thus the User)
+  systemSettingId String
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  name              String // Screen 2: Label
+  schedulingType    ActionSchedType @default(FREQUENCY_BASED)
+  schedulingLogic   ActionSchedType @default(FREQUENCY_BASED)
+  weekendScheduling ActionSchedType @default(FREQUENCY_BASED)
+
   // Trigger logic (Screen 4)
-  triggerType           ActionTriggerType @default(NONE)
-  triggerSourceId       String?           // ID of Calling List or Group
-  removeOnTriggerExit   Boolean           @default(false)
+  triggerType         ActionTriggerType @default(NONE)
+  triggerSourceId     String? // ID of Calling List or Group
+  removeOnTriggerExit Boolean           @default(false)
 
   // End logic (Screen 5)
-  endLogic              ActionEndLogic    @default(DO_NOTHING)
-  assignGroupEnabled    Boolean           @default(false)
-  assignGroupId         String?           // Selected Group ID from dropdown
+  endLogic           ActionEndLogic @default(DO_NOTHING)
+  assignGroupEnabled Boolean        @default(false)
+  assignGroupId      String? // Selected Group ID from dropdown
 
-  steps                 ActionStep[]
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
+  steps     ActionStep[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
   @@map("action_plans")
 }
 
 model ActionStep {
   id           String         @id @default(uuid())
-  order        Int            // sequence: 1, 2, 3...
+  order        Int // sequence: 1, 2, 3...
   actionType   ActionStepType
-  contentValue String         // Stores TemplateID, ScriptID, or Subject text (Screen 3)
+  contentValue String // Stores TemplateID, ScriptID, or Subject text (Screen 3)
   dayOffset    Int            @default(0) // "Begin on Day"
-  
-  planId       String
-  plan         ActionPlan     @relation(fields: [planId], references: [id], onDelete: Cascade)
 
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  planId String
+  plan   ActionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("action_steps")
 }

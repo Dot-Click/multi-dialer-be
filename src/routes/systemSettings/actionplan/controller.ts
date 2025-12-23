@@ -9,7 +9,10 @@ export const ActionPlanController = {
   list: async (req: any, res: Response) => {
     try {
       const settings = await prisma.system_Setting.findFirst({ where: { userId: req.user.id } });
-      if (!settings) return res.status(200).json({ success: true, data: [] });
+      if (!settings) {
+        res.status(200).json({ success: true, data: [] });
+        return;
+      }
 
       const result = await ActionPlanService.getAll(settings.id);
       res.status(200).json({ success: true, data: result });
