@@ -14,6 +14,7 @@ import dialerSettingRoute from "./systemSettings/dialersettings/index"
 import  notificationRoute from "./systemSettings/notification/index"
 import calendarRoutes from "./calender/index"
 import actionplansRoutes from "./systemSettings/actionplan/index"
+import leadSheetRoutes from "./systemSettings/leadSheet/index"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 
 const router = Router()
@@ -37,6 +38,7 @@ router.use("/system-settings/misc-fields", protectRoute, checkRole(["ADMIN", "OW
 router.use("/system-settings/appearance", protectRoute, checkRole(["ADMIN", "OWNER"]), appearanceRoutes)
 router.use("/system-settings/notification-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), notificationRoute)
 router.use("/system-settings/action-plans", protectRoute, checkRole(["ADMIN", "OWNER"]), actionplansRoutes)
+router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWNER"]), leadSheetRoutes)
 
 
 

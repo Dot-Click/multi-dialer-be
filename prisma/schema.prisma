@@ -123,6 +123,15 @@ enum ActionEndLogic {
   START_OTHER_PLAN
 }
 
+// --- LEAD SHEETS ---
+enum LeadSheetQuestionType {
+  TEXTFIELD
+  DROPDOWN
+  CHECKBOX
+  RADIO
+  DATETIME
+}
+
 
 model User {
   id            String     @id @default(uuid())
@@ -468,12 +477,47 @@ model System_Setting {
 // Link to Action Plans
   actionPlans  ActionPlan[] // <--- ADDED THIS RELATION
 
+  // Lead Sheets
+  leadSheets   LeadSheet[]
+
   dialerSetting     DialerSetting?
   appearance Appearance?
   notificationSetting NotificationSetting?
   integrations        Integration[]
 
   @@map("system_settings")
+}
+
+model LeadSheet {
+  id              String         @id @default(cuid())
+  title           String         @unique
+
+  // Link to System Settings (and thus the User)
+  systemSettingId String
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  questions       LeadSheetQuestion[]
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("lead_sheets")
+}
+
+model LeadSheetQuestion {
+  id          String               @id @default(cuid())
+  text        String
+  type        LeadSheetQuestionType
+  options     String[]
+  required    Boolean?
+
+  leadSheetId String
+  leadSheet   LeadSheet            @relation(fields: [leadSheetId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@map("lead_sheet_questions")
 }
 
 
