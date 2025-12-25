@@ -6,41 +6,28 @@ function throwHttp(statusCode: number, message: string): never {
 
 export async function createListInDb(payload: {
   name: string;
-  tag: "INTERESTED" | "FOLLOW_UP" | "DNC" | "NOT_INTERESTED";
   agentIds: string[];
+  contactIds?: string[];
 }) {
   const agentIds = Array.from(new Set((payload.agentIds || []).filter(Boolean)));
+  const contactIds = Array.from(new Set((payload.contactIds || []).filter(Boolean)));
 
-  return prisma.list.create({
+  return prisma.contactList.create({
     data: {
       name: payload.name,
-      tag: payload.tag as any,
-      ...(agentIds.length > 0 ? { agents: { connect: agentIds.map((id) => ({ id })) } } : {}),
-    },
-    include: {
-      agents: { select: { id: true, fullName: true, email: true, role: true } },
-      _count: { select: { contacts: true } },
+      agentIds,
+      contactIds,
     },
   });
 }
 
 export async function getAllListsFromDb() {
-  return prisma.list.findMany({
-    orderBy: { id: "desc" },
-    include: {
-      agents: { select: { id: true, fullName: true, email: true, role: true } },
-      _count: { select: { contacts: true } },
-    },
-  });
+  return prisma.contactList.findMany({ orderBy: { id: "desc" } });
 }
 
 export async function getListByIdFromDb(id: string) {
-  const list = await prisma.list.findUnique({
+  const list = await prisma.contactList.findUnique({
     where: { id },
-    include: {
-      agents: { select: { id: true, fullName: true, email: true, role: true } },
-      contacts: true,
-    },
   });
   if (!list) throwHttp(404, "List not found");
   return list;
@@ -48,31 +35,76 @@ export async function getListByIdFromDb(id: string) {
 
 export async function updateListInDb(
   id: string,
-  payload: Partial<{ name: string; tag: "INTERESTED" | "FOLLOW_UP" | "DNC" | "NOT_INTERESTED"; agentIds: string[] }>
+  payload: Partial<{ name: string; agentIds: string[]; contactIds: string[] }>
 ) {
-  const existing = await prisma.list.findUnique({ where: { id }, select: { id: true } });
+  const existing = await prisma.contactList.findUnique({
+    where: { id },
+    select: { id: true, name: true, agentIds: true, contactIds: true },
+  });
   if (!existing) throwHttp(404, "List not found");
 
-  const agentIds = payload.agentIds !== undefined ? Array.from(new Set(payload.agentIds.filter(Boolean))) : undefined;
+  const contactIds = payload.contactIds !== undefined ? Array.from(new Set(payload.contactIds.filter(Boolean))) : undefined;
 
-  return prisma.list.update({
+  // Merge agentIds (do not overwrite)
+  if (payload.agentIds !== undefined) {
+    const requestedAgentIds = Array.from(new Set(payload.agentIds.filter(Boolean)));
+
+    // 1) Validate all agent IDs exist
+    if (requestedAgentIds.length > 0) {
+      const users = await prisma.user.findMany({
+        where: { id: { in: requestedAgentIds } },
+        select: { id: true },
+      });
+      if (users.length !== requestedAgentIds.length) {
+        throwHttp(404, "Agent with this ID not found");
+      }
+    }
+
+    // 2) Duplicate check
+    const alreadyAssigned = requestedAgentIds.filter((aid) => existing.agentIds.includes(aid));
+    const newAgentIds = requestedAgentIds.filter((aid) => !existing.agentIds.includes(aid));
+
+    // If all provided are already assigned, return special success message without updating
+    if (requestedAgentIds.length > 0 && newAgentIds.length === 0) {
+      return {
+        message: "Agent is already assigned to this list",
+        list: existing,
+      };
+    }
+
+    const mergedAgentIds = [...existing.agentIds, ...newAgentIds];
+
+    const updated = await prisma.contactList.update({
+      where: { id },
+      data: {
+        ...(payload.name !== undefined ? { name: payload.name } : {}),
+        agentIds: mergedAgentIds,
+        ...(contactIds !== undefined ? { contactIds } : {}),
+      },
+    });
+
+    return {
+      message: newAgentIds.length > 0 ? "Agent added to contact list successfully" : "List updated",
+      list: updated,
+    };
+  }
+
+  // No agentIds provided: normal update for other fields
+  const updated = await prisma.contactList.update({
     where: { id },
     data: {
       ...(payload.name !== undefined ? { name: payload.name } : {}),
-      ...(payload.tag !== undefined ? { tag: payload.tag as any } : {}),
-      ...(agentIds !== undefined ? { agents: { set: agentIds.map((uid) => ({ id: uid })) } } : {}),
-    },
-    include: {
-      agents: { select: { id: true, fullName: true, email: true, role: true } },
-      _count: { select: { contacts: true } },
+      ...(contactIds !== undefined ? { contactIds } : {}),
     },
   });
+
+  return { message: "List updated", list: updated };
 }
 
 export async function deleteListFromDb(id: string) {
-  const existing = await prisma.list.findUnique({ where: { id }, select: { id: true } });
+  const existing = await prisma.contactList.findUnique({ where: { id }, select: { id: true } });
   if (!existing) throwHttp(404, "List not found");
-  await prisma.list.delete({ where: { id } });
+  await prisma.contactList.delete({ where: { id } });
   return true;
 }
 

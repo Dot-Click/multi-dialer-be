@@ -75,13 +75,6 @@ enum PhoneType {
   TELEPHONE
 }
 
-enum ListTag {
-  INTERESTED
-  FOLLOW_UP
-  DNC
-  NOT_INTERESTED
-}
-
 // 1. The 8 Providers from your Figma
 enum IntegrationProvider {
   TWILIO
@@ -170,20 +163,14 @@ model User {
   calendarAssignedTo Calendar[]         @relation("CalendarAssignTo")
   calendarAssignedBy Calendar[]         @relation("CalendarAssignBy")
 
-  // Lists where this user/agent is assigned
-  lists List[] @relation("ListAgents")
-
   @@map("users")
 }
 
-model List {
-  id       String    @id @default(cuid())
-  name     String
-  tag      ListTag
-  // One list can have many contacts
-  contacts Contact[]
-  // Agents assigned to this list (many-to-many)
-  agents   User[]    @relation("ListAgents")
+model ContactList {
+  id         String   @id @default(cuid())
+  name       String
+  agentIds   String[] @default([])
+  contactIds String[] @default([])
 
   @@map("lists")
 }
@@ -199,15 +186,13 @@ model Contact {
   phoneNumber String
   phoneType   PhoneType
 
-  // Each contact belongs to one list (one-to-many)
-  listId String
-  list   List   @relation(fields: [listId], references: [id], onDelete: Cascade)
+  // Contact tags (stored on Contact)
+  tags String[] @default([])
 
   // Relation (required because DataDialer has `contacts Contact[]`)
   dataDialerId String?
   dataDialer   DataDialer? @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
 
-  @@index([listId])
   @@index([dataDialerId])
   @@index([phoneNumber])
   @@index([email])

@@ -1,0 +1,79 @@
+{
+  "baseUrl": "http://localhost:3000/api",
+  "headers": {
+    "Authorization": "Bearer <TOKEN>",
+    "Content-Type": "application/json"
+  },
+  "contactlist": {
+    "create": {
+      "method": "POST",
+      "path": "/contactlist/create",
+      "body": {
+        "name": "My First List",
+        "agentIds": ["USER_ID_1", "USER_ID_2"],
+        "contactIds": []
+      }
+    },
+    "getAll": {
+      "method": "GET",
+      "path": "/contactlist"
+    },
+    "getById": {
+      "method": "GET",
+      "path": "/contactlist/CONTACT_LIST_ID"
+    },
+    "update": {
+      "method": "PUT",
+      "path": "/contactlist/CONTACT_LIST_ID",
+      "body": {
+        "name": "My First List (Updated)",
+        "agentIds": ["USER_ID_1"],
+        "contactIds": ["CONTACT_ID_1", "CONTACT_ID_2"]
+      }
+    },
+    "delete": {
+      "method": "DELETE",
+      "path": "/contactlist/CONTACT_LIST_ID"
+    }
+  },
+  "contact": {
+    "create": {
+      "method": "POST",
+      "path": "/contact/create",
+      "body": {
+        "contactListId": "CONTACT_LIST_ID",
+        "fullName": "John Doe",
+        "address": "123 Main St",
+        "email": "john@example.com",
+        "city": "Dallas",
+        "state": "TX",
+        "zip": "75001",
+        "phoneNumber": "+15551234567",
+        "phoneType": "MOBILE",
+        "tags": ["INTERESTED", "FOLLOW_UP"]
+      }
+    },
+    "getAll": {
+      "method": "GET",
+      "path": "/contact"
+    },
+    "getById": {
+      "method": "GET",
+      "path": "/contact/CONTACT_ID"
+    },
+    "update": {
+      "method": "PUT",
+      "path": "/contact/CONTACT_ID",
+      "body": {
+        "fullName": "John Doe (Updated)",
+        "tags": ["DNC"]
+      }
+    },
+    "delete": {
+      "method": "DELETE",
+      "path": "/contact/CONTACT_ID"
+    }
+  }
+}
+
+

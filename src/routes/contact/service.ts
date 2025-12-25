@@ -13,40 +13,50 @@ export async function createContactInDb(payload: {
   zip: string;
   phoneNumber: string;
   phoneType: "MOBILE" | "TELEPHONE";
-  listId: string;
+  contactListId: string;
+  tags: string[];
   dataDialerId?: string;
 }) {
-  const list = await prisma.list.findUnique({ where: { id: payload.listId }, select: { id: true } });
-  if (!list) throwHttp(404, "List not found");
+  return prisma.$transaction(async (tx) => {
+    const list = await tx.contactList.findUnique({
+      where: { id: payload.contactListId },
+      select: { id: true },
+    });
+    if (!list) throwHttp(404, "ContactList not found");
 
-  return prisma.contact.create({
-    data: {
-      fullName: payload.fullName,
-      address: payload.address,
-      email: payload.email,
-      city: payload.city,
-      state: payload.state,
-      zip: payload.zip,
-      phoneNumber: payload.phoneNumber,
-      phoneType: payload.phoneType as any,
-      listId: payload.listId,
-      dataDialerId: payload.dataDialerId,
-    },
-    include: { list: true },
+    const created = await tx.contact.create({
+      data: {
+        fullName: payload.fullName,
+        address: payload.address,
+        email: payload.email,
+        city: payload.city,
+        state: payload.state,
+        zip: payload.zip,
+        phoneNumber: payload.phoneNumber,
+        phoneType: payload.phoneType as any,
+        tags: payload.tags ?? [],
+        dataDialerId: payload.dataDialerId,
+      },
+    });
+
+    await tx.contactList.update({
+      where: { id: payload.contactListId },
+      data: { contactIds: { push: created.id } },
+    });
+
+    return created;
   });
 }
 
 export async function getAllContactsFromDb() {
   return prisma.contact.findMany({
     orderBy: { id: "desc" },
-    include: { list: true },
   });
 }
 
 export async function getContactByIdFromDb(id: string) {
   const contact = await prisma.contact.findUnique({
     where: { id },
-    include: { list: true },
   });
   if (!contact) throwHttp(404, "Contact not found");
   return contact;
@@ -63,17 +73,12 @@ export async function updateContactInDb(
     zip: string;
     phoneNumber: string;
     phoneType: "MOBILE" | "TELEPHONE";
-    listId: string;
+    tags: string[];
     dataDialerId: string | null;
   }>
 ) {
   const existing = await prisma.contact.findUnique({ where: { id }, select: { id: true } });
   if (!existing) throwHttp(404, "Contact not found");
-
-  if (payload.listId) {
-    const list = await prisma.list.findUnique({ where: { id: payload.listId }, select: { id: true } });
-    if (!list) throwHttp(404, "List not found");
-  }
 
   return prisma.contact.update({
     where: { id },
@@ -81,14 +86,30 @@ export async function updateContactInDb(
       ...payload,
       phoneType: payload.phoneType ? (payload.phoneType as any) : undefined,
     },
-    include: { list: true },
   });
 }
 
 export async function deleteContactFromDb(id: string) {
   const existing = await prisma.contact.findUnique({ where: { id }, select: { id: true } });
   if (!existing) throwHttp(404, "Contact not found");
-  await prisma.contact.delete({ where: { id } });
+
+  await prisma.$transaction(async (tx) => {
+    // Remove the contactId from any ContactList.contactIds arrays
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: id } },
+      select: { id: true, contactIds: true },
+    });
+
+    for (const l of lists) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter((cid: string) => cid !== id) },
+      });
+    }
+
+    await tx.contact.delete({ where: { id } });
+  });
+
   return true;
 }
 

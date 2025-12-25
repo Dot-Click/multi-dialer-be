@@ -34,6 +34,7 @@ export const getContactListById = async (req: Request, res: Response): Promise<v
     const { id } = req.params;
     if (!id) {
       errorResponse(res, "List id is required", 400);
+
       return;
     }
 
@@ -43,7 +44,7 @@ export const getContactListById = async (req: Request, res: Response): Promise<v
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
 };
-
+ 
 export const updateContactList = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -59,8 +60,8 @@ export const updateContactList = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const updated = await updateListInDb(id, result.data);
-    successResponse(res, 200, "List updated", updated);
+    const resultFromDb = await updateListInDb(id, result.data);
+    successResponse(res, 200, resultFromDb.message, resultFromDb.list);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

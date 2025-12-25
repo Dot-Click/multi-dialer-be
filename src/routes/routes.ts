@@ -44,7 +44,7 @@ router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWN
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)
-router.use("/contactlist", protectRoute, contactListRoutes)
+router.use("/contact-list", protectRoute, contactListRoutes)
 
 
 

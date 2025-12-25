@@ -9,7 +9,8 @@ export const createContactSchema = z.object({
   zip: z.string().min(1),
   phoneNumber: z.string().min(1),
   phoneType: z.enum(["MOBILE", "TELEPHONE"]),
-  listId: z.string().min(1),
+  contactListId: z.string().min(1),
+  tags: z.array(z.string().min(1)).default([]),
   dataDialerId: z.string().optional(),
 });
 
@@ -22,7 +23,7 @@ export const updateContactSchema = z.object({
   zip: z.string().min(1).optional(),
   phoneNumber: z.string().min(1).optional(),
   phoneType: z.enum(["MOBILE", "TELEPHONE"]).optional(),
-  listId: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(),
   dataDialerId: z.string().nullable().optional(),
 });
 
