@@ -79,7 +79,7 @@ export async function updateContactInDb(
 ) {
   const existing = await prisma.contact.findUnique({ where: { id }, select: { id: true } });
   if (!existing) throwHttp(404, "Contact not found");
-
+ 
   return prisma.contact.update({
     where: { id },
     data: {

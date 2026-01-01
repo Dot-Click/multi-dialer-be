@@ -52,9 +52,10 @@ export async function updateListInDb(
     // 1) Validate all agent IDs exist
     if (requestedAgentIds.length > 0) {
       const users = await prisma.user.findMany({
-        where: { id: { in: requestedAgentIds } },
+        where: { id: { in: requestedAgentIds }  },
         select: { id: true },
       });
+
       if (users.length !== requestedAgentIds.length) {
         throwHttp(404, "Agent with this ID not found");
       }
@@ -76,6 +77,7 @@ export async function updateListInDb(
 
     const updated = await prisma.contactList.update({
       where: { id },
+     
       data: {
         ...(payload.name !== undefined ? { name: payload.name } : {}),
         agentIds: mergedAgentIds,

@@ -27,14 +27,13 @@ export const getAllContactLists = async (req: Request, res: Response): Promise<v
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
-};
+}; 
 
 export const getContactListById = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     if (!id) {
       errorResponse(res, "List id is required", 400);
-
       return;
     }
 
@@ -48,6 +47,7 @@ export const getContactListById = async (req: Request, res: Response): Promise<v
 export const updateContactList = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+
     if (!id) {
       errorResponse(res, "List id is required", 400);
       return;
@@ -73,7 +73,7 @@ export const deleteContactList = async (req: Request, res: Response): Promise<vo
     if (!id) {
       errorResponse(res, "List id is required", 400);
       return;
-    }
+    } 
     await deleteListFromDb(id);
     successResponse(res, 200, "List deleted successfully", null);
   } catch (error: any) {
