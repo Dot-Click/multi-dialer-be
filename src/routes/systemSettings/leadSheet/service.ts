@@ -17,11 +17,11 @@ export type UpdateLeadSheetInput = {
   title?: string;
   questions?: LeadSheetQuestionInput[];
 };
-
-const CHOICE_TYPES = new Set<LeadSheetQuestionType>([
-  LeadSheetQuestionType.DROPDOWN,
-  LeadSheetQuestionType.CHECKBOX,
-  LeadSheetQuestionType.RADIO,
+// Inside validateAndNormalizeQuestions
+const CHOICE_TYPES = new Set([
+  "DROPDOWN",
+  "CHECKBOX",
+  "RADIO"
 ]);
 
 function badRequest(message: string) {

@@ -12,6 +12,7 @@ import miscFieldsRoutes from "./systemSettings/miscFields/index"
 import appearanceRoutes from "./systemSettings/appearance/index"
 import dialerSettingRoute from "./systemSettings/dialersettings/index"
 import  notificationRoute from "./systemSettings/notification/index"
+import  IntegrationRoute from "./systemSettings/integration/index"
 import calendarRoutes from "./calender/index"
 import actionplansRoutes from "./systemSettings/actionplan/index"
 import leadSheetRoutes from "./systemSettings/leadSheet/index"
@@ -41,6 +42,7 @@ router.use("/system-settings/appearance", protectRoute, checkRole(["ADMIN", "OWN
 router.use("/system-settings/notification-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), notificationRoute)
 router.use("/system-settings/action-plans", protectRoute, checkRole(["ADMIN", "OWNER"]), actionplansRoutes)
 router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWNER"]), leadSheetRoutes)
+router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "OWNER"]), IntegrationRoute)
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)

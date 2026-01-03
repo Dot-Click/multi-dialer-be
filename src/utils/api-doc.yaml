@@ -4384,6 +4384,151 @@
 #       bearerFormat: JWT
 
 
+# # ------------------------------------------------------------------------------------------
+# # DATA & DIALER - CREATE CONTACT
+# # ------------------------------------------------------------------------------------------
+ 
+#   /api/data-dialer/create-contact/create:
+#     post:
+#       summary: "Create a new contact"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       description: "Creates a new contact. Link it to a Dialer ID or let the system find/create one automatically."
+#       security:
+#         - bearerAuth: []
+#       requestBody:
+#         required: true
+#         content:
+#           application/json:
+#             schema:
+#               $ref: '#/components/schemas/CreateContactRequest'
+#       responses:
+#         "201":
+#           description: "Contact created successfully"
+#         "400":
+#           $ref: '#/components/responses/ValidationError'
+
+#   /api/data-dialer/create-contact/assign:
+#     post:
+#       summary: "Assign contact to agent (Admin Only)"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       description: "Allows an Admin/Owner to assign a contact to a specific Staff/Agent."
+#       security:
+#         - bearerAuth: []
+#       requestBody:
+#         required: true
+#         content:
+#           application/json:
+#             schema:
+#               type: object
+#               required: [contactId, agentId]
+#               properties:
+#                 contactId: { type: string, format: uuid }
+#                 agentId: { type: string, format: uuid }
+#       responses:
+#         "200":
+#           description: "Contact assigned successfully"
+#         "403":
+#           description: "Unauthorized - Admin only"
+
+#   /api/data-dialer/create-contact/all:
+#     get:
+#       summary: "Get all contacts globally (Owner only)"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "All contacts fetched"
+#           content:
+#             application/json:
+#               schema:
+#                 type: object
+#                 properties:
+#                   success: { type: boolean }
+#                   data:
+#                     type: array
+#                     items:
+#                       $ref: '#/components/schemas/ContactObject'
+
+#   /api/data-dialer/create-contact:
+#     get:
+#       summary: "Get contacts list"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       description: "Admins see all contacts they own. Agents see only contacts assigned to them."
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "Contacts fetched successfully"
+#           content:
+#             application/json:
+#               schema:
+#                 type: object
+#                 properties:
+#                   success: { type: boolean }
+#                   data:
+#                     type: array
+#                     items:
+#                       $ref: '#/components/schemas/ContactObject'
+
+#   /api/data-dialer/create-contact/{id}:
+#     parameters:
+#       - in: path
+#         name: id
+#         required: true
+#         schema:
+#           type: string
+#           format: uuid
+#     get:
+#       summary: "Get contact details"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "Contact details fetched"
+#         "404":
+#           description: "Contact not found"
+#     patch:
+#       summary: "Update contact"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       requestBody:
+#         content:
+#           application/json:
+#             schema:
+#               $ref: '#/components/schemas/UpdateContactRequest'
+#       responses:
+#         "200":
+#           description: "Contact updated"
+#     delete:
+#       summary: "Delete contact (Admin Only)"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "Contact deleted"
+
+# # ------------------------------------------------------------------------------------------
+# # COMPONENTS
+# # ------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
 openapi: "3.1.0"
 info:
   title: "Boilerplate API Documentation"
@@ -4416,6 +4561,8 @@ tags:
     description: Miscellaneous field configuration
   - name: Authentication
     description: User authentication and session management
+  - name: SystemSettings Integrations
+    description: Third-party service connections (Twilio, Google, etc.)
 
 paths:
   /api/products:
@@ -9867,143 +10014,130 @@ paths:
       description: "Access Denied - Admins/Owners only"
 
 
-# # ------------------------------------------------------------------------------------------
-# # DATA & DIALER - CREATE CONTACT
-# # ------------------------------------------------------------------------------------------
- 
-#   /api/data-dialer/create-contact/create:
-#     post:
-#       summary: "Create a new contact"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       description: "Creates a new contact. Link it to a Dialer ID or let the system find/create one automatically."
-#       security:
-#         - bearerAuth: []
-#       requestBody:
-#         required: true
-#         content:
-#           application/json:
-#             schema:
-#               $ref: '#/components/schemas/CreateContactRequest'
-#       responses:
-#         "201":
-#           description: "Contact created successfully"
-#         "400":
-#           $ref: '#/components/responses/ValidationError'
 
-#   /api/data-dialer/create-contact/assign:
-#     post:
-#       summary: "Assign contact to agent (Admin Only)"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       description: "Allows an Admin/Owner to assign a contact to a specific Staff/Agent."
-#       security:
-#         - bearerAuth: []
-#       requestBody:
-#         required: true
-#         content:
-#           application/json:
-#             schema:
-#               type: object
-#               required: [contactId, agentId]
-#               properties:
-#                 contactId: { type: string, format: uuid }
-#                 agentId: { type: string, format: uuid }
-#       responses:
-#         "200":
-#           description: "Contact assigned successfully"
-#         "403":
-#           description: "Unauthorized - Admin only"
+# --- SYSTEM SETTINGS: INTEGRATIONS ---
+  /api/system-settings/integrations/create:
+    post:
+      summary: "Create/Connect Integration"
+      tags: [SystemSettings Integrations]
+      description: "Initial connection for a provider. Uses upsert logic to ensure one record per provider per user."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, credentials]
+              properties:
+                provider:
+                  type: string
+                  enum: [TWILIO, GOOGLE_MAPS, REALTOR_DOT_COM, BOMB_BOMB, GMAIL, STANPP_DOT_COM, MY_PLUS_LEADS, ZAPIER]
+                  example: "GMAIL"
+                credentials:
+                  type: object
+                  description: "JSON object for API keys or tokens"
+                  example: { "apiKey": "your_api_key_here" }
+      responses:
+        "201":
+          description: "Connected successfully"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationResponse' }
 
-#   /api/data-dialer/create-contact/all:
-#     get:
-#       summary: "Get all contacts globally (Owner only)"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "All contacts fetched"
-#           content:
-#             application/json:
-#               schema:
-#                 type: object
-#                 properties:
-#                   success: { type: boolean }
-#                   data:
-#                     type: array
-#                     items:
-#                       $ref: '#/components/schemas/ContactObject'
+  /api/system-settings/integrations/all:
+    get:
+      summary: "Get All Integrations (Admin)"
+      tags: [SystemSettings Integrations]
+      description: "Retrieve every integration record in the system. Admin/Owner only."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationResponse'
 
-#   /api/data-dialer/create-contact:
-#     get:
-#       summary: "Get contacts list"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       description: "Admins see all contacts they own. Agents see only contacts assigned to them."
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "Contacts fetched successfully"
-#           content:
-#             application/json:
-#               schema:
-#                 type: object
-#                 properties:
-#                   success: { type: boolean }
-#                   data:
-#                     type: array
-#                     items:
-#                       $ref: '#/components/schemas/ContactObject'
+  /api/system-settings/integrations:
+    get:
+      summary: "Get My Integrations"
+      tags: [SystemSettings Integrations]
+      description: "Retrieve all integrations belonging to the authenticated user."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationResponse'
 
-#   /api/data-dialer/create-contact/{id}:
-#     parameters:
-#       - in: path
-#         name: id
-#         required: true
-#         schema:
-#           type: string
-#           format: uuid
-#     get:
-#       summary: "Get contact details"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "Contact details fetched"
-#         "404":
-#           description: "Contact not found"
-#     patch:
-#       summary: "Update contact"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       requestBody:
-#         content:
-#           application/json:
-#             schema:
-#               $ref: '#/components/schemas/UpdateContactRequest'
-#       responses:
-#         "200":
-#           description: "Contact updated"
-#     delete:
-#       summary: "Delete contact (Admin Only)"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "Contact deleted"
+  /api/system-settings/integrations/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "The UUID of the specific integration record"
+    get:
+      summary: "Get Integration by ID"
+      tags: [SystemSettings Integrations]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationResponse' }
+        "404":
+          description: "Integration not found"
 
-# # ------------------------------------------------------------------------------------------
-# # COMPONENTS
-# # ------------------------------------------------------------------------------------------
+    put:
+      summary: "Update Integration (Manage)"
+      tags: [SystemSettings Integrations]
+      description: "Update credentials for an existing integration record using its ID."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                credentials:
+                  type: object
+                  example: { "apiKey": "new_secret_key" }
+      responses:
+        "200":
+          description: "Updated successfully"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationResponse' }
+
+    delete:
+      summary: "Delete Integration (Disconnect)"
+      tags: [SystemSettings Integrations]
+      description: "Remove the integration record (Disconnect button logic)."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Integration deleted successfully"
+
 components:
   securitySchemes:
     bearerAuth:
