@@ -215,11 +215,12 @@ let currentQueue: Array<{ name?: string; phone: string; status: string }> = [];
 let isCallingInProgress = false;
 
 // API 1: Yeh hit kar pehle – multiple contacts pe sequential calling start karegi
-app.post('/start-calling', async (req, res) => {
+app.post('/start-calling', async (req: Request, res: Response): Promise<void> => {
   const { contacts } = req.body;  // Array of { name, phone }
 
   if (!contacts || contacts.length === 0) {
-    return res.status(400).json({ error: "Kindly send contact array!" });
+    res.status(400).json({ error: "Kindly send contact array!" });
+    return;
   }
 
   // Queue banao
@@ -269,9 +270,17 @@ async function makeNextCall() {
     // Ye Twilio ka free tool use karega jo direct forward karega
     const forwardUrl = `http://twimlets.com/forward?PhoneNumber=${encodeURIComponent(process.env.AGENT_PHONE_NUMBER || '+923179651693')}&Message=${encodeURIComponent('Please wait, agent se connect kar rahe hain...')}&Timeout=30`;
   
+    if (!fromNumber) {
+      console.error("Twilio phone number not configured");
+      current.status = 'failed';
+      makeNextCall();
+      return;
+    }
+
+    const twilioFromNumber: string = fromNumber;
     const call = await client.calls.create({
       to: current.phone,       // Customer ka number
-      from: fromNumber,        // Twilio ka number
+      from: twilioFromNumber,        // Twilio ka number
       url: forwardUrl,         // Ye magic link hai jo agent ko connect karega
       timeout: 35,
       machineDetection: 'Enable'
