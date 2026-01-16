@@ -9,6 +9,29 @@ import { OpenAPIV3 } from "openapi-types";
 import { auth } from "../lib/auth";
 import { SwaggerTheme, SwaggerThemeNameEnum } from "swagger-themes";
 
+// Helper function to find api-doc.yaml in both dev and production
+function findApiDocPath(): string {
+  // Try dist/utils first (production)
+  const distPath = path.join(__dirname, "api-doc.yaml");
+  if (fs.existsSync(distPath)) {
+    return distPath;
+  }
+  
+  // Try src/utils (development)
+  const srcPath = path.join(__dirname, "..", "..", "src", "utils", "api-doc.yaml");
+  if (fs.existsSync(srcPath)) {
+    return srcPath;
+  }
+  
+  // Fallback: try relative to process.cwd()
+  const rootPath = path.join(process.cwd(), "src", "utils", "api-doc.yaml");
+  if (fs.existsSync(rootPath)) {
+    return rootPath;
+  }
+  
+  throw new Error(`api-doc.yaml not found. Tried: ${distPath}, ${srcPath}, ${rootPath}`);
+}
+
 
 /**
  * Standard success response handler
@@ -50,7 +73,7 @@ export const errorResponse = (res: Response, error: any, statusCode = 500) => {
     });
   };
 
-const swaggerDocument = yaml.load(fs.readFileSync(path.join(__dirname, "api-doc.yaml"), "utf8")) as OpenAPIV3.Document;
+const swaggerDocument = yaml.load(fs.readFileSync(findApiDocPath(), "utf8")) as OpenAPIV3.Document;
 
 const theme = new SwaggerTheme();
 
