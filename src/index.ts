@@ -145,11 +145,23 @@ const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;  // .env mein daal lena
 
-if (!accountSid || !authToken || !fromNumber) {
-  console.error("Twilio credentials missing in .env!");
-}
+// Only initialize Twilio client if credentials are valid
+let client: ReturnType<typeof twilio> | null = null;
 
-const client = twilio(accountSid, authToken);
+if (!accountSid || !authToken || !fromNumber) {
+  console.warn("⚠️ Twilio credentials missing or incomplete in .env! Twilio features will be disabled.");
+} else if (!accountSid.startsWith('AC')) {
+  console.warn("⚠️ Invalid Twilio accountSid (must start with 'AC'). Twilio features will be disabled.");
+} else {
+  try {
+    client = twilio(accountSid, authToken);
+    console.log("✓ Twilio client initialized successfully");
+  } catch (error: any) {
+    console.warn("⚠️ Failed to initialize Twilio client:", error.message);
+    client = null;
+  }
+  
+}
 
 // Parse JSON body
 app.use(express.json());
@@ -265,11 +277,14 @@ async function makeNextCall() {
   console.log(`Calling: ${current.name} (${current.phone})`);
 
   try {
-    console.log(`Calling customer: ${current.name || 'Unknown'} (${current.phone})`);
-  
-    // Ye Twilio ka free tool use karega jo direct forward karega
-    const forwardUrl = `http://twimlets.com/forward?PhoneNumber=${encodeURIComponent(process.env.AGENT_PHONE_NUMBER || '+923179651693')}&Message=${encodeURIComponent('Please wait, agent se connect kar rahe hain...')}&Timeout=30`;
-  
+    // Check if Twilio client is available
+    if (!client) {
+      console.error("Twilio client not initialized. Please configure Twilio credentials in .env");
+      current.status = 'failed';
+      makeNextCall();
+      return;
+    }
+
     if (!fromNumber) {
       console.error("Twilio phone number not configured");
       current.status = 'failed';
@@ -277,6 +292,11 @@ async function makeNextCall() {
       return;
     }
 
+    console.log(`Calling customer: ${current.name || 'Unknown'} (${current.phone})`);
+  
+    // Ye Twilio ka free tool use karega jo direct forward karega
+    const forwardUrl = `http://twimlets.com/forward?PhoneNumber=${encodeURIComponent(process.env.AGENT_PHONE_NUMBER || '+923179651693')}&Message=${encodeURIComponent('Please wait, agent se connect kar rahe hain...')}&Timeout=30`;
+  
     const twilioFromNumber: string = fromNumber;
     const call = await client.calls.create({
       to: current.phone,       // Customer ka number
