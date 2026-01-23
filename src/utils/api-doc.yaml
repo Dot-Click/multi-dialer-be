@@ -4384,6 +4384,151 @@
 #       bearerFormat: JWT
 
 
+# # ------------------------------------------------------------------------------------------
+# # DATA & DIALER - CREATE CONTACT
+# # ------------------------------------------------------------------------------------------
+ 
+#   /api/data-dialer/create-contact/create:
+#     post:
+#       summary: "Create a new contact"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       description: "Creates a new contact. Link it to a Dialer ID or let the system find/create one automatically."
+#       security:
+#         - bearerAuth: []
+#       requestBody:
+#         required: true
+#         content:
+#           application/json:
+#             schema:
+#               $ref: '#/components/schemas/CreateContactRequest'
+#       responses:
+#         "201":
+#           description: "Contact created successfully"
+#         "400":
+#           $ref: '#/components/responses/ValidationError'
+
+#   /api/data-dialer/create-contact/assign:
+#     post:
+#       summary: "Assign contact to agent (Admin Only)"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       description: "Allows an Admin/Owner to assign a contact to a specific Staff/Agent."
+#       security:
+#         - bearerAuth: []
+#       requestBody:
+#         required: true
+#         content:
+#           application/json:
+#             schema:
+#               type: object
+#               required: [contactId, agentId]
+#               properties:
+#                 contactId: { type: string, format: uuid }
+#                 agentId: { type: string, format: uuid }
+#       responses:
+#         "200":
+#           description: "Contact assigned successfully"
+#         "403":
+#           description: "Unauthorized - Admin only"
+
+#   /api/data-dialer/create-contact/all:
+#     get:
+#       summary: "Get all contacts globally (Owner only)"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "All contacts fetched"
+#           content:
+#             application/json:
+#               schema:
+#                 type: object
+#                 properties:
+#                   success: { type: boolean }
+#                   data:
+#                     type: array
+#                     items:
+#                       $ref: '#/components/schemas/ContactObject'
+
+#   /api/data-dialer/create-contact:
+#     get:
+#       summary: "Get contacts list"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       description: "Admins see all contacts they own. Agents see only contacts assigned to them."
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "Contacts fetched successfully"
+#           content:
+#             application/json:
+#               schema:
+#                 type: object
+#                 properties:
+#                   success: { type: boolean }
+#                   data:
+#                     type: array
+#                     items:
+#                       $ref: '#/components/schemas/ContactObject'
+
+#   /api/data-dialer/create-contact/{id}:
+#     parameters:
+#       - in: path
+#         name: id
+#         required: true
+#         schema:
+#           type: string
+#           format: uuid
+#     get:
+#       summary: "Get contact details"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "Contact details fetched"
+#         "404":
+#           description: "Contact not found"
+#     patch:
+#       summary: "Update contact"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       requestBody:
+#         content:
+#           application/json:
+#             schema:
+#               $ref: '#/components/schemas/UpdateContactRequest'
+#       responses:
+#         "200":
+#           description: "Contact updated"
+#     delete:
+#       summary: "Delete contact (Admin Only)"
+#       tags:
+#         - Data & Dialer - Create Contact
+#       security:
+#         - bearerAuth: []
+#       responses:
+#         "200":
+#           description: "Contact deleted"
+
+# # ------------------------------------------------------------------------------------------
+# # COMPONENTS
+# # ------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
 openapi: "3.1.0"
 info:
   title: "Boilerplate API Documentation"
@@ -4398,6 +4543,12 @@ servers:
 tags:
   - name: Products
     description: Product management endpoints
+  - name: Calendar
+    description: Calendar event management and scheduling
+  - name: Contact
+    description: Contact management and CRUD operations
+  - name: Contact List
+    description: Contact list/group management
   - name: Library Scripts
     description: Call script creation and management
   - name: Library SMS
@@ -4414,8 +4565,16 @@ tags:
     description: Call settings configuration
   - name: SystemSettings MiscFields
     description: Miscellaneous field configuration
+  - name: SystemSettings Appearance
+    description: UI appearance and visibility settings
+  - name: SystemSettings LeadSheet
+    description: Lead sheet management
+  - name: SystemSettings ActionPlans
+    description: Action plan creation and management
   - name: Authentication
     description: User authentication and session management
+  - name: SystemSettings Integrations
+    description: Third-party service connections (Twilio, Google, etc.)
 
 paths:
   /api/products:
@@ -9867,143 +10026,1356 @@ paths:
       description: "Access Denied - Admins/Owners only"
 
 
-# # ------------------------------------------------------------------------------------------
-# # DATA & DIALER - CREATE CONTACT
-# # ------------------------------------------------------------------------------------------
- 
-#   /api/data-dialer/create-contact/create:
-#     post:
-#       summary: "Create a new contact"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       description: "Creates a new contact. Link it to a Dialer ID or let the system find/create one automatically."
-#       security:
-#         - bearerAuth: []
-#       requestBody:
-#         required: true
-#         content:
-#           application/json:
-#             schema:
-#               $ref: '#/components/schemas/CreateContactRequest'
-#       responses:
-#         "201":
-#           description: "Contact created successfully"
-#         "400":
-#           $ref: '#/components/responses/ValidationError'
 
-#   /api/data-dialer/create-contact/assign:
-#     post:
-#       summary: "Assign contact to agent (Admin Only)"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       description: "Allows an Admin/Owner to assign a contact to a specific Staff/Agent."
-#       security:
-#         - bearerAuth: []
-#       requestBody:
-#         required: true
-#         content:
-#           application/json:
-#             schema:
-#               type: object
-#               required: [contactId, agentId]
-#               properties:
-#                 contactId: { type: string, format: uuid }
-#                 agentId: { type: string, format: uuid }
-#       responses:
-#         "200":
-#           description: "Contact assigned successfully"
-#         "403":
-#           description: "Unauthorized - Admin only"
+# --- SYSTEM SETTINGS: INTEGRATIONS ---
+  /api/system-settings/integrations/create:
+    post:
+      summary: "Create/Connect Integration"
+      tags: [SystemSettings Integrations]
+      description: "Initial connection for a provider. Uses upsert logic to ensure one record per provider per user."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, credentials]
+              properties:
+                provider:
+                  type: string
+                  enum: [TWILIO, GOOGLE_MAPS, REALTOR_DOT_COM, BOMB_BOMB, GMAIL, STANPP_DOT_COM, MY_PLUS_LEADS, ZAPIER]
+                  example: "GMAIL"
+                credentials:
+                  type: object
+                  description: "JSON object for API keys or tokens"
+                  example: { "apiKey": "your_api_key_here" }
+      responses:
+        "201":
+          description: "Connected successfully"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationResponse' }
 
-#   /api/data-dialer/create-contact/all:
-#     get:
-#       summary: "Get all contacts globally (Owner only)"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "All contacts fetched"
-#           content:
-#             application/json:
-#               schema:
-#                 type: object
-#                 properties:
-#                   success: { type: boolean }
-#                   data:
-#                     type: array
-#                     items:
-#                       $ref: '#/components/schemas/ContactObject'
+  /api/system-settings/integrations/all:
+    get:
+      summary: "Get All Integrations (Admin)"
+      tags: [SystemSettings Integrations]
+      description: "Retrieve every integration record in the system. Admin/Owner only."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationResponse'
 
-#   /api/data-dialer/create-contact:
-#     get:
-#       summary: "Get contacts list"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       description: "Admins see all contacts they own. Agents see only contacts assigned to them."
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "Contacts fetched successfully"
-#           content:
-#             application/json:
-#               schema:
-#                 type: object
-#                 properties:
-#                   success: { type: boolean }
-#                   data:
-#                     type: array
-#                     items:
-#                       $ref: '#/components/schemas/ContactObject'
+  /api/system-settings/integrations:
+    get:
+      summary: "Get My Integrations"
+      tags: [SystemSettings Integrations]
+      description: "Retrieve all integrations belonging to the authenticated user."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationResponse'
 
-#   /api/data-dialer/create-contact/{id}:
-#     parameters:
-#       - in: path
-#         name: id
-#         required: true
-#         schema:
-#           type: string
-#           format: uuid
-#     get:
-#       summary: "Get contact details"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "Contact details fetched"
-#         "404":
-#           description: "Contact not found"
-#     patch:
-#       summary: "Update contact"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       requestBody:
-#         content:
-#           application/json:
-#             schema:
-#               $ref: '#/components/schemas/UpdateContactRequest'
-#       responses:
-#         "200":
-#           description: "Contact updated"
-#     delete:
-#       summary: "Delete contact (Admin Only)"
-#       tags:
-#         - Data & Dialer - Create Contact
-#       security:
-#         - bearerAuth: []
-#       responses:
-#         "200":
-#           description: "Contact deleted"
+  /api/system-settings/integrations/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "The UUID of the specific integration record"
+    get:
+      summary: "Get Integration by ID"
+      tags: [SystemSettings Integrations]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Fetched successfully"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationResponse' }
+        "404":
+          description: "Integration not found"
 
-# # ------------------------------------------------------------------------------------------
-# # COMPONENTS
-# # ------------------------------------------------------------------------------------------
+    put:
+      summary: "Update Integration (Manage)"
+      tags: [SystemSettings Integrations]
+      description: "Update credentials for an existing integration record using its ID."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                credentials:
+                  type: object
+                  example: { "apiKey": "new_secret_key" }
+      responses:
+        "200":
+          description: "Updated successfully"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationResponse' }
+
+    delete:
+      summary: "Delete Integration (Disconnect)"
+      tags: [SystemSettings Integrations]
+      description: "Remove the integration record (Disconnect button logic)."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: "Deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Integration deleted successfully"
+
+  # ------------------------------------------------------------------------------------------
+  # CALENDAR EVENTS
+  # ------------------------------------------------------------------------------------------
+  /api/calendar/create:
+    post:
+      summary: "Create Calendar Event"
+      tags:
+        - Calendar
+      description: "Create a new calendar event. Admins/Owners can assign to other users."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - title
+                - description
+                - color
+                - eventType
+                - startDate
+              properties:
+                title:
+                  type: string
+                  example: "Team Meeting"
+                description:
+                  type: string
+                  example: "Quarterly review meeting"
+                color:
+                  type: string
+                  example: "#FF5733"
+                eventType:
+                  type: string
+                  enum: [START_ONLY, FROM_TO, ALL_DAY]
+                  example: "FROM_TO"
+                startDate:
+                  type: string
+                  format: date-time
+                  example: "2024-01-15T10:00:00Z"
+                endDate:
+                  type: string
+                  format: date-time
+                  example: "2024-01-15T11:00:00Z"
+                assignToId:
+                  type: string
+                  description: "Optional - User ID to assign event to. Admins/Owners only."
+                  example: "uuid-here"
+      responses:
+        "201":
+          description: "Calendar event created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error or missing endDate for FROM_TO events"
+        "403":
+          description: "Only admins/owners can assign events to other users"
+        "404":
+          description: "Assigned user not found"
+        "401":
+          description: "Unauthorized"
+
+  /api/calendar:
+    get:
+      summary: "Get Calendar Events"
+      tags:
+        - Calendar
+      description: "Get calendar events for the authenticated user. Admins/Owners see all events."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Calendar events fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+
+  /api/calendar/all:
+    get:
+      summary: "Get All Calendar Events (Admin)"
+      tags:
+        - Calendar
+      description: "Get all calendar events in the system. Admin/Owner only."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All calendar events fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+        "403":
+          description: "Forbidden - Admin/Owner only"
+
+  /api/calendar/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Calendar event ID"
+    get:
+      summary: "Get Calendar Event by ID"
+      tags:
+        - Calendar
+      description: "Get a specific calendar event by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Calendar event fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "403":
+          description: "You can only access your own calendar events"
+        "404":
+          description: "Calendar event not found"
+
+    put:
+      summary: "Update Calendar Event"
+      tags:
+        - Calendar
+      description: "Update an existing calendar event"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                color:
+                  type: string
+                eventType:
+                  type: string
+                  enum: [START_ONLY, FROM_TO, ALL_DAY]
+                startDate:
+                  type: string
+                  format: date-time
+                endDate:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: "Calendar event updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "endDate is required when eventType is FROM_TO"
+        "403":
+          description: "You can only modify your own calendar events"
+        "404":
+          description: "Calendar event not found"
+
+    delete:
+      summary: "Delete Calendar Event"
+      tags:
+        - Calendar
+      description: "Delete a calendar event by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Calendar event deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "You can only delete your own calendar events"
+        "404":
+          description: "Calendar event not found"
+
+  # ------------------------------------------------------------------------------------------
+  # CONTACTS
+  # ------------------------------------------------------------------------------------------
+  /api/contact/create:
+    post:
+      summary: "Create Contact"
+      tags:
+        - Contact
+      description: "Create a new contact"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fullName
+                - address
+                - email
+                - city
+                - state
+                - zip
+                - phoneNumber
+                - phoneType
+                - contactListId
+              properties:
+                fullName:
+                  type: string
+                  example: "John Doe"
+                address:
+                  type: string
+                  example: "123 Main St"
+                email:
+                  type: string
+                  format: email
+                  example: "john.doe@example.com"
+                city:
+                  type: string
+                  example: "New York"
+                state:
+                  type: string
+                  example: "NY"
+                zip:
+                  type: string
+                  example: "10001"
+                phoneNumber:
+                  type: string
+                  example: "+1234567890"
+                phoneType:
+                  type: string
+                  enum: [MOBILE, TELEPHONE]
+                  example: "MOBILE"
+                contactListId:
+                  type: string
+                  example: "uuid-here"
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  example: ["vip", "important"]
+                dataDialerId:
+                  type: string
+                  example: "uuid-here"
+      responses:
+        "201":
+          description: "Contact created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error"
+
+  /api/contact:
+    get:
+      summary: "Get All Contacts"
+      tags:
+        - Contact
+      description: "Retrieve all contacts"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contacts fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+
+  /api/contact/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Contact ID"
+    get:
+      summary: "Get Contact by ID"
+      tags:
+        - Contact
+      description: "Retrieve a specific contact by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contact fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "404":
+          description: "Contact not found"
+
+    put:
+      summary: "Update Contact"
+      tags:
+        - Contact
+      description: "Update an existing contact"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fullName:
+                  type: string
+                address:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                city:
+                  type: string
+                state:
+                  type: string
+                zip:
+                  type: string
+                phoneNumber:
+                  type: string
+                phoneType:
+                  type: string
+                  enum: [MOBILE, TELEPHONE]
+                tags:
+                  type: array
+                  items:
+                    type: string
+                dataDialerId:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: "Contact updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error"
+        "404":
+          description: "Contact not found"
+
+    delete:
+      summary: "Delete Contact"
+      tags:
+        - Contact
+      description: "Delete a contact by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contact deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Contact not found"
+
+  # ------------------------------------------------------------------------------------------
+  # CONTACT LISTS
+  # ------------------------------------------------------------------------------------------
+  /api/contact-list/create:
+    post:
+      summary: "Create Contact List"
+      tags:
+        - Contact List
+      description: "Create a new contact list/group"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  example: "Sales Team List"
+                agentIds:
+                  type: array
+                  items:
+                    type: string
+                  example: ["uuid-1", "uuid-2"]
+                contactIds:
+                  type: array
+                  items:
+                    type: string
+                  example: ["uuid-3", "uuid-4"]
+      responses:
+        "201":
+          description: "Contact list created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error"
+
+  /api/contact-list:
+    get:
+      summary: "Get All Contact Lists"
+      tags:
+        - Contact List
+      description: "Retrieve all contact lists"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contact lists fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+
+  /api/contact-list/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Contact List ID"
+    get:
+      summary: "Get Contact List by ID"
+      tags:
+        - Contact List
+      description: "Retrieve a specific contact list by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contact list fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "404":
+          description: "Contact list not found"
+
+    put:
+      summary: "Update Contact List"
+      tags:
+        - Contact List
+      description: "Update an existing contact list. agentIds are merged, contactIds are replaced."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                agentIds:
+                  type: array
+                  items:
+                    type: string
+                contactIds:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: "Contact list updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error"
+        "404":
+          description: "Contact list not found"
+
+    delete:
+      summary: "Delete Contact List"
+      tags:
+        - Contact List
+      description: "Delete a contact list by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Contact list deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Contact list not found"
+
+  # ------------------------------------------------------------------------------------------
+  # SYSTEM SETTINGS - APPEARANCE
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/appearance/create:
+    post:
+      summary: "Create Appearance Settings"
+      tags:
+        - SystemSettings Appearance
+      description: "Initialize appearance settings for the authenticated user"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - calendar
+                - hotlist
+                - callingGroupsWorkspace
+                - dialerHealth
+                - callStatistics
+                - foldersLists
+                - recentActivity
+                - bestTimeToCall
+                - leadIntelligence
+                - aiCoachingCallAnalysis
+                - callOutcomeIntelligence
+                - efficiencyAutomation
+                - complianceRiskMonitoring
+                - callingGroupsAiSidekick
+                - agentImprovementScores
+                - pipelineAccelerationIndex
+                - lockGroups
+                - birthdays
+                - homeCloseDate
+                - timeZone
+              properties:
+                calendar:
+                  type: boolean
+                  example: true
+                hotlist:
+                  type: boolean
+                  example: true
+                callingGroupsWorkspace:
+                  type: boolean
+                  example: true
+                dialerHealth:
+                  type: boolean
+                  example: true
+                callStatistics:
+                  type: boolean
+                  example: true
+                foldersLists:
+                  type: boolean
+                  example: true
+                recentActivity:
+                  type: boolean
+                  example: true
+                bestTimeToCall:
+                  type: boolean
+                  example: true
+                leadIntelligence:
+                  type: boolean
+                  example: true
+                aiCoachingCallAnalysis:
+                  type: boolean
+                  example: true
+                callOutcomeIntelligence:
+                  type: boolean
+                  example: true
+                efficiencyAutomation:
+                  type: boolean
+                  example: true
+                complianceRiskMonitoring:
+                  type: boolean
+                  example: true
+                callingGroupsAiSidekick:
+                  type: boolean
+                  example: true
+                agentImprovementScores:
+                  type: boolean
+                  example: true
+                pipelineAccelerationIndex:
+                  type: boolean
+                  example: true
+                lockGroups:
+                  type: boolean
+                  example: false
+                birthdays:
+                  type: boolean
+                  example: true
+                homeCloseDate:
+                  type: boolean
+                  example: true
+                timeZone:
+                  type: string
+                  example: "America/New_York"
+      responses:
+        "201":
+          description: "Appearance settings created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Appearance already exists for this user or validation error"
+        "404":
+          description: "SystemSettings not found for user"
+
+  /api/system-settings/appearance:
+    get:
+      summary: "Get Appearance Settings"
+      tags:
+        - SystemSettings Appearance
+      description: "Retrieve appearance settings for the authenticated user"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Appearance settings fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "404":
+          description: "Appearance settings not found"
+
+  /api/system-settings/appearance/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Appearance ID"
+    put:
+      summary: "Update Appearance Settings"
+      tags:
+        - SystemSettings Appearance
+      description: "Update appearance settings. Only own settings can be updated."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                calendar:
+                  type: boolean
+                hotlist:
+                  type: boolean
+                callingGroupsWorkspace:
+                  type: boolean
+                dialerHealth:
+                  type: boolean
+                callStatistics:
+                  type: boolean
+                foldersLists:
+                  type: boolean
+                recentActivity:
+                  type: boolean
+                bestTimeToCall:
+                  type: boolean
+                leadIntelligence:
+                  type: boolean
+                aiCoachingCallAnalysis:
+                  type: boolean
+                callOutcomeIntelligence:
+                  type: boolean
+                efficiencyAutomation:
+                  type: boolean
+                complianceRiskMonitoring:
+                  type: boolean
+                callingGroupsAiSidekick:
+                  type: boolean
+                agentImprovementScores:
+                  type: boolean
+                pipelineAccelerationIndex:
+                  type: boolean
+                lockGroups:
+                  type: boolean
+                birthdays:
+                  type: boolean
+                homeCloseDate:
+                  type: boolean
+                timeZone:
+                  type: string
+      responses:
+        "200":
+          description: "Appearance settings updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "403":
+          description: "You cannot update another user's Appearance"
+        "404":
+          description: "Appearance settings not found"
+
+    delete:
+      summary: "Delete Appearance Settings"
+      tags:
+        - SystemSettings Appearance
+      description: "Delete appearance settings. Only own settings can be deleted."
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Appearance settings deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "You cannot delete another user's Appearance"
+        "404":
+          description: "Appearance settings not found"
+
+  # ------------------------------------------------------------------------------------------
+  # SYSTEM SETTINGS - LEAD SHEET
+  # ------------------------------------------------------------------------------------------
+  /api/system-settings/lead-sheet/create:
+    post:
+      summary: "Create Lead Sheet"
+      tags:
+        - SystemSettings LeadSheet
+      description: "Create a new lead sheet for the authenticated user"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: "Lead sheet data structure (flexible schema)"
+              example:
+                name: "Q1 Leads"
+                status: "active"
+                customFields:
+                  field1: "value1"
+                  field2: "value2"
+      responses:
+        "201":
+          description: "Lead sheet created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Request body is required and must be a valid JSON object"
+
+  /api/system-settings/lead-sheet:
+    get:
+      summary: "Get Lead Sheets"
+      tags:
+        - SystemSettings LeadSheet
+      description: "Retrieve all lead sheets for the authenticated user"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Lead sheets fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+
+  /api/system-settings/lead-sheet/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Lead Sheet ID"
+    get:
+      summary: "Get Lead Sheet by ID"
+      tags:
+        - SystemSettings LeadSheet
+      description: "Retrieve a specific lead sheet by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Lead sheet fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "404":
+          description: "Lead sheet not found"
+
+    put:
+      summary: "Update Lead Sheet"
+      tags:
+        - SystemSettings LeadSheet
+      description: "Update an existing lead sheet"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: "Lead sheet data structure (flexible schema)"
+      responses:
+        "200":
+          description: "Lead sheet updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Request body is required and must be a valid JSON object"
+        "404":
+          description: "Lead sheet not found"
+
+    delete:
+      summary: "Delete Lead Sheet"
+      tags:
+        - SystemSettings LeadSheet
+      description: "Delete a lead sheet by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Lead sheet deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          description: "Lead sheet not found"
+
+  # ------------------------------------------------------------------------------------------
+  # PRODUCTS - Complete Documentation
+  # ------------------------------------------------------------------------------------------
+  /api/products/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Product ID"
+    get:
+      summary: "Get Product by ID"
+      tags:
+        - Products
+      description: "Retrieve a specific product by ID"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Product fetched successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      name:
+                        type: string
+                      price:
+                        type: number
+                      category:
+                        type: string
+                      description:
+                        type: string
+                      thumbnail:
+                        type: string
+                      images:
+                        type: array
+                        items:
+                          type: string
+                      userId:
+                        type: string
+                      createdAt:
+                        type: string
+                      updatedAt:
+                        type: string
+        "404":
+          description: "Product not found"
+
+  /api/products/create:
+    post:
+      summary: "Create Product"
+      tags:
+        - Products
+      description: "Create a new product with optional image uploads"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: "Product Name"
+                price:
+                  type: number
+                  example: 99.99
+                category:
+                  type: string
+                  example: "Electronics"
+                description:
+                  type: string
+                  example: "Product description"
+                file1:
+                  type: string
+                  format: binary
+                  description: "Thumbnail image"
+                file2:
+                  type: string
+                  format: binary
+                  description: "Additional image"
+      responses:
+        "200":
+          description: "Product created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "400":
+          description: "Validation error"
+
+  /api/products/update/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Product ID"
+    patch:
+      summary: "Update Product"
+      tags:
+        - Products
+      description: "Update an existing product. User role required."
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                price:
+                  type: number
+                category:
+                  type: string
+                description:
+                  type: string
+                file1:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: "Product updated successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+        "403":
+          description: "User role required"
+        "404":
+          description: "Product not found"
+
+  /api/products/delete/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Product ID"
+    delete:
+      summary: "Delete Product"
+      tags:
+        - Products
+      description: "Delete a product by ID. User role required."
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: "Product deleted successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "403":
+          description: "User role required"
+        "404":
+          description: "Product not found"
+
 components:
   securitySchemes:
     bearerAuth:
