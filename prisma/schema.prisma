@@ -12,7 +12,9 @@ enum UserStatus {
   DEACTIVATED
   SUSPENDED
   PENDING
+  EXPIRING_SOON
 }
+
 
 enum UserRole {
   AGENT
@@ -130,20 +132,60 @@ enum LeadSheetQuestionType {
   DATETIME
 }
 
+// model User {
+//   id            String     @id @default(uuid())
+//   fullName      String?
+//   email         String     @unique
+//   password      String?
+//   role          UserRole   @default(AGENT)
+//   emailVerified Boolean    @default(false)
+//   image         String?
+//   status        UserStatus @default(ACTIVE)
+//   lastLogin     DateTime?
+//   createdAt     DateTime   @default(now())
+//   updatedAt     DateTime   @updatedAt
+
+//   // Relations
+//   sessions Session[]
+//   accounts Account[]
+//   leads    Lead[]
+
+//   dataDialers      DataDialer[]
+//   multiLineDialers MultiLineDialer[]
+//   libraries        Library[]
+//   reportAnalytics  Report_Analytic[]
+//   complianceDNC    Compliance_DNC[]
+
+//   systemSettings     System_Setting[]
+//   billings           Billing[]
+//   leadStores         LeadStore[]
+//   userSubscriptions  UserSubscription[]
+//   planFeatures       PlanFeature[]
+//   products           Product[]
+//   calendarAssignedTo Calendar[]         @relation("CalendarAssignTo")
+//   calendarAssignedBy Calendar[]         @relation("CalendarAssignBy")
+
+//   @@map("users")
+// }
+
+
 model User {
   id            String     @id @default(uuid())
   fullName      String?
   email         String     @unique
   password      String?
   role          UserRole   @default(AGENT)
+
+  status        UserStatus @default(ACTIVE) // Active / Pending / Suspended / Expiring Soon
+  lastLogin     DateTime?  // null => "Never"
+
   emailVerified Boolean    @default(false)
   image         String?
-  status        UserStatus @default(ACTIVE)
-  lastLogin     DateTime?
+
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  // Relations
+  // Relations (UNCHANGED)
   sessions Session[]
   accounts Account[]
   leads    Lead[]
@@ -160,11 +202,14 @@ model User {
   userSubscriptions  UserSubscription[]
   planFeatures       PlanFeature[]
   products           Product[]
-  calendarAssignedTo Calendar[]         @relation("CalendarAssignTo")
-  calendarAssignedBy Calendar[]         @relation("CalendarAssignBy")
+  calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
+  calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
 
   @@map("users")
 }
+
+
+
 
 model ContactList {
   id         String   @id @default(cuid())

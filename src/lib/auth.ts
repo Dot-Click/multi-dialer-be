@@ -1,130 +1,36 @@
-// import { APIError, betterAuth } from "better-auth";
-// import { prismaAdapter } from "better-auth/adapters/prisma";
-// import { PrismaClient } from "@prisma/client";
-// import { openAPI, customSession, emailOTP, createAuthMiddleware } from "better-auth/plugins";
-// import bcrypt from "bcryptjs";
-// import { envConfig } from "./config";
-// import { otpTemp, sendEmail } from "../utils/email";
-
-// const prisma = new PrismaClient();
-// export const auth = betterAuth({
-//   appName: "Boilerplate",
-//   database: prismaAdapter(prisma, {
-//     provider: "postgresql", // or "mysql", "postgresql", ...etc
-//   }),
-//   user: {
-//     modelName: "user",
-//     additionalFields: {
-//       role: {
-//         type: "string",
-//         required: false,
-//       },
-//     }
-//   },
-//   trustedOrigins: ["http://localhost:5000"],
-//   verifyEmail: {
-//     enabled: true,
-//   },
-//   socialProviders: {
-//     google: {
-//         prompt: "select_account",
-//         clientId: envConfig.GOOGLE_CLIENT_ID as string, 
-//         clientSecret: envConfig.GOOGLE_CLIENT_SECRET as string, 
-//     }, 
-//   },
-//   emailVerification: {
-//     sendVerificationEmail: async ( { user, url, token }, request) => {
-//       await sendEmail(user.email, "Verify your email address", `<html>Click the link to verify your email: <a href="${url}">Link</a></html>`);
-//     },
-//   },
-//   emailAndPassword: {
-//     enabled: true,
-//     requireEmailVerification: true,
-//     headers: {
-//       "Content-Type": "application/json",
-//     },
-//     password: {
-//       hash: async (password) => {
-//         return await bcrypt.hash(password, 10);
-//       },
-//       verify: async ({hash, password}) => {
-//         const isValid = await bcrypt.compare(password, hash);
-//         if (!isValid) {
-//           throw new Error("Invalid password");
-//         }
-//         return isValid;
-//       },
-//     },
-//   },
-  
-//   session: {
-//     expiresIn: 60 * 60 * 24 * 7,
-//     updateAge: 60 * 60 * 24, 
-//     cookieCache: {
-//       enabled: false,
-//     },
-//   },
-
-//   advanced: {
-//     useSecureCookies: true,
-//     cookies: {
-//       session_token: {
-//         attributes: {
-//           sameSite: "none",
-//           httpOnly: true,
-//           secure: true,
-//         },
-//       },
-//     },
-//   },
-  
-//   plugins: [
-//     openAPI({
-//       disableDefaultReference: true,
-//     }),
-//     customSession(async ({ user, session }: { user: any, session: any }) => {
-//       const modifiedUser = {
-//         ...user,
-//         displayName: user.name || user.email?.split('@')[0] || 'User',
-//         role: user.role,
-//       };
-
-//       const modifiedSession = {
-//         ...session,
-//         isActive: new Date(session.expiresAt) > new Date(),
-//         role: user.role,
-//       };
-
-//       return {
-//         user: modifiedUser,
-//         session: modifiedSession,
-//       };
-//     }),
-//   ],
-//   secret: envConfig.BETTER_AUTH_SECRET,
-//   baseUrl: envConfig.BETTER_AUTH_URL,
-// });
-
-
-
-
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { openAPI, customSession } from "better-auth/plugins";
 import bcrypt from "bcryptjs";
+import prisma from "./prisma";
 import { envConfig } from "./config";
 import { sendEmail } from "../utils/email";
-import prisma from "./prisma";
+
+// Define the User type to include your custom fields
+interface AuthUser {
+  id: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+  image?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  role?: string | null;
+  fullName?: string | null;
+  status?: string | null;
+}
 
 export const auth = betterAuth({
   appName: "Boilerplate",
 
-  // DATABASE
+  /* ================= DATABASE ================= */
+
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
 
-  // USER MODEL
+  /* ================= USER MODEL ================= */
+
   user: {
     modelName: "User",
     additionalFields: {
@@ -143,166 +49,171 @@ export const auth = betterAuth({
     },
   },
 
-  trustedOrigins: ["http://localhost:3000"],
+  /* ================= ORIGINS ================= */
 
-  // EMAIL VERIFICATION
+  trustedOrigins: [
+    "http://localhost:3000",
+    ...(envConfig.FRONTEND_URL ? [envConfig.FRONTEND_URL] : []),
+  ],
+
+  /* ================= EMAIL VERIFY ================= */
+
   verifyEmail: {
     enabled: true,
   },
 
   emailVerification: {
-    sendVerificationEmail: async ({ user, url }) => {
+    sendVerificationEmail: async ({
+      user,
+      url,
+    }: {
+      user: {
+        email: string;
+        fullName?: string | null;
+      };
+      url: string;
+    }) => {
       await sendEmail(
         user.email,
-        "Verify your email address",
-        `<html>Click the link to verify your email: <a href="${url}">Verify Email</a></html>`
+        "Verify your email",
+        `
+          <p>Hello ${user.fullName ?? "User"}</p>
+          <p>Click below to verify your email</p>
+          <a href="${url}">Verify Email</a>
+        `
       );
     },
   },
 
-  // EMAIL + PASSWORD LOGIN
+  /* ================= EMAIL + PASSWORD ================= */
+
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
-    headers: {
-      "Content-Type": "application/json",
-    },
-    
-    // Custom hook to bypass email verification for test2@example.com
-    onBeforeSignIn: async ({ user }: { user: any }) => {
-      if (user?.email?.toLowerCase() === "test2@example.com") {
-        // Auto-verify test2@example.com before sign-in check
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { emailVerified: true },
-        });
-      }
+
+    onBeforeSignIn: async ({ user }: { user: AuthUser }) => {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastLogin: new Date() },
+      });
+
       return { user };
     },
 
     password: {
-      hash: async (password) => {
-        if (!password) throw new Error("Password required");
-        return await bcrypt.hash(password, 10);
+      hash: async (password: string): Promise<string> => {
+        if (!password) {
+          throw new Error("Password required");
+        }
+        return bcrypt.hash(password, 10);
       },
 
-      verify: async ({ hash, password }) => {
-        if (!password) throw new Error("Password required");
+      verify: async ({
+        hash,
+        password,
+      }: {
+        hash: string;
+        password: string;
+      }): Promise<boolean> => {
+        if (!password) {
+          throw new Error("Password required");
+        }
+
         const match = await bcrypt.compare(password, hash);
-        if (!match) throw new Error("Invalid password");
-        return match;
+        if (!match) {
+          throw new Error("Invalid credentials");
+        }
+
+        return true;
       },
     },
   },
 
-  // SESSION CONFIG
+  /* ================= SESSION ================= */
+
   session: {
-    expiresIn: 60 * 60 * 24 * 7,
-    updateAge: 60 * 60 * 24,
+    expiresIn: 60 * 60 * 24 * 7, // 7 days
+    updateAge: 60 * 60 * 24, // daily refresh
     cookieCache: {
       enabled: false,
     },
   },
 
-  // COOKIE SECURITY
+  /* ================= COOKIES ================= */
+
   advanced: {
     useSecureCookies: true,
     cookies: {
       session_token: {
         attributes: {
-          sameSite: "none",
           httpOnly: true,
           secure: true,
+          sameSite: "none",
         },
       },
     },
   },
 
-  // PLUGINS
+  /* ================= PLUGINS ================= */
+
   plugins: [
     openAPI({ disableDefaultReference: true }),
 
-    customSession(async ({ user, session }) => {
-      const userWithExtras = user as typeof user & { role?: string; fullName?: string };
-      const modifiedUser = {
-        ...user,
-        displayName: userWithExtras.fullName || user.email?.split("@")[0] || "User",
-        role: userWithExtras.role,
-      };
+    customSession(async ({ user, session }: { user: AuthUser; session: any }) => {
+      const displayName =
+        user.fullName ?? user.email?.split("@")[0] ?? "User";
 
-      const modifiedSession = {
-        ...session,
-        isActive: new Date(session.expiresAt) > new Date(),
-        role: userWithExtras.role,
+      return {
+        user: {
+          ...user,
+          displayName,
+          role: user.role,
+          status: user.status,
+        },
+        session: {
+          ...session,
+          isActive: session.expiresAt
+            ? new Date(session.expiresAt) > new Date()
+            : false,
+          role: user.role,
+        },
       };
-
-      return { user: modifiedUser, session: modifiedSession };
     }),
   ],
 
-  // EVENTS — AUTO CREATE LIBRARY AND SYSTEMSETTINGS AFTER USER SIGNUP (Backup method)
+  /* ================= EVENTS ================= */
+
   events: {
-    onUserCreate: async ({ user }: { user: any }) => {
-      console.log("🔔 Better-Auth Event: onUserCreate triggered for user:", user?.id);
+    onUserCreate: async ({ user }: { user: AuthUser }) => {
+      if (!user?.id) return;
+
       try {
-        if (!user || !user.id) {
-          console.error("❌ Invalid user object in onUserCreate event");
-          return;
-        }
-
-        // Auto-verify email ONLY for test2@example.com
-        // All other users need to verify their email normally
-        if (user.email && user.email.toLowerCase() === "test2@example.com") {
-          await prisma.user.update({
-            where: { id: user.id },
-            data: { emailVerified: true },
-          });
-          console.log("✅ Better-Auth Event: Test email auto-verified for User:", user.id, user.email);
-        } else {
-          console.log("ℹ️ Better-Auth Event: Email verification required for User:", user.id, user.email);
-        }
-
-        // Check if library already exists (avoid duplicates)
-        const existingLibrary = await prisma.library.findFirst({
+        // Use findFirst + create logic because userId might not be a unique index in Prisma types
+        const library = await prisma.library.findFirst({
           where: { userId: user.id },
         });
-
-        if (!existingLibrary) {
-          // Create user library
-          const newLibrary = await prisma.library.create({
-            data: {
-              userId: user.id,
-            },
+        if (!library) {
+          await prisma.library.create({
+            data: { userId: user.id },
           });
-          console.log("✅ Better-Auth Event: Library Created For User:", user.id, "Library ID:", newLibrary.id);
-        } else {
-          console.log("ℹ️ Better-Auth Event: Library already exists for User:", user.id);
         }
 
-        // Check if systemSettings already exists (avoid duplicates)
-        const existingSystemSettings = await prisma.system_Setting.findFirst({
+        const settings = await prisma.system_Setting.findFirst({
           where: { userId: user.id },
         });
-
-        if (!existingSystemSettings) {
-    
-          const newSystemSettings = await prisma.system_Setting.create({
-            data: {
-              userId: user.id,
-            },
+        if (!settings) {
+          await prisma.system_Setting.create({
+            data: { userId: user.id },
           });
-          console.log("✅ Better-Auth Event: SystemSettings Created For User:", user.id, "SystemSettings ID:", newSystemSettings.id);
-        } else {
-          console.log("ℹ️ Better-Auth Event: SystemSettings already exists for User:", user.id);
         }
-      } catch (err: any) {
-        console.error("❌ Better-Auth Event: Library/SystemSettings Create Error:", err?.message || err);
-        console.error("Error stack:", err?.stack);
-          }
+      } catch (error) {
+        console.error("User setup failed", error);
+      }
     },
   },
+
+  /* ================= ENV ================= */
 
   secret: envConfig.BETTER_AUTH_SECRET,
   baseUrl: envConfig.BETTER_AUTH_URL,
 });
-
