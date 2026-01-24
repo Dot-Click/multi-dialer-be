@@ -52,6 +52,22 @@ app.get("/", (_req: Request, res: Response) => {
 
 app.use("/api", routes);
 
+
+
+/* ================= SWAGGER ================= */
+
+swaggerDocs(app);
+
+/* ================= SERVER ================= */
+
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
+
+
+
+
+
 /* =====================================================
    ============ TWILIO / CALLING (COMMENTED) ============
    NOTE: TS clean hai, jab use karna ho uncomment kar lena
@@ -234,13 +250,3 @@ app.get(
 );
 
 */
-
-/* ================= SWAGGER ================= */
-
-swaggerDocs(app);
-
-/* ================= SERVER ================= */
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
