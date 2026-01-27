@@ -1,16 +1,16 @@
 import { Request, Response } from "express"
 import prisma from "../../lib/prisma"
 import { validateData } from "../../middlewares/vald.middleware"
-import { createProductSchema } from "../../zod/user.schema"
+import { createProductSchema } from "../../zod/products.schema"
 
 export async function insertProductInDb(payload: any, uid: string) {
-    try {               
+    try {
         const result = await validateData(createProductSchema, payload) as any
         if (!('data' in result)) {
             throw { errors: result }
         }
         const data = result.data
-        const  prod  = await prisma.product.create({
+        const prod = await prisma.product.create({
             data: { ...data, userId: uid }
         })
         return prod;
@@ -26,11 +26,11 @@ export async function updatedProductInDb(payload: any, pid: string) {
             throw { errors: result }
         }
         const data = result.data
-       const upd = await prisma.product.update({
-        where: { id: pid },
-        data: { ...data }
-       })
-       return upd
+        const upd = await prisma.product.update({
+            where: { id: pid },
+            data: { ...data }
+        })
+        return upd
     } catch (error) {
         throw error
     }
@@ -41,9 +41,9 @@ export async function deleteProductInDb(id: string) {
         const isDel = await prisma.product.delete({
             where: { id: id }
         })
-            if (isDel) {
-                return true
-            } else {
+        if (isDel) {
+            return true
+        } else {
             return false
         }
     } catch (error) {

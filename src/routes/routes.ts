@@ -11,13 +11,14 @@ import callbackPromptRoutes from "./library/callBackPrompt/index";
 import miscFieldsRoutes from "./systemSettings/miscFields/index"
 import appearanceRoutes from "./systemSettings/appearance/index"
 import dialerSettingRoute from "./systemSettings/dialersettings/index"
-import  notificationRoute from "./systemSettings/notification/index"
-import  IntegrationRoute from "./systemSettings/integration/index"
+import notificationRoute from "./systemSettings/notification/index"
+import IntegrationRoute from "./systemSettings/integration/index"
 import calendarRoutes from "./calender/index"
 import actionplansRoutes from "./systemSettings/actionplan/index"
 import leadSheetRoutes from "./systemSettings/leadSheet/index"
 import contactRoutes from "./contact"
 import contactListRoutes from "./contactlist"
+import userRoutes from "./user"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 
 const router = Router()
@@ -29,13 +30,13 @@ router.use("/library/script", protectRoute, scriptRoutes)
 router.use("/library/sms", protectRoute, smsRoutes)
 router.use("/library/email", protectRoute, emailRoutes)
 router.use("/library/media-center", protectRoute, mediaCenterRoutes)
-router.use("/library/callback-prompt",protectRoute,callbackPromptRoutes);
+router.use("/library/callback-prompt", protectRoute, callbackPromptRoutes);
 
 
 
 
 router.use("/system-settings/caller-id", protectRoute, checkRole(["ADMIN", "OWNER"]), callerIdRoutes)
-router.use("/system-settings/dialer-settings",protectRoute, checkRole(["ADMIN", "OWNER"]),dialerSettingRoute);
+router.use("/system-settings/dialer-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), dialerSettingRoute);
 router.use("/system-settings/call-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), callSettingsRoutes)
 router.use("/system-settings/misc-fields", protectRoute, checkRole(["ADMIN", "OWNER"]), miscFieldsRoutes)
 router.use("/system-settings/appearance", protectRoute, checkRole(["ADMIN", "OWNER"]), appearanceRoutes)
@@ -47,6 +48,7 @@ router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "O
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)
 router.use("/contact-list", protectRoute, contactListRoutes)
+router.use("/user", protectRoute, userRoutes)
 
 
 
