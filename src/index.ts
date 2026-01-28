@@ -20,7 +20,7 @@ app.use(sessionMiddleware);
 
 app.use(
   cors({
-    origin: "http://localhost:5000",
+    origin: ["http://localhost:5000", "https://multi-dialer-fe.vercel.app"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: [
