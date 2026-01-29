@@ -6,43 +6,59 @@ function throwHttp(statusCode: number, message: string): never {
 
 export async function createContactInDb(payload: {
   fullName: string;
-  address: string;
-  email: string;
-  city: string;
-  state: string;
-  zip: string;
-  phoneNumber: string;
-  phoneType: "MOBILE" | "TELEPHONE";
-  contactListId: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  source?: string;
   tags: string[];
   dataDialerId?: string;
+  emails: { email: string; isPrimary: boolean }[];
+  phones: { number: string; type: any }[];
+  contactListId?: string;
 }) {
   return prisma.$transaction(async (tx) => {
-    const list = await tx.contactList.findUnique({
-      where: { id: payload.contactListId },
-      select: { id: true },
-    });
-    if (!list) throwHttp(404, "ContactList not found");
+    if (payload.contactListId) {
+      const list = await tx.contactList.findUnique({
+        where: { id: payload.contactListId },
+        select: { id: true },
+      });
+      if (!list) throwHttp(404, "ContactList not found");
+    }
 
     const created = await tx.contact.create({
       data: {
         fullName: payload.fullName,
-        address: payload.address,
-        email: payload.email,
         city: payload.city,
         state: payload.state,
         zip: payload.zip,
-        phoneNumber: payload.phoneNumber,
-        phoneType: payload.phoneType as any,
+        source: payload.source,
         tags: payload.tags ?? [],
         dataDialerId: payload.dataDialerId,
+        emails: {
+          create: payload.emails.map((e) => ({
+            email: e.email,
+            isPrimary: e.isPrimary,
+          })),
+        },
+        phones: {
+          create: payload.phones.map((p) => ({
+            number: p.number,
+            type: p.type,
+          })),
+        },
+      },
+      include: {
+        emails: true,
+        phones: true,
       },
     });
 
-    await tx.contactList.update({
-      where: { id: payload.contactListId },
-      data: { contactIds: { push: created.id } },
-    });
+    if (payload.contactListId) {
+      await tx.contactList.update({
+        where: { id: payload.contactListId },
+        data: { contactIds: { push: created.id } },
+      });
+    }
 
     return created;
   });
@@ -50,13 +66,21 @@ export async function createContactInDb(payload: {
 
 export async function getAllContactsFromDb() {
   return prisma.contact.findMany({
-    orderBy: { id: "desc" },
+    include: {
+      emails: true,
+      phones: true,
+    },
+    orderBy: { createdAt: "desc" },
   });
 }
 
 export async function getContactByIdFromDb(id: string) {
   const contact = await prisma.contact.findUnique({
     where: { id },
+    include: {
+      emails: true,
+      phones: true,
+    },
   });
   if (!contact) throwHttp(404, "Contact not found");
   return contact;
@@ -66,31 +90,63 @@ export async function updateContactInDb(
   id: string,
   payload: Partial<{
     fullName: string;
-    address: string;
-    email: string;
     city: string;
     state: string;
     zip: string;
-    phoneNumber: string;
-    phoneType: "MOBILE" | "TELEPHONE";
+    source: string;
     tags: string[];
     dataDialerId: string | null;
+    emails: { email: string; isPrimary: boolean }[];
+    phones: { number: string; type: any }[];
   }>
 ) {
-  const existing = await prisma.contact.findUnique({ where: { id }, select: { id: true } });
+  const existing = await prisma.contact.findUnique({
+    where: { id },
+    select: { id: true },
+  });
   if (!existing) throwHttp(404, "Contact not found");
- 
+
   return prisma.contact.update({
     where: { id },
     data: {
-      ...payload,
-      phoneType: payload.phoneType ? (payload.phoneType as any) : undefined,
+      fullName: payload.fullName,
+      city: payload.city,
+      state: payload.state,
+      zip: payload.zip,
+      source: payload.source,
+      tags: payload.tags,
+      dataDialerId: payload.dataDialerId,
+      emails: payload.emails
+        ? {
+          deleteMany: {},
+          create: payload.emails.map((e) => ({
+            email: e.email,
+            isPrimary: e.isPrimary,
+          })),
+        }
+        : undefined,
+      phones: payload.phones
+        ? {
+          deleteMany: {},
+          create: payload.phones.map((p) => ({
+            number: p.number,
+            type: p.type,
+          })),
+        }
+        : undefined,
+    },
+    include: {
+      emails: true,
+      phones: true,
     },
   });
 }
 
 export async function deleteContactFromDb(id: string) {
-  const existing = await prisma.contact.findUnique({ where: { id }, select: { id: true } });
+  const existing = await prisma.contact.findUnique({
+    where: { id },
+    select: { id: true },
+  });
   if (!existing) throwHttp(404, "Contact not found");
 
   await prisma.$transaction(async (tx) => {
