@@ -1,7 +1,36 @@
+import bcrypt from "bcryptjs";
 import prisma from "../../lib/prisma";
 
 function throwHttp(statusCode: number, message: string): never {
     throw { message, statusCode };
+}
+
+export async function createUserInDb(payload: any) {
+    const { password, ...rest } = payload;
+
+    // Hash password if provided
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const existing = await prisma.user.findUnique({ where: { email: rest.email } });
+    if (existing) throwHttp(400, "User with this email already exists");
+
+    return prisma.user.create({
+        data: {
+            ...rest,
+            password: hashedPassword,
+        },
+        select: {
+            id: true,
+            fullName: true,
+            email: true,
+            role: true,
+            status: true,
+            image: true,
+            lastLogin: true,
+            createdAt: true,
+            updatedAt: true,
+        },
+    });
 }
 
 export async function getAllUsersFromDb() {
@@ -13,10 +42,18 @@ export async function getAllUsersFromDb() {
             email: true,
             role: true,
             status: true,
-            image: true,
             lastLogin: true,
             createdAt: true,
             updatedAt: true,
+            createdBy: {
+                select: {
+                    id: true,
+                    fullName: true,
+                    role: true,
+                    status: true
+                }
+            },
+            createdUsers: true, 
             // Excluding password
         },
     });
@@ -30,7 +67,6 @@ export async function updateUserInDb(
         password: string;
         role: "AGENT" | "ADMIN" | "OWNER";
         status: "ACTIVE" | "DEACTIVATED" | "SUSPENDED" | "PENDING" | "EXPIRING_SOON";
-        image: string;
         emailVerified: boolean;
     }>
 ) {
@@ -43,13 +79,8 @@ export async function updateUserInDb(
         select: {
             id: true,
             fullName: true,
-            email: true,
             role: true,
             status: true,
-            image: true,
-            lastLogin: true,
-            createdAt: true,
-            updatedAt: true,
         }
     });
 }

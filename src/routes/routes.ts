@@ -1,24 +1,25 @@
 
 // import chatRouter from "./chat";
 import { Router } from "express";
-import scriptRoutes from "./library/scripts/index"
-import smsRoutes from "./library/sms/index"
-import emailRoutes from "./library/email/index"
-import mediaCenterRoutes from "./library/mediaCenter/index"
-import callerIdRoutes from "./systemSettings/callerId/index"
-import callSettingsRoutes from "./systemSettings/callSettings/index"
-import callbackPromptRoutes from "./library/callBackPrompt/index";
-import miscFieldsRoutes from "./systemSettings/miscFields/index"
-import appearanceRoutes from "./systemSettings/appearance/index"
-import dialerSettingRoute from "./systemSettings/dialersettings/index"
-import notificationRoute from "./systemSettings/notification/index"
-import IntegrationRoute from "./systemSettings/integration/index"
-import calendarRoutes from "./calender/index"
-import actionplansRoutes from "./systemSettings/actionplan/index"
-import leadSheetRoutes from "./systemSettings/leadSheet/index"
+import scriptRoutes from "./library/scripts"
+import smsRoutes from "./library/sms"
+import emailRoutes from "./library/email"
+import mediaCenterRoutes from "./library/mediaCenter"
+import callerIdRoutes from "./systemSettings/callerId"
+import callSettingsRoutes from "./systemSettings/callSettings"
+import callbackPromptRoutes from "./library/callBackPrompt";
+import miscFieldsRoutes from "./systemSettings/miscFields"
+import appearanceRoutes from "./systemSettings/appearance"
+import dialerSettingRoute from "./systemSettings/dialersettings"
+import notificationRoute from "./systemSettings/notification"
+import IntegrationRoute from "./systemSettings/integration"
+import calendarRoutes from "./calender"
+import actionplansRoutes from "./systemSettings/actionplan"
+import leadSheetRoutes from "./systemSettings/leadSheet"
 import contactRoutes from "./contact"
 import contactListRoutes from "./contactlist"
 import userRoutes from "./user"
+import companyRoutes from "./company"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 
 const router = Router()
@@ -49,6 +50,7 @@ router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "O
 router.use("/contact", protectRoute, contactRoutes)
 router.use("/contact-list", protectRoute, contactListRoutes)
 router.use("/user", protectRoute, userRoutes)
+router.use("/company", protectRoute, checkRole(["OWNER"]), companyRoutes)
 
 
 

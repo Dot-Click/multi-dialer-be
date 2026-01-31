@@ -1,13 +1,36 @@
 import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
-import { updateUserSchema } from "../../zod/user.schema";
+import { createUserSchema, updateUserSchema } from "../../zod/user.schema";
 import {
     getAllUsersFromDb,
+    createUserInDb,
     updateUserInDb,
     deleteUserFromDb,
     deleteAllUsersFromDb,
 } from "./service";
+
+export const createUser = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const payload = { ...req.body };
+
+        // If authenticated user is creating this user, set createdById
+        if ((req as any).user?.id) {
+            payload.createdById = (req as any).user.id;
+        }
+
+        const result = (await validateData(createUserSchema, payload)) as any;
+        if (!("data" in result)) {
+            errorResponse(res, "Validation error", 400);
+            return;
+        }
+
+        const newUser = await createUserInDb(result.data);
+        successResponse(res, 201, "User created successfully", newUser);
+    } catch (error: any) {
+        errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+    }
+};
 
 export const getAllUsers = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -37,8 +60,8 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
         successResponse(res, 200, "User updated successfully", updatedUser);
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
-    } 
-}; 
+    }
+};
 
 export const deleteUser = async (req: Request, res: Response): Promise<void> => {
     try {

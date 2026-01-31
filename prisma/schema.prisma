@@ -133,7 +133,6 @@ enum LeadSheetQuestionType {
   DATETIME
 }
 
-
 model User {
   id       String   @id @default(uuid())
   fullName String?
@@ -169,6 +168,12 @@ model User {
   products           Product[]
   calendarAssignedTo Calendar[]         @relation("CalendarAssignTo")
   calendarAssignedBy Calendar[]         @relation("CalendarAssignBy")
+
+  createdById  String?
+  createdBy    User?   @relation("UserCreator", fields: [createdById], references: [id])
+  createdUsers User[]  @relation("UserCreator")
+
+  companies Company[]
 
   @@map("users")
 }
@@ -825,4 +830,61 @@ model ActionStep {
   updatedAt DateTime @updatedAt
 
   @@map("action_steps")
+}
+
+model Company {
+  id              String @id @default(cuid())
+  companyName     String
+  defaultTimeZone String @default("UTC") // example: "Asia/Karachi"
+  defaultCurrency String @default("USD")
+  dateTimeFormat  String @default("MM/DD/YYYY - hh:mm A")
+
+  // Zoho Subscriptions Integration
+  zohoSubscriptionsConnected Boolean   @default(false)
+  zohoApiKey                 String? // ← best practice: encrypt before saving
+  zohoOrganizationId         String?
+  zohoLastSyncedAt           DateTime?
+
+  // ── Notification Settings ──
+  notifyFailedPayment     Boolean @default(true)
+  notifyUpcomingRenewal   Boolean @default(true)
+  notifyMaintenanceNotice Boolean @default(true)
+  notifyCriticalError     Boolean @default(true)
+
+  emailDailySummary        Boolean @default(true)
+  emailWeeklyReport        Boolean @default(true)
+  emailNewUserSignups      Boolean @default(false)
+  emailSubscriptionChanges Boolean @default(true)
+  emailSecurityAlerts      Boolean @default(true)
+
+  // ── Security & Access Settings ──
+  minPasswordLength   Int     @default(8)
+  passwordExpiryDays  Int?    @default(90) // null = no expiry
+  requireSpecialChars Boolean @default(true)
+  requireNumbers      Boolean @default(true)
+  requireUppercase    Boolean @default(true)
+
+  sessionTimeoutMinutes Int @default(30)
+
+  require2faForAdmins Boolean @default(false)
+  allow2faForUsers    Boolean @default(true)
+
+  // ── System Preferences ──
+
+  // Default Language (dropdown/select)
+  defaultLanguage String @default("en") // "en" = English, "ur" = Urdu, "es" = Spanish etc. (ISO 639-1 codes best practice)
+
+  // Data Retention Policy (dropdowns with days/periods)
+  callLogRetentionDays          Int @default(365) // Call Logs → 1 year = 365 days
+  callRecordingRetentionDays    Int @default(90) // Call Recordings → 90 days (common default in telephony SaaS)
+  inactiveUserDataRetentionDays Int @default(180) // Inactive Users Data → 180 days
+
+  // timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("companies")
 }
