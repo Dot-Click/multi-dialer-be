@@ -16,6 +16,7 @@ import IntegrationRoute from "./systemSettings/integration"
 import calendarRoutes from "./calender"
 import actionplansRoutes from "./systemSettings/actionplan"
 import leadSheetRoutes from "./systemSettings/leadSheet"
+import callingRoutes from "./calling"
 import contactRoutes from "./contact"
 import contactListRoutes from "./contactlist"
 import userRoutes from "./user"
@@ -53,7 +54,7 @@ router.use("/user", protectRoute, userRoutes)
 router.use("/company", protectRoute, checkRole(["OWNER"]), companyRoutes)
 
 
-
+router.use("/calling", callingRoutes)
 
 
 export default router

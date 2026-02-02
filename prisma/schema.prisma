@@ -603,6 +603,15 @@ model LeadStoreService {
   @@map("lead_store_services")
 }
 
+enum LeadCallStatus {
+  PENDING
+  CALLING
+  CALLED
+  FAILED
+  BUSY
+  NO_ANSWER
+}
+
 model Lead {
   id        String   @id @default(uuid())
   fullName  String
@@ -613,6 +622,8 @@ model Lead {
   state     String
   zip       String
   phoneType String
+  priority  Int      @default(0)
+  status    LeadCallStatus @default(PENDING)
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
