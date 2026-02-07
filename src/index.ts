@@ -35,14 +35,11 @@ app.use(
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static("public"));
 
 sgMail.setApiKey(envConfig.SENDGRID_API_KEY as string);
 
-/* ================= AUTH ================= */
-
 app.all("/api/auth/*", toNodeHandler(auth));
-
-/* ================= BASIC ================= */
 
 cloudinaryConfig();
 
@@ -52,13 +49,7 @@ app.get("/", (_req: Request, res: Response) => {
 
 app.use("/api", routes);
 
-
-
-/* ================= SWAGGER ================= */
-
 swaggerDocs(app);
-
-/* ================= SERVER ================= */
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

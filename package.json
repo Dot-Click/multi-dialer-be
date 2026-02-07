@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --import=tsx --env-file=.env --watch src/index.ts",
     "generate": "prisma generate",
+    "seed": "tsx scripts/seeder.ts",
     "migrate": "prisma migrate dev",
     "studio": "prisma studio",
     "build": "tsc && npm run copy-assets",
@@ -41,6 +42,8 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.2.0",
+    "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.18.2",
     "@types/js-yaml": "^4.0.9",

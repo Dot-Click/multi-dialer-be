@@ -6,8 +6,11 @@ import {
   buyNumber, 
   addLeadsToDialer, 
   getDialerStatus, 
+  sendSms,
   handleVoiceWebhook,
-  handleRecordingStatus
+  handleRecordingStatus,
+  handleTranscriptionWebhook,
+  getTranscriptionLogs
 } from "./controller";
 import { protectRoute } from "../../middlewares/auth.middleware";
 
@@ -22,6 +25,12 @@ router.get("/status",  getDialerStatus);
 router.post("/webhooks/voice", handleVoiceWebhook);
 router.post("/webhooks/call-status", handleCallStatus);
 router.post("/webhooks/recording-status", handleRecordingStatus);
+router.post("/webhooks/transcription", handleTranscriptionWebhook);
+
+router.get("/transcription-logs", getTranscriptionLogs);
+
+// messaging
+router.post("/send-sms",  sendSms);
 
 // Number Management
 router.get("/available-numbers",  getAvailableUsNumbers);

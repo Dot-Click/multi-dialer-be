@@ -40,3 +40,17 @@ export const updateCallerIdSchema = z.object({
   sendText: z.boolean().optional(),
 });
 
+
+export const addLeadsToDialerSchema = z.object({
+  leads: z.array(z.object({
+    fullName: z.string().min(1, "Full name is required"),
+    phone: z.string().min(1, "Phone number is required"),
+    priority: z.number().int().positive().optional(),
+    email: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zip: z.string().optional(),
+    phoneType: z.enum(["MOBILE", "HOME", "WORK"]).optional(),
+  })),
+});
