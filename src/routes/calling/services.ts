@@ -245,4 +245,4 @@ export class DialerService {
   }
 }
 
-export const sssssssdialerService = DialerService.getInstance();
+export const dialerService = DialerService.getInstance();
