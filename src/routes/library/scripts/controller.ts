@@ -3,7 +3,7 @@ import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertScriptInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateScriptSchema } from "../../../zod/script.schema";
+import { updateScriptSchema } from "../../../schemas/script.schema";
 
 export const getAllScriptsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {

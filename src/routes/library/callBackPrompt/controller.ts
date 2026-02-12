@@ -3,7 +3,7 @@
 // import { successResponse, errorResponse } from "../../../utils/handler";
 // import { insertCallbackPromptInDb } from "./service";
 // import { validateData } from "../../../middlewares/vald.middleware";
-// import { updateCallbackPromptSchema } from "../../../zod/callbackPrompt.schema";
+// import { updateCallbackPromptSchema } from "../../../schemas/callbackPrompt.schema";
 
 // export const getAllCallbackPromptsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
 //   try {
@@ -336,7 +336,7 @@ import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertCallbackPromptInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateCallbackPromptSchema } from "../../../zod/callbackPrompt.schema";
+import { updateCallbackPromptSchema } from "../../../schemas/callbackPrompt.schema";
 
 // 1. Get All Prompts for the Logged-in Admin
 export const getAllCallbackPromptsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {

@@ -5,7 +5,7 @@ import { validateData } from "../../middlewares/vald.middleware";
 import {
   createCalendarEventSchema,
   updateCalendarEventSchema,
-} from "../../zod/calendar.schema";
+} from "../../schemas/calendar.schema";
 import { calendarInclude, insertCalendarEventInDb } from "./service";
 
 const canManageOthers = (role?: string) => {

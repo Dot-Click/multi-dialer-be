@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
-import { createContactListSchema, updateContactListSchema } from "../../zod/contactlist.schema";
+import { createContactListSchema, updateContactListSchema } from "../../schemas/contactlist.schema";
 import { createListInDb, deleteListFromDb, getAllListsFromDb, getListByIdFromDb, updateListInDb } from "./service";
 
 export const createContactList = async (req: Request, res: Response): Promise<void> => {

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
-import { createUserSchema, updateUserSchema } from "../../zod/user.schema";
+import { createUserSchema, updateUserSchema } from "../../schemas/user.schema";
 import {
     getAllUsersFromDb,
     createUserInDb,

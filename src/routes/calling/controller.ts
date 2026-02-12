@@ -1,15 +1,16 @@
-import { errorResponse, successResponse } from "../../utils/handler";
-import { client } from "../../lib/config";
+import { errorResponse, successResponse } from "@/utils/handler";
+import { client } from "@/lib/config";
 import { Request, Response, RequestHandler } from "express";
 import VoiceResponse from "twilio/lib/twiml/VoiceResponse";
 import { dialerService } from "./services";
-import prisma from "../../lib/prisma";
+import prisma from "@/lib/prisma";
+import { envConfig } from "@/lib/config";
 import twilio from "twilio";
 
 const { jwt: { AccessToken } } = twilio;
 const VoiceGrant = AccessToken.VoiceGrant;
 
-const fromNumber = process.env.TWILIO_PHONE_NUMBER as string;
+const fromNumber = envConfig.TWILIO_PHONE_NUMBER as string;
 export const startCalling: RequestHandler = async (req, res) => {
  try {
     const { to } = req.body;
@@ -19,12 +20,12 @@ export const startCalling: RequestHandler = async (req, res) => {
     }
     const call = await client.calls.create({
       to: to, // Lead Number (here the number is dynamic for now on testing account i've only 1 verified caller ID)
-      url: `${process.env.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`, // This will now bridge to Agent
-      statusCallback: `${process.env.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
+      url: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`, // This will now bridge to Agent
+      statusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
       statusCallbackMethod: "POST",
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
       from: fromNumber,
-      applicationSid:"APd8c43edcdeb39fb09d7d904eeec31271",    
+      // applicationSid:"APd8c43edcdeb39fb09d7d904eeec31271",    
       timeout: 30,
     });
 
@@ -153,20 +154,19 @@ export const getDialerStatus: RequestHandler = async (req, res) => {
  */
 export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const twiml = new VoiceResponse();
-  const agentNumber = process.env.AGENT_PHONE_NUMBER || '+923413227282'; // Fallback to provided number
   
   // Start Real-time Transcription
   const start = twiml.start();
   start.transcription({
     track: 'both_tracks',
-    statusCallbackUrl: `${process.env.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/transcription`,
+    statusCallbackUrl: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/transcription`,
   });
 
   twiml.say('Please wait while we connect you to an agent.');
   
   const dial = twiml.dial({
     record: 'record-from-answer-dual', // Records both channels
-    recordingStatusCallback: `${process.env.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/recording-status`,
+    recordingStatusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/recording-status`,
   });
   
   // Bridge to the browser-based tester agent
@@ -301,11 +301,11 @@ export const buyNumber: RequestHandler = async (req, res) => {
  */
 export const getTwilioToken: RequestHandler = async (req, res) => {
   try {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID!;
+    const accountSid = envConfig.TWILIO_ACCOUNT_SID!;
     // Note: Trial accounts can typically use AuthToken for simple tokens if needed, 
     // but standard approach uses API Key. For this project, we'll try to generate a basic token.
-    const apiKey = process.env.TWILIO_API_KEY;
-    const apiSecret = process.env.TWILIO_API_SECRET;
+    const apiKey = envConfig.TWILIO_API_KEY;
+    const apiSecret = envConfig.TWILIO_API_SECRET;
     if (!apiKey || !apiSecret) {
       // Fallback for user: Tell them they need to add these to .env if standard token fails
       console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env. Use Twilio Console to create them.");

@@ -3,7 +3,7 @@ import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertCallSettingsInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateCallSettingsSchema } from "../../../zod/callSettings.schema";
+import { updateCallSettingsSchema } from "../../../schemas/callSettings.schema";
 
 export const getAllCallSettingsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {

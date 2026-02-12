@@ -3,7 +3,7 @@ import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertMediaCenterInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateMediaCenterSchema } from "../../../zod/mediaCenter.schema";
+import { updateMediaCenterSchema } from "../../../schemas/mediaCenter.schema";
 
 export const getAllMediaCenterOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {

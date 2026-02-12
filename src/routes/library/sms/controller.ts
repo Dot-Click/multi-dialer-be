@@ -3,7 +3,7 @@ import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertSmsTemplateInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateSmsSchema } from "../../../zod/sms.schema";
+import { updateSmsSchema } from "../../../schemas/sms.schema";
 
 export const getAllSmsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
-import { createContactSchema, updateContactSchema } from "../../zod/contact.schema";
+import { createContactSchema, updateContactSchema } from "../../schemas/contact.schema";
 import {
   createContactInDb,
   deleteContactFromDb,

@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import {envConfig} from "./config";
 
 // 1. Define the Singleton Factory
 const prismaClientSingleton = () => {
@@ -96,7 +97,7 @@ const prisma = globalThis.prisma ?? prismaClientSingleton();
 export default prisma;
 
 // 5. Save instance to global in dev mode
-if (process.env.NODE_ENV !== "production") {
+if (envConfig.NODE_ENV !== "production") {
   globalThis.prisma = prisma;
 }
 

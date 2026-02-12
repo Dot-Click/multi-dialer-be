@@ -1,7 +1,7 @@
 import { Request, Response } from "express"
 import prisma from "../../lib/prisma"
 import { validateData } from "../../middlewares/vald.middleware"
-import { createProductSchema } from "../../zod/products.schema"
+import { createProductSchema } from "../../schemas/products.schema"
 
 export async function insertProductInDb(payload: any, uid: string) {
     try {

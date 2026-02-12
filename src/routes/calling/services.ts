@@ -1,15 +1,15 @@
-import { client } from "../../lib/config";
-import prisma from "../../lib/prisma";
+import { client } from "@/lib/config";
+import prisma from "@/lib/prisma";
 import { LeadCallStatus } from "@prisma/client";
-import { v2 as cloudinary } from "cloudinary";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { cloudinaryUploader } from "../../utils/handler";
+import { cloudinaryUploader } from "@/utils/handler";
+import {envConfig} from "@/lib/config";
 // import OpenAI from "openai";
 
-// const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// const openai = new OpenAI({ apiKey: envConfig.OPENAI_API_KEY });
 
 
 export interface Lead {
@@ -155,9 +155,9 @@ export class DialerService {
       // 2. Initiate Twilio Call
       const call = await client.calls.create({
         to: lead.phone,
-        from: process.env.TWILIO_PHONE_NUMBER as string,
-        url: `${process.env.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`,
-        statusCallback: `${process.env.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
+        from: envConfig.TWILIO_PHONE_NUMBER as string,
+        url: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`,
+        statusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
       });
@@ -308,8 +308,8 @@ export class DialerService {
         method: 'GET',
         responseType: 'stream',
         auth: {
-          username: process.env.TWILIO_ACCOUNT_SID!,
-          password: process.env.TWILIO_AUTH_TOKEN!
+          username: envConfig.TWILIO_ACCOUNT_SID!,
+          password: envConfig.TWILIO_AUTH_TOKEN!
         }
       });
 

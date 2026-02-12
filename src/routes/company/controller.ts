@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
-import { createCompanySchema, updateCompanySchema } from "../../zod/company.schema";
+import { createCompanySchema, updateCompanySchema } from "../../schemas/company.schema";
 import {
     createCompanyInDb,
     deleteCompanyFromDb,

@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createCallSettingsSchema } from "../../../zod/callSettings.schema";
+import { createCallSettingsSchema } from "../../../schemas/callSettings.schema";
 
 export async function insertCallSettingsInDb(payload: any, userId: string) {
   try {

@@ -13,7 +13,7 @@ import {
   getTranscriptionLogs,
   getTwilioToken
 } from "./controller";
-import { protectRoute, checkRole } from "../../middlewares/auth.middleware";
+import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 
 const router = Router();
 

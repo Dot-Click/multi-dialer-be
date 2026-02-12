@@ -3,7 +3,7 @@ import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertMiscFieldInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateMiscFieldSchema } from "../../../zod/miscFields.schema";
+import { updateMiscFieldSchema } from "../../../schemas/miscFields.schema";
 
 export const getAllMiscFieldsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {

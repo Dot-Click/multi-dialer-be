@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createScriptSchema } from "../../../zod/script.schema"; // You need to create this schema
+import { createScriptSchema } from "../../../schemas/script.schema"; // You need to create this schema
 
 export async function insertScriptInDb(payload: any, userId: string) {
   try {

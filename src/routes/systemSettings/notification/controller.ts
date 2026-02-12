@@ -1,7 +1,7 @@
 import { RequestHandler } from "express";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createNotificationSchema, updateNotificationSchema } from "../../../zod/notification.schema";
+import { createNotificationSchema, updateNotificationSchema } from "../../../schemas/notification.schema";
 import {
   createNotificationInDb,
   getNotificationFromDb,

@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createSmsSchema } from "../../../zod/sms.schema";
+import { createSmsSchema } from "../../../schemas/sms.schema";
 
 export async function insertSmsTemplateInDb(payload: any, userId: string) {
   try {

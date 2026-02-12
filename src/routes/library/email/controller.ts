@@ -3,7 +3,7 @@ import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertEmailTemplateInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateEmailSchema } from "../../../zod/email.schema";
+import { updateEmailSchema } from "../../../schemas/email.schema";
 
 export const getAllEmailTemplatesOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {

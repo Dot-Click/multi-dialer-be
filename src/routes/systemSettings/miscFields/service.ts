@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createMiscFieldSchema } from "../../../zod/miscFields.schema";
+import { createMiscFieldSchema } from "../../../schemas/miscFields.schema";
 
 export async function insertMiscFieldInDb(payload: any, userId: string) {
   try {

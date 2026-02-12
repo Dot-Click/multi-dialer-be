@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createMediaCenterSchema } from "../../../zod/mediaCenter.schema";
+import { createMediaCenterSchema } from "../../../schemas/mediaCenter.schema";
 import { cloudinaryUploader } from "../../../utils/handler";
 import { Request } from "express";
 import fs from "fs";

@@ -5,7 +5,7 @@ import { insertAppearanceInDb } from "./service";
 import {
   createAppearanceSchema,
   updateAppearanceSchema
-} from "../../../zod/appearance.schema";
+} from "../../../schemas/appearance.schema";
 import { validateData } from "../../../middlewares/vald.middleware";
 
 // Create or initialize Appearance

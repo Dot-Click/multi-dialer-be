@@ -1,7 +1,7 @@
 // import prisma from "../../../lib/prisma";
 // import { validateData } from "../../../middlewares/vald.middleware";
 
-// import { createCallbackPromptSchema } from "../../../zod/callbackPrompt.schema";
+// import { createCallbackPromptSchema } from "../../../schemas/callbackPrompt.schema";
 
 // export async function insertCallbackPromptInDb(payload: any, userId: string) {
 //   try {
@@ -80,7 +80,7 @@
 
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createCallbackPromptSchema } from "../../../zod/callbackPrompt.schema";
+import { createCallbackPromptSchema } from "../../../schemas/callbackPrompt.schema";
 
 export async function insertCallbackPromptInDb(payload: any, userId: string) {
   try {

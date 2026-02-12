@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { createProduct, deleteProduct, getAllProducts, getProductById, updateProduct } from "./controller";
 import { checkRole, protectRoute } from "../../middlewares/auth.middleware";
 import { validateData } from "../../middlewares/vald.middleware";
-import { createProductSchema } from "../../zod/products.schema";
+import { createProductSchema } from "../../schemas/products.schema";
 import { upload } from "../../middlewares/multer.middleware";
 const router = Router()
 

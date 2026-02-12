@@ -1,7 +1,7 @@
 import { RequestHandler } from "express";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { updateDialerSettingSchema } from "../../../zod/dialerSetting.schema";
+import { updateDialerSettingSchema } from "../../../schemas/dialerSetting.schema";
 import {
   createDialerSettingInDb,
   getDialerSettingFromDb,

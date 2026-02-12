@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createEmailSchema } from "../../../zod/email.schema";
+import { createEmailSchema } from "../../../schemas/email.schema";
 
 export async function insertEmailTemplateInDb(payload: any, userId: string) {
   try {

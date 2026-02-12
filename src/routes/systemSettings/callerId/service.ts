@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
-import { createCallerIdSchema } from "../../../zod/callerId.schema";
+import { createCallerIdSchema } from "../../../schemas/callerId.schema";
 
 export async function insertCallerIdInDb(payload: any, userId: string) {
   try {
