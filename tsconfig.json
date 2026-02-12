@@ -4,6 +4,10 @@
     "module": "CommonJS",
     "moduleResolution": "node",
     "outDir": "./dist",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
