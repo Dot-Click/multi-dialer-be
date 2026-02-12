@@ -1,6 +1,16 @@
 import { client } from "../../lib/config";
 import prisma from "../../lib/prisma";
 import { LeadCallStatus } from "@prisma/client";
+import { v2 as cloudinary } from "cloudinary";
+import axios from "axios";
+import fs from "fs";
+import path from "path";
+import os from "os";
+import { cloudinaryUploader } from "../../utils/handler";
+// import OpenAI from "openai";
+
+// const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 
 export interface Lead {
   id: string;
@@ -163,6 +173,13 @@ export class DialerService {
     }
   }
 
+  private getFullTranscript(callSid: string): string {
+    const logs = this.transcriptionLogs.get(callSid) || [];
+    return logs
+      .map(l => `${l.speaker}: ${l.text}`)
+      .join("\n");
+  }
+
   async updateLeadStatusInDB(leadId: string, status: LeadCallStatus) {
     try {
       await prisma.lead.update({
@@ -188,6 +205,27 @@ export class DialerService {
     };
   }
 
+  /**async analyzeSentiment(transcript: string) {
+    console.log("transcript  here")
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Analyze sales call sentiment. Respond ONLY in JSON with sentiment (positive|neutral|negative) and confidence (0-1)."
+        },
+        {
+          role: "user",
+          content: transcript
+        }
+      ]
+    });
+    console.log("response",response)
+    return JSON.parse(response.choices[0].message.content!);
+  }**/
+
   async handleCallStatusUpdate(sid: string, twilioStatus: string) {
     const metadata = this.activeCalls.get(sid);
     if (!metadata) return;
@@ -201,7 +239,25 @@ export class DialerService {
     if (twilioStatus === "failed") dbStatus = "FAILED";
     else if (twilioStatus === "busy") dbStatus = "BUSY";
     else if (twilioStatus === "no-answer") dbStatus = "NO_ANSWER";
-    else if (twilioStatus === "completed") dbStatus = "CALLED";
+    else if (twilioStatus === "completed") {
+      dbStatus = "CALLED";
+      const transcript = this.getFullTranscript(sid);
+      
+      await prisma.callAnalysis.upsert({
+        where: { callSid: sid },
+        update: { transcript },
+        create: {
+          callSid: sid,
+          leadId,
+          transcript,
+          sentiment: "NEUTRAL",
+          confidence: 1.0,
+        }
+      });
+
+      // Clear logs from memory after saving
+      this.clearTranscriptionLogs(sid);
+    };
 
     await this.updateLeadStatusInDB(leadId, dbStatus);
     
@@ -214,11 +270,71 @@ export class DialerService {
   }
 
   async handleRecordingUpdate(callSid: string, recordingUrl: string) {
-    const metadata = this.activeCalls.get(callSid);
-    if (!metadata) return;
-    
-    console.log(`Recording for Call ${callSid} (Lead ${metadata.leadId}): ${recordingUrl}`);
-    // Update Lead record with recording URL if needed
+    try {
+      console.log(`[Recording] Updating for ${callSid}: ${recordingUrl}`);
+      
+      // 1. Download from Twilio and Upload to Cloudinary
+      const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
+      
+      // 2. Save/Update in CallAnalysis
+      const metadata = this.activeCalls.get(callSid);
+      if (metadata) {
+        await prisma.callAnalysis.upsert({
+          where: { callSid: callSid },
+          update: { recordingUrl: cloudinaryUrl },
+          create: {
+            callSid: callSid,
+            leadId: metadata.leadId,
+            recordingUrl: cloudinaryUrl,
+            sentiment: "NEUTRAL", // Placeholder for now
+            confidence: 1.0,
+            transcript: "" // Will be updated by summary logic if added later
+          }
+        });
+        console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
+      }
+    } catch (error) {
+      console.error("Failed to handle recording update:", error);
+    }
+  }
+
+  private async uploadRecordingToCloudinary(twilioUrl: string, callSid: string): Promise<string> {
+    const tempPath = path.join(os.tmpdir(), `recording-${callSid}.mp3`);
+    try {
+      const downloadUrl = twilioUrl.endsWith('.mp3') ? twilioUrl : `${twilioUrl}.mp3`;
+      
+      const response = await axios({
+        url: downloadUrl,
+        method: 'GET',
+        responseType: 'stream',
+        auth: {
+          username: process.env.TWILIO_ACCOUNT_SID!,
+          password: process.env.TWILIO_AUTH_TOKEN!
+        }
+      });
+
+      const writer = fs.createWriteStream(tempPath);
+      (response.data as any).pipe(writer);
+
+      await new Promise((resolve, reject) => {
+        writer.on('finish', resolve as any);
+        writer.on('error', reject);
+      });
+
+      // Use the user's utility function
+      const result = await cloudinaryUploader(tempPath);
+      
+      // Cleanup temp file
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+      return result?.secure_url!;
+    } catch (err) {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+      throw err;
+    }
   }
 
   private transcriptionLogs: Map<string, Array<{ speaker: string, text: string, timestamp: Date }>> = new Map();

@@ -718,6 +718,20 @@ model CallSettings {
 
   @@map("call_settings")
 }
+model CallAnalysis {
+  id         String   @id @default(uuid())
+  callSid    String   @unique
+  leadId     String
+  sentiment  String   // POSITIVE | NEUTRAL | NEGATIVE
+  confidence Float
+  transcript   String
+  recordingUrl String?
+  createdAt    DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("call_analysis")
+}
+
 
 model MiscField {
   id              String         @id @default(uuid())

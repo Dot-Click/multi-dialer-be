@@ -10,9 +10,10 @@ import {
   handleVoiceWebhook,
   handleRecordingStatus,
   handleTranscriptionWebhook,
-  getTranscriptionLogs
+  getTranscriptionLogs,
+  getTwilioToken
 } from "./controller";
-import { protectRoute } from "../../middlewares/auth.middleware";
+import { protectRoute, checkRole } from "../../middlewares/auth.middleware";
 
 const router = Router();
 
@@ -21,15 +22,16 @@ router.post("/test-call",  startCalling);
 router.post("/leads",  addLeadsToDialer);
 router.get("/status",  getDialerStatus);
 
-// Twilio Webhooks (Usually public but verified by Twilio signature if needed)
+// Twilio Webhooks
 router.post("/webhooks/voice", handleVoiceWebhook);
 router.post("/webhooks/call-status", handleCallStatus);
 router.post("/webhooks/recording-status", handleRecordingStatus);
 router.post("/webhooks/transcription", handleTranscriptionWebhook);
 
 router.get("/transcription-logs", getTranscriptionLogs);
+router.get("/token", getTwilioToken);
 
-// messaging
+// messagings
 router.post("/send-sms",  sendSms);
 
 // Number Management

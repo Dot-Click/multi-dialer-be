@@ -177,7 +177,13 @@ export const auth = betterAuth({
       return ctx.context.returned;
     }),
   },
-
+  onAPIError: {
+		throw: false,
+		onError: (error:any, ctx:any) => {
+			// Custom error handling
+			console.log("Auth error:", error.message);
+		},
+  },
 
 
 

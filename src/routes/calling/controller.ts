@@ -4,6 +4,10 @@ import { Request, Response, RequestHandler } from "express";
 import VoiceResponse from "twilio/lib/twiml/VoiceResponse";
 import { dialerService } from "./services";
 import prisma from "../../lib/prisma";
+import twilio from "twilio";
+
+const { jwt: { AccessToken } } = twilio;
+const VoiceGrant = AccessToken.VoiceGrant;
 
 const fromNumber = process.env.TWILIO_PHONE_NUMBER as string;
 export const startCalling: RequestHandler = async (req, res) => {
@@ -20,6 +24,7 @@ export const startCalling: RequestHandler = async (req, res) => {
       statusCallbackMethod: "POST",
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
       from: fromNumber,
+      applicationSid:"APd8c43edcdeb39fb09d7d904eeec31271",    
       timeout: 30,
     });
 
@@ -164,8 +169,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     recordingStatusCallback: `${process.env.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/recording-status`,
   });
   
-  // Bridge to the real agent phone number
-  dial.number(agentNumber);
+  // Bridge to the browser-based tester agent
+  dial.client('tester_agent');
 
   res.type('text/xml');
   res.send(twiml.toString());
@@ -179,7 +184,6 @@ export const handleRecordingStatus: RequestHandler = async (req, res) => {
   try {
     const { CallSid, RecordingUrl, RecordingStatus } = req.body;
     console.log(`Recording ready for Call ${CallSid}: ${RecordingUrl} (${RecordingStatus})`);
-
     if (RecordingStatus === 'completed') {
       await dialerService.handleRecordingUpdate(CallSid, RecordingUrl);
     }
@@ -198,13 +202,18 @@ export const handleRecordingStatus: RequestHandler = async (req, res) => {
  */
 export const handleTranscriptionWebhook: RequestHandler = async (req, res) => {
   try {
-    const { CallSid, TranscriptionData } = req.body;
+    const { CallSid, TranscriptionData, Track } = req.body;
     
     // Twilio sends TranscriptionData as a JSON string or object
     const data = typeof TranscriptionData === 'string' ? JSON.parse(TranscriptionData) : TranscriptionData;
     
     if (data && data.transcript) {
-      const speaker = data.track === 'inbound' ? 'Customer' : 'Agent';
+      // Diagnostic analysis showed:
+      // inbound_track -> "Welcome back to productivity..." (Agent)
+      // outbound_track -> "Hello.", "Okay." (Customer)
+      const track = (data.track || data.Track || Track || '').toLowerCase();
+      const speaker = track.includes('inbound') ? 'Agent' : 'Customer';
+      
       dialerService.addTranscription(CallSid, speaker, data.transcript);
     }
 
@@ -284,6 +293,44 @@ export const buyNumber: RequestHandler = async (req, res) => {
     console.error("Number buy failed:", error);
     errorResponse(res, {message: error.message});
     return;
+  }
+}
+
+/**
+ * Access Token: Generate token for Browser-based Agent
+ */
+export const getTwilioToken: RequestHandler = async (req, res) => {
+  try {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID!;
+    // Note: Trial accounts can typically use AuthToken for simple tokens if needed, 
+    // but standard approach uses API Key. For this project, we'll try to generate a basic token.
+    const apiKey = process.env.TWILIO_API_KEY;
+    const apiSecret = process.env.TWILIO_API_SECRET;
+    if (!apiKey || !apiSecret) {
+      // Fallback for user: Tell them they need to add these to .env if standard token fails
+      console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env. Use Twilio Console to create them.");
+    }
+
+    const identity = 'tester_agent';
+    const token = new AccessToken(
+      accountSid,
+      apiKey || '', // If missing, the SDK will error, prompting the user to add them
+      apiSecret || '',
+      { identity: identity }
+    );
+
+    const grant = new VoiceGrant({
+      incomingAllow: true, // Allow receiving bridged calls
+    });
+    token.addGrant(grant);
+
+    res.json({
+      identity: identity,
+      token: token.toJwt(),
+    });
+  } catch (error: any) {
+    console.error("Token generation failed:", error);
+    errorResponse(res, { message: "Failed to generate token. Ensure TWILIO_API_KEY and TWILIO_API_SECRET are set." });
   }
 }
 
