@@ -15,8 +15,6 @@ tags:
     description: Call management and scheduling
   - name: Webhooks
     description: Twilio callback endpoints for voice, recordings, and transcriptions
-  - name: Subscriptions
-    description: Zoho Subscription Management
   - name: Calendar
     description: Calendar event management and scheduling
   - name: Contact
