@@ -42,7 +42,7 @@ app.all("/api/auth/*", toNodeHandler(auth));
 cloudinaryConfig();
 
 app.get("/", (_req: Request, res: Response) => {
-  res.send("Server chal raha hai bhai!");
+  res.send("<h1>api</h1>");
 });
 
 app.use("/api", routes);

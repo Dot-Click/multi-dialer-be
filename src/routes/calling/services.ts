@@ -276,15 +276,13 @@ export class DialerService {
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
       
-      // 2. Save/Update in CallAnalysis
-      const metadata = this.activeCalls.get(callSid);
-      if (metadata) {
+      
         await prisma.callAnalysis.upsert({
           where: { callSid: callSid },
           update: { recordingUrl: cloudinaryUrl },
           create: {
             callSid: callSid,
-            leadId: metadata.leadId,
+            leadId: "",
             recordingUrl: cloudinaryUrl,
             sentiment: "NEUTRAL", // Placeholder for now
             confidence: 1.0,
@@ -292,7 +290,6 @@ export class DialerService {
           }
         });
         console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
-      }
     } catch (error) {
       console.error("Failed to handle recording update:", error);
     }

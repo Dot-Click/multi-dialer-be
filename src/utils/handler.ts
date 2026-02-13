@@ -90,7 +90,7 @@ export const swaggerDocs = async (app: any) => {
   
       const transformedTags: OpenAPIV3.TagObject[] = [
         {
-          name: "Authentication",
+          name: "Authentication (Powered by betterAuth)",
         },
       ];
   
@@ -99,7 +99,7 @@ export const swaggerDocs = async (app: any) => {
         for (const methodKey of Object.keys(methods)) {
           const operation = (methods as any)[methodKey];
           if (operation && operation.tags) {
-            operation.tags = ["Authentication"];
+            operation.tags = ["Authentication (Powered by betterAuth)"];
           }
         }
       }
@@ -117,12 +117,12 @@ export const swaggerDocs = async (app: any) => {
     const mergedSpec: any = {
       ...swaggerDocument,
       paths: {
-        ...(swaggerDocument.paths || {}),
         ...(betterAuthSpec?.paths || {}),
+        ...(swaggerDocument.paths || {}),
       },
       tags: [
-        ...(swaggerDocument.tags || []),
         ...(betterAuthSpec?.tags || []),
+        ...(swaggerDocument.tags || []),
       ]
     };
   
@@ -131,7 +131,7 @@ export const swaggerDocs = async (app: any) => {
       swaggerUi.serve,
       swaggerUi.setup(mergedSpec, {
         customCss: theme.getBuffer(SwaggerThemeNameEnum.DRACULA),
-        customSiteTitle: "Proactive API Documentation",
+        customSiteTitle: "CallScout API Documentation",
         customfavIcon: "/favicon.ico",
         swaggerOptions: {
           docExpansion: "list",

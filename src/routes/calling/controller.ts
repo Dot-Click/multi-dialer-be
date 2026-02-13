@@ -203,7 +203,7 @@ export const handleRecordingStatus: RequestHandler = async (req, res) => {
 export const handleTranscriptionWebhook: RequestHandler = async (req, res) => {
   try {
     const { CallSid, TranscriptionData, Track } = req.body;
-    
+    console.log("[TranscriptionDataJSON]  ",JSON.stringify(TranscriptionData))
     // Twilio sends TranscriptionData as a JSON string or object
     const data = typeof TranscriptionData === 'string' ? JSON.parse(TranscriptionData) : TranscriptionData;
     
@@ -212,7 +212,7 @@ export const handleTranscriptionWebhook: RequestHandler = async (req, res) => {
       // inbound_track -> "Welcome back to productivity..." (Agent)
       // outbound_track -> "Hello.", "Okay." (Customer)
       const track = (data.track || data.Track || Track || '').toLowerCase();
-      const speaker = track.includes('inbound') ? 'Agent' : 'Customer';
+      const speaker = track.includes('inbound') ? 'AGENT' : 'CUSTOMER';
       
       dialerService.addTranscription(CallSid, speaker, data.transcript);
     }
@@ -324,7 +324,7 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
     });
     token.addGrant(grant);
 
-    res.json({
+    successResponse(res, 200, "Token generated successfully", {
       identity: identity,
       token: token.toJwt(),
     });
@@ -345,7 +345,7 @@ export const sendSms: RequestHandler = async (req: Request, res: Response) => {
   });
 
   console.log(service.sid);
-  successResponse(res, 200, "Number bought successfully", service);
+  successResponse(res, 200, "SMS sent successfully", service);
   return;
   } catch (error: any) {
     console.error("Number buy failed:", error);
