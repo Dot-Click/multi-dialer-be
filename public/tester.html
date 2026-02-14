@@ -261,6 +261,8 @@
         let isCalling = false;
         let pollInterval = null;
         let device = null;
+        let activeConnection = null;
+        let activeCallSid = null;
 
         // --- Twilio SDK Initialization ---
         async function setupTwilioDevice() {
@@ -298,6 +300,13 @@
 
                 device.on('incoming', (connection) => {
                     addLog('System', 'Incoming Bridge Connection...', 'agent');
+                    activeConnection = connection;
+                    
+                    connection.on('disconnect', () => {
+                        addLog('System', 'Call disconnected.', 'agent');
+                        stopCalling();
+                    });
+
                     // Automatically answer the bridge call
                     connection.accept();
                     addLog('System', 'Bridge Connected! You are now talking to the Lead.', 'agent');
@@ -316,7 +325,20 @@
 
         dialBtn.addEventListener('click', async () => {
             if (isCalling) {
-                // For now just toggle UI, real end handled by Twilio
+                // Properly disconnect the WebRTC session
+                if (activeConnection) {
+                    activeConnection.disconnect();
+                }
+                
+                // Also notify server to ensure the lead side is dropped
+                if (activeCallSid) {
+                    fetch('/api/calling/end-call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ callSid: activeCallSid })
+                    }).catch(err => console.error('Failed to notify server of end call:', err));
+                }
+
                 stopCalling();
                 return;
             }
@@ -347,7 +369,8 @@
                 
                 const data = await response.json();
                 if (data.success) {
-                    console.log('Call initiated:', data.data.sid);
+                    activeCallSid = data.data.sid;
+                    console.log('Call initiated:', activeCallSid);
                     startPollingLogs();
                 } else {
                     alert('Failed: ' + data.message);
@@ -368,6 +391,8 @@
             appStatus.style.color = '#10b981';
             clearInterval(pollInterval);
             lastLogCount = 0;
+            activeCallSid = null;
+            activeConnection = null;
         }
 
         let lastLogCount = 0;

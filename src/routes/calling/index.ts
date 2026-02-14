@@ -11,7 +11,8 @@ import {
   handleRecordingStatus,
   handleTranscriptionWebhook,
   getTranscriptionLogs,
-  getTwilioToken
+  getTwilioToken,
+  endCall
 } from "./controller";
 import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 
@@ -19,6 +20,7 @@ const router = Router();
 
 // Calling Control
 router.post("/test-call",  startCalling);
+router.post("/end-call",  endCall);
 router.post("/leads",  addLeadsToDialer);
 router.get("/status",  getDialerStatus);
 

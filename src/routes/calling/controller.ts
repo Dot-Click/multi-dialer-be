@@ -39,6 +39,26 @@ export const startCalling: RequestHandler = async (req, res) => {
   }
 }
 
+export const endCall: RequestHandler = async (req, res) => {
+  try {
+    const { callSid } = req.body;
+    if (!callSid) {
+      errorResponse(res, { message: "Call SID is required" }, 400);
+      return;
+    }
+
+    console.log("Terminating call:", callSid);
+    const call = await client.calls(callSid).update({ status: 'completed' });
+    
+    successResponse(res, 200, "Call terminated successfully", call);
+    return;
+  } catch (error: any) {
+    console.error("End call failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+}
+
 /**
  * Bulk add leads to the database and priority queue
  */
