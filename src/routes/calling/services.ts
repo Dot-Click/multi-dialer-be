@@ -7,9 +7,9 @@ import path from "path";
 import os from "os";
 import { cloudinaryUploader } from "@/utils/handler";
 import {envConfig} from "@/lib/config";
-// import OpenAI from "openai";
+import Groq from "groq-sdk";
 
-// const openai = new OpenAI({ apiKey: envConfig.OPENAI_API_KEY });
+const groq = new Groq({ apiKey: envConfig.GROK_API_KEY });
 
 
 export interface Lead {
@@ -25,32 +25,32 @@ export interface Lead {
  * Manages leads based on their priority (higher number = higher priority)
  */
 export class PriorityCallQueue {
-  private queue: Lead[] = [];
+    private queue: Lead[] = [];
 
-  enqueue(lead: Lead) {
-    this.queue.push(lead);
-    this.queue.sort((a, b) => b.priority - a.priority);
-  }
+    enqueue(lead: Lead) {
+      this.queue.push(lead);
+      this.queue.sort((a, b) => b.priority - a.priority);
+    }
 
-  dequeue(): Lead | undefined {
-    return this.queue.shift();
-  }
+    dequeue(): Lead | undefined {
+      return this.queue.shift();
+    }
 
-  isEmpty(): boolean {
-    return this.queue.length === 0;
-  }
+    isEmpty(): boolean {
+      return this.queue.length === 0;
+    }
 
-  size(): number {
-    return this.queue.length;
-  }
+    size(): number {
+      return this.queue.length;
+    }
 
-  getQueue() {
-    return this.queue;
-  }
+    getQueue() {
+      return this.queue;
+    }
 
-  clear() {
-    this.queue = [];
-  }
+    clear() {
+      this.queue = [];
+    }
 }
 
 export class DialerService {
@@ -205,26 +205,34 @@ export class DialerService {
     };
   }
 
-  /**async analyzeSentiment(transcript: string) {
-    console.log("transcript  here")
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+  async analyzeSentiment(transcript: string) {
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", // fast + powerful
       temperature: 0,
+      response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content:
-            "Analyze sales call sentiment. Respond ONLY in JSON with sentiment (positive|neutral|negative) and confidence (0-1)."
-        },
-        {
-          role: "user",
-          content: transcript
-        }
-      ]
-    });
-    console.log("response",response)
-    return JSON.parse(response.choices[0].message.content!);
-  }**/
+          {
+            role: "system",
+            content: `
+            You are a sales call analyzer.
+
+            Return ONLY valid JSON:
+            {
+              "sentiment": "positive" | "neutral" | "negative",
+              "confidence": number (0-1),
+              "lead_interest": "high" | "medium" | "low",
+              "summary": "2-3 line short summary"
+            }`
+            },
+            {
+              role: "user",
+              content: transcript
+            }
+          ]
+        });
+
+      return JSON.parse(completion.choices[0].message.content!);
+    }
 
   async handleCallStatusUpdate(sid: string, twilioStatus: string) {
     const metadata = this.activeCalls.get(sid);
@@ -241,55 +249,54 @@ export class DialerService {
     else if (twilioStatus === "no-answer") dbStatus = "NO_ANSWER";
     else if (twilioStatus === "completed") {
       dbStatus = "CALLED";
-      const transcript = this.getFullTranscript(sid);
-      
-      await prisma.callAnalysis.upsert({
-        where: { callSid: sid },
-        update: { transcript },
-        create: {
-          callSid: sid,
-          leadId,
-          transcript,
-          sentiment: "NEUTRAL",
-          confidence: 1.0,
-        }
-      });
 
       // Clear logs from memory after saving
       this.clearTranscriptionLogs(sid);
     };
 
-    await this.updateLeadStatusInDB(leadId, dbStatus);
-    
-    // Remove from active calls
-    this.activeCalls.delete(sid);
+      await this.updateLeadStatusInDB(leadId, dbStatus);
+      
+      // Remove from active calls
+      this.activeCalls.delete(sid);
 
-    // CALL IS FINISHED -> Automatically trigger next call for this user
-    console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
-    this.processQueue(userId);
-  }
+      // CALL IS FINISHED -> Automatically trigger next call for this user
+      console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
+      this.processQueue(userId);
+    }
 
-  async handleRecordingUpdate(callSid: string, recordingUrl: string) {
+  async handleRecordingUpdate(callSid: string, recordingUrl: string, RecordingSid: string) {
     try {
       console.log(`[Recording] Updating for ${callSid}: ${recordingUrl}`);
-      
+        
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
+
+        
+      const transcription = await groq.audio.transcriptions.create({
+        url: cloudinaryUrl,
+        model: "whisper-large-v3",
+        temperature: 0,
+        response_format: "verbose_json",
+      });
+      // AI Sentiments Logic should be implemented here
+      const sentimentAnalysis = await this.analyzeSentiment(transcription.text);
       
-      
-        await prisma.callAnalysis.upsert({
-          where: { callSid: callSid },
-          update: { recordingUrl: cloudinaryUrl },
-          create: {
-            callSid: callSid,
-            leadId: "",
-            recordingUrl: cloudinaryUrl,
-            sentiment: "NEUTRAL", // Placeholder for now
-            confidence: 1.0,
-            transcript: "" // Will be updated by summary logic if added later
-          }
-        });
-        console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
+      // console.log("sentimentAnalysis",sentimentAnalysis)
+        
+      await prisma.callAnalysis.upsert({
+        where: { callSid: callSid },
+        update: { recordingUrl: cloudinaryUrl },
+        create: {
+          callSid: callSid,
+          leadId: "",
+          recordingUrl: cloudinaryUrl,
+          sentiment: sentimentAnalysis?.sentiment || "", // Placeholder for now
+          confidence: sentimentAnalysis?.confidence || 0,
+          aiSummary: sentimentAnalysis?.summary || "",
+          transcript: transcription.text
+        }
+      });
+      console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
     } catch (error) {
       console.error("Failed to handle recording update:", error);
     }

@@ -202,10 +202,10 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
  */
 export const handleRecordingStatus: RequestHandler = async (req, res) => {
   try {
-    const { CallSid, RecordingUrl, RecordingStatus } = req.body;
+    const { CallSid, RecordingUrl, RecordingStatus, RecordingSid } = req.body;
     console.log(`Recording ready for Call ${CallSid}: ${RecordingUrl} (${RecordingStatus})`);
     if (RecordingStatus === 'completed') {
-      await dialerService.handleRecordingUpdate(CallSid, RecordingUrl);
+      await dialerService.handleRecordingUpdate(CallSid, RecordingUrl, RecordingSid);
     }
 
     successResponse(res, 200, "Recording status received", req.body);
@@ -373,3 +373,53 @@ export const sendSms: RequestHandler = async (req: Request, res: Response) => {
     return;
   }
 }
+
+export const getCallsInsights: RequestHandler = async (req, res) => {
+  try {
+    const insights = await client.calls.list({ status: "completed", limit: 10 });
+    const serializedInsights = insights.map(call => call.toJSON());
+    
+    successResponse(res, 200, "Calls insights fetched successfully", serializedInsights);
+    return;
+  } catch (error: any) {
+    console.error("Calls insights fetch failed:", error);
+    
+    const statusCode = error.status || 500;
+    const message = error.code === 20003 
+      ? "Twilio authentication failed. Please check your credentials." 
+      : error.message;
+
+    errorResponse(res, { message }, statusCode);
+    return;
+  }
+};
+
+
+export const insights: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const serviceSid = process.env.TWILIO_INTELLIGENCE_SERVICE_SID;
+    const {RecordingSid} = req.body;
+    const insights = await client.intelligence.v2.transcripts.create({
+      serviceSid: serviceSid!,
+      channel: JSON.stringify({
+        media_properties: {
+          source_sid: RecordingSid
+        }
+      })
+    })  
+    console.log(insights)
+    
+    successResponse(res, 200, "Calls insights fetched successfully", insights);
+    return;
+  } catch (error: any) {
+    console.error("Calls insights fetch failed:", error);
+    
+    const statusCode = error.status || 500;
+    const message = error.code === 20003 
+      ? "Twilio authentication failed. Please check your credentials." 
+      : error.message;
+
+    errorResponse(res, { message }, statusCode);
+    return;
+  }
+};

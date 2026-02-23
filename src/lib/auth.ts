@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { sendEmail } from "../utils/email";
+import { errorResponse } from "@/utils/handler";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -22,11 +23,7 @@ interface AuthUser {
 
 export const auth = betterAuth({
   appName: "Boilerplate",
-
-  /* ================= DATABASE ================= */
   database: prismaAdapter(prisma, { provider: "postgresql" }),
-
-  /* ================= USER MODEL ================= */
   user: {
     modelName: "User",
     additionalFields: {
@@ -35,14 +32,13 @@ export const auth = betterAuth({
       status: { type: "string", required: false },
     },
   },
-
-  /* ================= ORIGINS ================= */
   trustedOrigins: [
     "http://localhost:3000",
+    "http://localhost:5000",
+    "http://localhost:3000/api/verified",
+    envConfig.BACKEND_URL!,
     ...(envConfig.FRONTEND_URL ? [envConfig.FRONTEND_URL] : []),
   ],
-
-  /* ================= EMAIL VERIFY ================= */
   emailVerification: {
     sendVerificationEmail: async ({
       user,
@@ -56,12 +52,10 @@ export const auth = betterAuth({
         "Verify your email",
         `<p>Hello ${user.fullName ?? "User"}</p>
          <p>Click below to verify your email</p>
-         <a href="${url}">Verify Email</a>`
+         <a href="${envConfig.FRONTEND_URL}/admin/login">Verify Email</a>`
       );
     },
   },
-
-  /* ================= EMAIL + PASSWORD ================= */
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
@@ -78,22 +72,16 @@ export const auth = betterAuth({
         hash: string;
         password: string;
       }): Promise<boolean> => {
-        if (!password) throw new Error("Password required");
-        const match = await bcrypt.compare(password, hash);
-        if (!match) throw new Error("Invalid credentials");
-        return true;
+        if (!password) return false;
+        return bcrypt.compare(password, hash);
       },
     },
   },
-
-  /* ================= SESSION ================= */
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
     cookieCache: { enabled: false },
-  },
-
-  /* ================= COOKIES ================= */
+  },  
   advanced: {
     useSecureCookies: true,
     cookies: {
@@ -102,8 +90,6 @@ export const auth = betterAuth({
       },
     },
   },
-
-  /* ================= PLUGINS ================= */
   plugins: [
     openAPI({ disableDefaultReference: true }),
     customSession(async ({ user, session }: { user: AuthUser; session: any }) => {
@@ -126,11 +112,10 @@ export const auth = betterAuth({
     }),
   ],
 
-  /* ================= HOOKS ================= */
   hooks: {
     after: createAuthMiddleware(async (ctx) => {
       if (ctx.path.startsWith("/sign-in") || ctx.path.startsWith("/callback")) {
-        const resp = (ctx.context.returned ?? ctx.context.response) as any;
+        const resp = ctx.context.returned as any;
         if (!resp || !resp.user?.email) return resp;
 
         // Update last login
@@ -139,29 +124,33 @@ export const auth = betterAuth({
           data: { lastLogin: new Date() },
         });
 
-        const userFromDb = await prisma.user.findFirst({
+        // Fetch additional user data for response augmentation
+        const userFromDb = await prisma.user.findUnique({
           where: { email: resp.user.email },
+          select: { role: true, fullName: true, status: true },
         });
+
+        if (!userFromDb) return resp;
 
         return {
           ...resp,
           user: {
             ...resp.user,
-            role: userFromDb?.role ?? null,
-            fullName: userFromDb?.fullName ?? null,
-            status: userFromDb?.status ?? null,
+            role: userFromDb.role ?? null,
+            fullName: userFromDb.fullName ?? null,
+            status: userFromDb.status ?? null,
           },
           session: {
             ...resp.session,
-            role: userFromDb?.role ?? null,
+            role: userFromDb.role ?? null,
           },
         };
       }
 
       if (ctx.path.startsWith("/sign-up")) {
-        const resp = (ctx.context.returned ?? ctx.context.response) as any;
+        const resp = ctx.context.returned as any;
         if (resp?.user?.id) {
-          // Handle user setup logic that was in onUserCreate
+          // Handle user setup logic
           try {
             const library = await prisma.library.findFirst({ where: { userId: resp.user.id } });
             if (!library) await prisma.library.create({ data: { userId: resp.user.id } });
@@ -177,17 +166,15 @@ export const auth = betterAuth({
       return ctx.context.returned;
     }),
   },
-  onAPIError: {
-		throw: false,
-		onError: (error:any, ctx:any) => {
-			// Custom error handling
-			console.log("Auth error:", error.message);
-		},
-  },
-
-
-
-  /* ================= ENV ================= */
+  
   secret: envConfig.BETTER_AUTH_SECRET,
   baseURL: envConfig.BETTER_AUTH_URL,
+
+  onAPIError: {
+    throw: true,
+    onError: async (error, ctx:any) => {
+      // Log error for debugging but let standard auth errors pass through
+      console.error("Better-Auth API Error:", (error as any).message);
+    }
+  }
 });

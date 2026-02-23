@@ -184,8 +184,30 @@ model ContactList {
   name       String
   agentIds   String[] @default([])
   contactIds String[] @default([])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@map("lists")
+}
+
+model CotactFolder {
+  id         String   @id @default(cuid())
+  name       String
+  listIds   String[] @default([])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("folders")
+}
+
+model ContactGroups {
+  id         String   @id @default(cuid())
+  name       String
+  contactIds String[] @default([])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("groups")
 }
 
 model Contact {
@@ -726,6 +748,7 @@ model CallAnalysis {
   sentiment  String   // POSITIVE | NEUTRAL | NEGATIVE
   confidence Float
   transcript   String
+  aiSummary String?
   recordingUrl String?
   createdAt    DateTime @default(now())
   updatedAt  DateTime @updatedAt

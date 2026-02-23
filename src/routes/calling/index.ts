@@ -12,7 +12,8 @@ import {
   handleTranscriptionWebhook,
   getTranscriptionLogs,
   getTwilioToken,
-  endCall
+  endCall,
+  getCallsInsights
 } from "./controller";
 import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 
@@ -22,7 +23,7 @@ const router = Router();
 router.post("/test-call",  startCalling);
 router.post("/end-call",  endCall);
 router.post("/leads",  addLeadsToDialer);
-router.get("/status",  getDialerStatus);
+router.get("/status",protectRoute,  getDialerStatus);
 
 // Twilio Webhooks
 router.post("/webhooks/voice", handleVoiceWebhook);
@@ -40,4 +41,6 @@ router.post("/send-sms",  sendSms);
 router.get("/available-numbers",  getAvailableUsNumbers);
 router.post("/buy-number",  buyNumber);
 
+//calls insights
+router.get("/calls-insights", getCallsInsights);
 export default router;

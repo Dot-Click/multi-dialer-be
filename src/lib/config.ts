@@ -15,6 +15,7 @@ export const envConfig =  {
         PORT: process.env.PORT,
         NODE_ENV: process.env.NODE_ENV,
         SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
+        GROK_API_KEY: process.env.GROK_API_KEY,
         EMAIL_USER: process.env.EMAIL_USER,
         SESSION_SECRET: process.env.SESSION_SECRET,
         CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,

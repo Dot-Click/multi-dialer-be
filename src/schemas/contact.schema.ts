@@ -36,3 +36,12 @@ export const updateContactSchema = z.object({
 });
 
 
+export const createListFolderSchema = z.object({
+  name: z.string().min(1),
+  listIds: z.array(z.string().min(1)).default([]),
+});
+
+export const createContactGroupSchema = z.object({
+  name: z.string().min(1),
+  contactIds: z.array(z.string().min(1)).default([]),
+});

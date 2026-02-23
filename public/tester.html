@@ -1,420 +1,420 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Dialer Tester | Agent Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --primary: #6366f1;
-            --primary-hover: #4f46e5;
-            --bg: #0f172a;
-            --card-bg: #1e293b;
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent: #10b981;
-            --danger: #ef4444;
-        }
-
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: 'Outfit', sans-serif;
-            background-color: var(--bg);
-            color: var(--text-main);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        .dashboard {
-            width: 90%;
-            max-width: 1000px;
-            height: 85vh;
-            background: var(--card-bg);
-            border-radius: 24px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            display: flex;
-            flex-direction: column;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-        }
-
-        header {
-            padding: 24px 32px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        header h1 {
-            margin: 0;
-            font-size: 1.5rem;
-            background: linear-gradient(to right, #818cf8, #c084fc);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .status-badge {
-            padding: 6px 12px;
-            border-radius: 99px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--accent);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-        }
-
-        main {
-            flex: 1;
-            display: grid;
-            grid-template-columns: 1fr 1.5fr;
-            overflow: hidden;
-        }
-
-        .controls {
-            padding: 32px;
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }
-
-        .input-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 0.9rem;
-            color: var(--text-muted);
-        }
-
-        .input-group input {
-            width: 100%;
-            padding: 12px 16px;
-            border-radius: 12px;
-            background: #0f172a;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: white;
-            font-size: 1rem;
-            box-sizing: border-box;
-            transition: border-color 0.2s;
-        }
-
-        .input-group input:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-
-        .dial-btn {
-            padding: 16px;
-            border-radius: 12px;
-            border: none;
-            background: var(--primary);
-            color: white;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        .dial-btn:hover {
-            background: var(--primary-hover);
-            transform: translateY(-2px);
-        }
-
-        .dial-btn:active {
-            transform: translateY(0);
-        }
-
-        .dial-btn.calling {
-            background: var(--danger);
-        }
-
-        .transcription-panel {
-            padding: 32px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            overflow: hidden;
-        }
-
-        .transcription-panel h2 {
-            margin: 0;
-            font-size: 1.1rem;
-            color: var(--text-muted);
-        }
-
-        .log-container {
-            flex: 1;
-            background: #0f172a;
-            border-radius: 16px;
-            padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .log-entry {
-            font-size: 0.95rem;
-            line-height: 1.5;
-            padding: 10px 14px;
-            border-radius: 12px;
-            max-width: 85%;
-        }
-
-        .log-entry.agent {
-            background: rgba(99, 102, 241, 0.1);
-            border-left: 3px solid var(--primary);
-            align-self: flex-start;
-        }
-
-        .log-entry.customer {
-            background: rgba(16, 185, 129, 0.1);
-            border-right: 3px solid var(--accent);
-            align-self: flex-end;
-            text-align: right;
-        }
-
-        .log-entry .name {
-            display: block;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-bottom: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .agent .name { color: #818cf8; }
-        .customer .name { color: #34d399; }
-
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-    </style>
-</head>
-<body>
-    <div class="dashboard">
-        <header>
-            <h1>Bridge Dialer</h1>
-            <div class="status-badge" id="appStatus">Ready to Call</div>
-        </header>
-        <main>
-            <section class="controls">
-                <div class="input-group">
-                    <label>Lead Phone Number</label>
-                    <input type="text" id="leadPhone" placeholder="+923XXXXXXXXX" value="+923413227282">
-                </div>
-                <button class="dial-btn" id="dialBtn">
-                    <span id="btnText">Initiate Dual Bridge</span>
-                </button>
-                <div style="margin-top: auto; color: var(--text-muted); font-size: 0.85rem;">
-                    <p>• Transcriptions will appear in real-time below.</p>
-                    <p>• Both channels are recorded by default.</p>
-                </div>
-            </section>
-            <section class="transcription-panel">
-                <h2>Real-time Conversation Log</h2>
-                <div class="log-container" id="logContainer">
-                    <div style="color: var(--text-muted); text-align: center; margin-top: 40px;">
-                        Logs will appear here when communication starts...
-                    </div>
-                </div>
-            </section>
-        </main>
-    </div>
-
-    <script>
-        // Move utility functions to the top so they are available for SDK error handling
-        function addLog(name, text, type) {
-            const logContainer = document.getElementById('logContainer');
-            if (!logContainer) return;
-            const isEmptyHint = logContainer.querySelector('div[style*="text-align: center"]');
-            if (isEmptyHint) isEmptyHint.remove();
-
-            const entry = document.createElement('div');
-            entry.className = `log-entry ${type}`;
-            entry.innerHTML = `<span class="name">${name}</span>${text}`;
-            logContainer.appendChild(entry);
-            logContainer.scrollTop = logContainer.scrollHeight;
-        }
-    </script>
-    <script src="/twilio.min.js" 
-            onerror="console.error('Failed to load local Twilio SDK'); addLog('Error', 'Local Twilio SDK failed to load. Please check your server console.', 'customer');"></script>
-    <script>
-        const dialBtn = document.getElementById('dialBtn');
-        const logContainer = document.getElementById('logContainer');
-        const leadPhoneInput = document.getElementById('leadPhone');
-        const appStatus = document.getElementById('appStatus');
-
-        let isCalling = false;
-        let pollInterval = null;
-        let device = null;
-        let activeConnection = null;
-        let activeCallSid = null;
-
-        // --- Twilio SDK Initialization ---
-        async function setupTwilioDevice() {
-            if (typeof Twilio === 'undefined') {
-                console.error('Twilio SDK not loaded. Check script tag or network connection.');
-                addLog('Error', 'Twilio SDK (twilio.min.js) failed to load. Please check your internet connection or the CDN link.', 'customer');
-                return;
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Multi-Dialer Tester | Agent Dashboard</title>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+        <style>
+            :root {
+                --primary: #6366f1;
+                --primary-hover: #4f46e5;
+                --bg: #0f172a;
+                --card-bg: #1e293b;
+                --text-main: #f8fafc;
+                --text-muted: #94a3b8;
+                --accent: #10b981;
+                --danger: #ef4444;
             }
-            try {
-                addLog('System', 'Fetching Access Token for Browser Agent...', 'agent');
-                const response = await fetch('/api/calling/token');
-                const json = await response.json();
-                
-                if (!json.success) throw new Error(json.message || 'Failed to fetch token');
-                
-                const { token, identity } = json.data;
-                
-                if (!token) throw new Error('No token received. Check server console.');
 
-                device = new Twilio.Device(token, {
-                    codecPreferences: ['opus', 'pcmu'],
-                    fakeLocalAudio: false,
-                    enableIceRestart: true
-                });
+            body {
+                margin: 0;
+                padding: 0;
+                font-family: 'Outfit', sans-serif;
+                background-color: var(--bg);
+                color: var(--text-main);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                overflow: hidden;
+            }
 
-                device.on('registered', () => {
-                    addLog('System', `Browser Agent is ONLINE (${identity})`, 'agent');
-                    appStatus.innerText = 'Agent Ready';
-                    appStatus.style.borderColor = 'rgba(16, 185, 129, 0.5)';
-                });
+            .dashboard {
+                width: 90%;
+                max-width: 1000px;
+                height: 85vh;
+                background: var(--card-bg);
+                border-radius: 24px;
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                display: flex;
+                flex-direction: column;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(10px);
+            }
 
-                device.on('error', (error) => {
-                    addLog('Error', `Twilio Device Error: ${error.message}`, 'customer');
-                });
+            header {
+                padding: 24px 32px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
 
-                device.on('incoming', (connection) => {
-                    addLog('System', 'Incoming Bridge Connection...', 'agent');
-                    activeConnection = connection;
+            header h1 {
+                margin: 0;
+                font-size: 1.5rem;
+                background: linear-gradient(to right, #818cf8, #c084fc);
+                -webkit-background-clip: text;
+                background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+
+            .status-badge {
+                padding: 6px 12px;
+                border-radius: 99px;
+                font-size: 0.8rem;
+                font-weight: 600;
+                background: rgba(16, 185, 129, 0.1);
+                color: var(--accent);
+                border: 1px solid rgba(16, 185, 129, 0.2);
+            }
+
+            main {
+                flex: 1;
+                display: grid;
+                grid-template-columns: 1fr 1.5fr;
+                overflow: hidden;
+            }
+
+            .controls {
+                padding: 32px;
+                border-right: 1px solid rgba(255, 255, 255, 0.1);
+                display: flex;
+                flex-direction: column;
+                gap: 24px;
+            }
+
+            .input-group label {
+                display: block;
+                margin-bottom: 8px;
+                font-size: 0.9rem;
+                color: var(--text-muted);
+            }
+
+            .input-group input {
+                width: 100%;
+                padding: 12px 16px;
+                border-radius: 12px;
+                background: #0f172a;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                color: white;
+                font-size: 1rem;
+                box-sizing: border-box;
+                transition: border-color 0.2s;
+            }
+
+            .input-group input:focus {
+                outline: none;
+                border-color: var(--primary);
+            }
+
+            .dial-btn {
+                padding: 16px;
+                border-radius: 12px;
+                border: none;
+                background: var(--primary);
+                color: white;
+                font-size: 1rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+            }
+
+            .dial-btn:hover {
+                background: var(--primary-hover);
+                transform: translateY(-2px);
+            }
+
+            .dial-btn:active {
+                transform: translateY(0);
+            }
+
+            .dial-btn.calling {
+                background: var(--danger);
+            }
+
+            .transcription-panel {
+                padding: 32px;
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+                overflow: hidden;
+            }
+
+            .transcription-panel h2 {
+                margin: 0;
+                font-size: 1.1rem;
+                color: var(--text-muted);
+            }
+
+            .log-container {
+                flex: 1;
+                background: #0f172a;
+                border-radius: 16px;
+                padding: 20px;
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+            }
+
+            .log-entry {
+                font-size: 0.95rem;
+                line-height: 1.5;
+                padding: 10px 14px;
+                border-radius: 12px;
+                max-width: 85%;
+            }
+
+            .log-entry.agent {
+                background: rgba(99, 102, 241, 0.1);
+                border-left: 3px solid var(--primary);
+                align-self: flex-start;
+            }
+
+            .log-entry.customer {
+                background: rgba(16, 185, 129, 0.1);
+                border-right: 3px solid var(--accent);
+                align-self: flex-end;
+                text-align: right;
+            }
+
+            .log-entry .name {
+                display: block;
+                font-size: 0.75rem;
+                font-weight: 600;
+                margin-bottom: 4px;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }
+
+            .agent .name { color: #818cf8; }
+            .customer .name { color: #34d399; }
+
+            /* Custom Scrollbar */
+            ::-webkit-scrollbar { width: 6px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+            ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+        </style>
+    </head>
+    <body>
+        <div class="dashboard">
+            <header>
+                <h1>Bridge Dialer</h1>
+                <div class="status-badge" id="appStatus">Ready to Call</div>
+            </header>
+            <main>
+                <section class="controls">
+                    <div class="input-group">
+                        <label>Lead Phone Number</label>
+                        <input type="text" id="leadPhone" placeholder="+923XXXXXXXXX">
+                    </div>
+                    <button class="dial-btn" id="dialBtn">
+                        <span id="btnText">Initiate Dual Bridge</span>
+                    </button>
+                    <div style="margin-top: auto; color: var(--text-muted); font-size: 0.85rem;">
+                        <p>• Transcriptions will appear in real-time below.</p>
+                        <p>• Both channels are recorded by default.</p>
+                    </div>
+                </section>
+                <section class="transcription-panel">
+                    <h2>Real-time Conversation Log</h2>
+                    <div class="log-container" id="logContainer">
+                        <div style="color: var(--text-muted); text-align: center; margin-top: 40px;">
+                            Logs will appear here when communication starts...
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <script>
+            // Move utility functions to the top so they are available for SDK error handling
+            function addLog(name, text, type) {
+                const logContainer = document.getElementById('logContainer');
+                if (!logContainer) return;
+                const isEmptyHint = logContainer.querySelector('div[style*="text-align: center"]');
+                if (isEmptyHint) isEmptyHint.remove();
+
+                const entry = document.createElement('div');
+                entry.className = `log-entry ${type}`;
+                entry.innerHTML = `<span class="name">${name}</span>${text}`;
+                logContainer.appendChild(entry);
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        </script>
+        <script src="/twilio.min.js" 
+                onerror="console.error('Failed to load local Twilio SDK'); addLog('Error', 'Local Twilio SDK failed to load. Please check your server console.', 'customer');"></script>
+        <script>
+            const dialBtn = document.getElementById('dialBtn');
+            const logContainer = document.getElementById('logContainer');
+            const leadPhoneInput = document.getElementById('leadPhone');
+            const appStatus = document.getElementById('appStatus');
+
+            let isCalling = false;
+            let pollInterval = null;
+            let device = null;
+            let activeConnection = null;
+            let activeCallSid = null;
+
+            // --- Twilio SDK Initialization ---
+            async function setupTwilioDevice() {
+                if (typeof Twilio === 'undefined') {
+                    console.error('Twilio SDK not loaded. Check script tag or network connection.');
+                    addLog('Error', 'Twilio SDK (twilio.min.js) failed to load. Please check your internet connection or the CDN link.', 'customer');
+                    return;
+                }
+                try {
+                    addLog('System', 'Fetching Access Token for Browser Agent...', 'agent');
+                    const response = await fetch('/api/calling/token');
+                    const json = await response.json();
                     
-                    connection.on('disconnect', () => {
-                        addLog('System', 'Call disconnected.', 'agent');
-                        stopCalling();
+                    if (!json.success) throw new Error(json.message || 'Failed to fetch token');
+                    
+                    const { token, identity } = json.data;
+                    
+                    if (!token) throw new Error('No token received. Check server console.');
+
+                    device = new Twilio.Device(token, {
+                        codecPreferences: ['opus', 'pcmu'],
+                        fakeLocalAudio: false,
+                        enableIceRestart: true
                     });
 
-                    // Automatically answer the bridge call
-                    connection.accept();
-                    addLog('System', 'Bridge Connected! You are now talking to the Lead.', 'agent');
-                });
+                    device.on('registered', () => {
+                        addLog('System', `Browser Agent is ONLINE (${identity})`, 'agent');
+                        appStatus.innerText = 'Agent Ready';
+                        appStatus.style.borderColor = 'rgba(16, 185, 129, 0.5)';
+                    });
 
-                await device.register();
-            } catch (err) {
-                console.error('Twilio Setup Error:', err);
-                addLog('Error', `Failed to initialize Browser Agent: ${err.message}`, 'customer');
-                alert('Twilio Browser Agent failed to initialize. See Log.');
-            }
-        }
+                    device.on('error', (error) => {
+                        addLog('Error', `Twilio Device Error: ${error.message}`, 'customer');
+                    });
 
-        // Initialize device on load
-        window.addEventListener('load', setupTwilioDevice);
+                    device.on('incoming', (connection) => {
+                        addLog('System', 'Incoming Bridge Connection...', 'agent');
+                        activeConnection = connection;
+                        
+                        connection.on('disconnect', () => {
+                            addLog('System', 'Call disconnected.', 'agent');
+                            stopCalling();
+                        });
 
-        dialBtn.addEventListener('click', async () => {
-            if (isCalling) {
-                // Properly disconnect the WebRTC session
-                if (activeConnection) {
-                    activeConnection.disconnect();
+                        // Automatically answer the bridge call
+                        connection.accept();
+                        addLog('System', 'Bridge Connected! You are now talking to the Lead.', 'agent');
+                    });
+
+                    await device.register();
+                } catch (err) {
+                    console.error('Twilio Setup Error:', err);
+                    addLog('Error', `Failed to initialize Browser Agent: ${err.message}`, 'customer');
+                    alert('Twilio Browser Agent failed to initialize. See Log.');
                 }
-                
-                // Also notify server to ensure the lead side is dropped
-                if (activeCallSid) {
-                    fetch('/api/calling/end-call', {
+            }
+
+            // Initialize device on load
+            window.addEventListener('load', setupTwilioDevice);
+
+            dialBtn.addEventListener('click', async () => {
+                if (isCalling) {
+                    // Properly disconnect the WebRTC session
+                    if (activeConnection) {
+                        activeConnection.disconnect();
+                    }
+                    
+                    // Also notify server to ensure the lead side is dropped
+                    if (activeCallSid) {
+                        fetch('/api/calling/end-call', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ callSid: activeCallSid })
+                        }).catch(err => console.error('Failed to notify server of end call:', err));
+                    }
+
+                    stopCalling();
+                    return;
+                }
+
+                const phone = leadPhoneInput.value;
+                if (!phone) return alert('Enter a phone number!');
+
+                startCalling(phone);
+            });
+
+            async function startCalling(phone) {
+                isCalling = true;
+                dialBtn.classList.add('calling');
+                dialBtn.querySelector('#btnText').innerText = 'End Connection';
+                appStatus.innerText = 'Dialing...';
+                appStatus.style.background = 'rgba(239, 68, 68, 0.1)';
+                appStatus.style.color = '#ef4444';
+
+                try {
+                    // Hit the single test call API
+                    // Assuming it's updated to use the dynamic lead number from body if we want
+                    // For now, it hits startCalling in controller.ts
+                    const response = await fetch('/api/calling/test-call', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ callSid: activeCallSid })
-                    }).catch(err => console.error('Failed to notify server of end call:', err));
-                }
-
-                stopCalling();
-                return;
-            }
-
-            const phone = leadPhoneInput.value;
-            if (!phone) return alert('Enter a phone number!');
-
-            startCalling(phone);
-        });
-
-        async function startCalling(phone) {
-            isCalling = true;
-            dialBtn.classList.add('calling');
-            dialBtn.querySelector('#btnText').innerText = 'End Connection';
-            appStatus.innerText = 'Dialing...';
-            appStatus.style.background = 'rgba(239, 68, 68, 0.1)';
-            appStatus.style.color = '#ef4444';
-
-            try {
-                // Hit the single test call API
-                // Assuming it's updated to use the dynamic lead number from body if we want
-                // For now, it hits startCalling in controller.ts
-                const response = await fetch('/api/calling/test-call', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ to: phone })
-                });
-                
-                const data = await response.json();
-                if (data.success) {
-                    activeCallSid = data.data.sid;
-                    console.log('Call initiated:', activeCallSid);
-                    startPollingLogs();
-                } else {
-                    alert('Failed: ' + data.message);
-                    stopCalling();
-                }
-            } catch (err) {
-                console.error(err);
-                stopCalling();
-            }
-        }
-
-        function stopCalling() {
-            isCalling = false;
-            dialBtn.classList.remove('calling');
-            dialBtn.querySelector('#btnText').innerText = 'Initiate Dual Bridge';
-            appStatus.innerText = 'Ready to Call';
-            appStatus.style.background = 'rgba(16, 185, 129, 0.1)';
-            appStatus.style.color = '#10b981';
-            clearInterval(pollInterval);
-            lastLogCount = 0;
-            activeCallSid = null;
-            activeConnection = null;
-        }
-
-        let lastLogCount = 0;
-        function startPollingLogs() {
-            pollInterval = setInterval(async () => {
-                try {
-                    const res = await fetch('/api/calling/transcription-logs');
-                    const data = await res.json();
+                        body: JSON.stringify({ to: phone })
+                    });
                     
-                    if (data.success && data.data && data.data.logs && data.data.logs.length > lastLogCount) {
-                        // Only add new logs
-                        const newLogs = data.data.logs.slice(lastLogCount);
-                        newLogs.forEach(log => {
-                            addLog(log.speaker, log.text, log.speaker.toLowerCase() === 'agent' ? 'agent' : 'customer');
-                        });
-                        lastLogCount = data.data.logs.length;
+                    const data = await response.json();
+                    if (data.success) {
+                        activeCallSid = data.data.sid;
+                        console.log('Call initiated:', activeCallSid);
+                        startPollingLogs();
+                    } else {
+                        alert('Failed: ' + data.message);
+                        stopCalling();
                     }
                 } catch (err) {
-                    console.error('Polling error:', err);
+                    console.error(err);
+                    stopCalling();
                 }
-            }, 2000);
-        }
-    </script>
-</body>
-</html>
+            }
+
+            function stopCalling() {
+                isCalling = false;
+                dialBtn.classList.remove('calling');
+                dialBtn.querySelector('#btnText').innerText = 'Initiate Dual Bridge';
+                appStatus.innerText = 'Ready to Call';
+                appStatus.style.background = 'rgba(16, 185, 129, 0.1)';
+                appStatus.style.color = '#10b981';
+                clearInterval(pollInterval);
+                lastLogCount = 0;
+                activeCallSid = null;
+                activeConnection = null;
+            }
+
+            let lastLogCount = 0;
+            function startPollingLogs() {
+                pollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch('/api/calling/transcription-logs');
+                        const data = await res.json();
+                        
+                        if (data.success && data.data && data.data.logs && data.data.logs.length > lastLogCount) {
+                            // Only add new logs
+                            const newLogs = data.data.logs.slice(lastLogCount);
+                            newLogs.forEach(log => {
+                                addLog(log.speaker, log.text, log.speaker.toLowerCase() === 'agent' ? 'agent' : 'customer');
+                            });
+                            lastLogCount = data.data.logs.length;
+                        }
+                    } catch (err) {
+                        console.error('Polling error:', err);
+                    }
+                }, 2000);
+            }
+        </script>
+    </body>
+    </html>
