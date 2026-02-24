@@ -1,11 +1,12 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { openAPI, customSession, createAuthMiddleware } from "better-auth/plugins";
+import { openAPI, customSession, createAuthMiddleware, admin as adminPlugin } from "better-auth/plugins";
 import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { sendEmail } from "../utils/email";
-import { errorResponse } from "@/utils/handler";
+import { admin } from "./permissions";
+// import { errorResponse } from "@/utils/handler";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -81,7 +82,7 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
     cookieCache: { enabled: false },
-  },  
+  },
   advanced: {
     useSecureCookies: true,
     cookies: {
@@ -109,6 +110,9 @@ export const auth = betterAuth({
           role: user.role,
         },
       };
+    }),
+    adminPlugin({
+      roles: {admin},
     }),
   ],
 
@@ -166,13 +170,13 @@ export const auth = betterAuth({
       return ctx.context.returned;
     }),
   },
-  
+
   secret: envConfig.BETTER_AUTH_SECRET,
   baseURL: envConfig.BETTER_AUTH_URL,
 
   onAPIError: {
     throw: true,
-    onError: async (error, ctx:any) => {
+    onError: async (error, ctx: any) => {
       // Log error for debugging but let standard auth errors pass through
       console.error("Better-Auth API Error:", (error as any).message);
     }
