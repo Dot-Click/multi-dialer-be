@@ -8,7 +8,7 @@ import { updateSmsSchema } from "../../../schemas/sms.schema";
 export const getAllSmsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId } = req.user!;
-    
+
     // Get user's library
     const library = await prisma.library.findFirst({
       where: { userId },
@@ -28,6 +28,7 @@ export const getAllSmsOfSpecificUser = async (req: Request, res: Response): Prom
         id: true,
         templateName: true,
         content: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
         library: {
@@ -57,6 +58,7 @@ export const getAllSmsOfAllUsers = async (req: Request, res: Response): Promise<
         id: true,
         templateName: true,
         content: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
         library: {
@@ -94,7 +96,7 @@ export const getSmsById = async (req: Request, res: Response): Promise<void> => 
     }
 
     const smsTemplate = await prisma.sMSTemplate.findFirst({
-      where: { 
+      where: {
         id,
         libraryId: library.id, // Ensure SMS template belongs to user's library
       },
@@ -102,6 +104,7 @@ export const getSmsById = async (req: Request, res: Response): Promise<void> => 
         id: true,
         templateName: true,
         content: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
         library: {
@@ -117,7 +120,7 @@ export const getSmsById = async (req: Request, res: Response): Promise<void> => 
         },
       },
     });
-    
+
     if (!smsTemplate) {
       errorResponse(res, "SMS template not found", 404);
       return;
@@ -141,7 +144,7 @@ export const createSms = async (req: Request, res: Response): Promise<void> => {
       errorResponse(res, "User not found", 404);
       return;
     }
-      
+
     const payload = { ...req.body };
     const newSmsTemplate = await insertSmsTemplateInDb(payload, userId);
 
@@ -152,6 +155,7 @@ export const createSms = async (req: Request, res: Response): Promise<void> => {
         id: true,
         templateName: true,
         content: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
         library: {
@@ -167,9 +171,9 @@ export const createSms = async (req: Request, res: Response): Promise<void> => {
         },
       },
     });
-    
+
     successResponse(res, 201, "SMS template created", populatedSmsTemplate);
-    
+
   } catch (error: any) {
     // Handle unique constraint error with user-friendly message
     if (error.message === "Template name already exists") {
@@ -244,6 +248,7 @@ export const updateSms = async (req: Request, res: Response): Promise<void> => {
         id: true,
         templateName: true,
         content: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
         library: {
@@ -261,7 +266,7 @@ export const updateSms = async (req: Request, res: Response): Promise<void> => {
     });
 
     successResponse(res, 200, "SMS template updated", updatedSmsTemplate);
-    
+
   } catch (error: any) {
     // Handle unique constraint error with user-friendly message
     if (error.code === 'P2002' && error.meta?.target?.includes('templateName')) {
@@ -326,7 +331,7 @@ export const deleteSms = async (req: Request, res: Response): Promise<void> => {
     });
 
     successResponse(res, 200, "SMS template deleted successfully", null);
-    
+
   } catch (error: any) {
     errorResponse(res, error.message, 500);
   }

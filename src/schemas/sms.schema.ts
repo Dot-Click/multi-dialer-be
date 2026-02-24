@@ -8,6 +8,7 @@ export const createSmsSchema = z.object({
 export const updateSmsSchema = z.object({
     templateName: z.string().optional(),
     content: z.string().optional(),
+    status: z.boolean().optional(),
 });
 
 

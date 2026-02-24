@@ -14,7 +14,12 @@ export const createEmailSchema = z.object({
     .min(1, "Content is required"),
 });
 
-export const updateEmailSchema = createEmailSchema.partial().refine(
+export const updateEmailSchema = z.object({
+  templateName: z.string().min(1).max(255).optional(),
+  subject: z.string().min(1).max(500).optional(),
+  content: z.string().min(1).optional(),
+  status: z.boolean().optional(),
+}).refine(
   (data) => Object.keys(data).length > 0,
   { message: "At least one field must be provided for update" }
 );
