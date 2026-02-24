@@ -7,7 +7,10 @@ info:
 servers:
   [
     { url: "http://localhost:3000", description: "Local server" },
-    { url: "https://multi-dialer-be-production.up.railway.app", description: "Production server" },
+    {
+      url: "https://multi-dialer-be-production.up.railway.app",
+      description: "Production server",
+    },
   ]
 
 tags:
@@ -47,9 +50,10 @@ tags:
     description: User authentication and session management using custom betterAuth routes
   - name: SystemSettings Integrations
     description: Third-party service connections (Twilio, Google, etc.)
+  - name: User Management
+    description: User management and CRUD operations
 
 paths:
-
   /api/calling/test-call:
     post:
       summary: "Initiate Single Test Call"
@@ -2024,7 +2028,8 @@ paths:
                   example: "Welcome Voice Mail"
                 mediaType:
                   type: string
-                  enum: ["VOICE_MAIL", "ON_HOLD", "CALLBACK_MESSAGE", "EMAIL_VIDEO"]
+                  enum:
+                    ["VOICE_MAIL", "ON_HOLD", "CALLBACK_MESSAGE", "EMAIL_VIDEO"]
                   description: "Type of media"
                   example: "VOICE_MAIL"
                 file:
@@ -2052,7 +2057,13 @@ paths:
                         type: string
                       mediaType:
                         type: string
-                        enum: ["VOICE_MAIL", "ON_HOLD", "CALLBACK_MESSAGE", "EMAIL_VIDEO"]
+                        enum:
+                          [
+                            "VOICE_MAIL",
+                            "ON_HOLD",
+                            "CALLBACK_MESSAGE",
+                            "EMAIL_VIDEO",
+                          ]
                       fileName:
                         type: string
                       fileUrl:
@@ -2460,7 +2471,8 @@ paths:
                   example: "Updated Welcome Voice Mail"
                 mediaType:
                   type: string
-                  enum: ["VOICE_MAIL", "ON_HOLD", "CALLBACK_MESSAGE", "EMAIL_VIDEO"]
+                  enum:
+                    ["VOICE_MAIL", "ON_HOLD", "CALLBACK_MESSAGE", "EMAIL_VIDEO"]
                   description: "Type of media"
                   example: "VOICE_MAIL"
       responses:
@@ -5110,10 +5122,10 @@ paths:
                 properties:
                   success:
                     type: boolean
-                 # ... previous code ...
+                    # ... previous code ...
                     message:
                       type: string
-# ------------------------------------------------------------------------------------------
+  # ------------------------------------------------------------------------------------------
   # Route 1: Create (Post to /create)
   # ------------------------------------------------------------------------------------------
   /api/system-settings/dialer-settings/create:
@@ -5160,7 +5172,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DialerSettingResponse'
+                $ref: "#/components/schemas/DialerSettingResponse"
         "400":
           description: "Settings already exist (Use PUT) or Validation Error"
         "401":
@@ -5187,7 +5199,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/DialerSettingResponse'
+                  $ref: "#/components/schemas/DialerSettingResponse"
         "403":
           description: "Forbidden (Access Denied)"
 
@@ -5208,7 +5220,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DialerSettingResponse'
+                $ref: "#/components/schemas/DialerSettingResponse"
         "404":
           description: "Settings not found"
 
@@ -5223,7 +5235,7 @@ paths:
         schema:
           type: string
         description: "The UUID of the Dialer Setting"
-    
+
     get:
       summary: "Get Dialer Setting by ID"
       tags:
@@ -5237,7 +5249,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DialerSettingResponse'
+                $ref: "#/components/schemas/DialerSettingResponse"
         "404":
           description: "Settings not found"
 
@@ -5275,7 +5287,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DialerSettingResponse'
+                $ref: "#/components/schemas/DialerSettingResponse"
         "403":
           description: "Forbidden"
         "404":
@@ -5307,7 +5319,7 @@ paths:
                     nullable: true
         "404":
           description: "Settings not found"
-         # ------------------------------------------------------------------------------------------
+          # ------------------------------------------------------------------------------------------
   # Route 1: Create (Post to /create)
   # ------------------------------------------------------------------------------------------
   /api/system-settings/notification-settings/create:
@@ -5360,7 +5372,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationSettingResponse'
+                $ref: "#/components/schemas/NotificationSettingResponse"
         "400":
           description: "Settings already exist (Use PUT) or Validation Error"
         "401":
@@ -5387,7 +5399,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/NotificationSettingResponse'
+                  $ref: "#/components/schemas/NotificationSettingResponse"
         "403":
           description: "Forbidden (Access Denied)"
 
@@ -5408,7 +5420,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationSettingResponse'
+                $ref: "#/components/schemas/NotificationSettingResponse"
         "404":
           description: "Settings not found"
 
@@ -5423,7 +5435,7 @@ paths:
         schema:
           type: string
         description: "The UUID of the Notification Setting"
-    
+
     get:
       summary: "Get Notification Setting by ID"
       tags:
@@ -5437,7 +5449,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationSettingResponse'
+                $ref: "#/components/schemas/NotificationSettingResponse"
         "404":
           description: "Settings not found"
 
@@ -5477,7 +5489,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationSettingResponse'
+                $ref: "#/components/schemas/NotificationSettingResponse"
         "403":
           description: "Forbidden (You can only update your own settings)"
         "404":
@@ -5531,11 +5543,11 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ActionPlanResponse'
+                  $ref: "#/components/schemas/ActionPlanResponse"
         "401":
-          $ref: '#/components/responses/Unauthorized'
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: '#/components/responses/Forbidden'
+          $ref: "#/components/responses/Forbidden"
 
     post:
       summary: "Create a new Action Plan"
@@ -5549,14 +5561,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ActionPlanRequest'
+              $ref: "#/components/schemas/ActionPlanRequest"
       responses:
         "201":
           description: "Action Plan created successfully"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActionPlanResponse'
+                $ref: "#/components/schemas/ActionPlanResponse"
 
   /api/system-settings/action-plans/{id}:
     parameters:
@@ -5566,7 +5578,7 @@ paths:
         schema:
           type: string
         description: "The UUID of the Action Plan"
-    
+
     get:
       summary: "Get Action Plan Details"
       tags:
@@ -5580,7 +5592,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActionPlanResponse'
+                $ref: "#/components/schemas/ActionPlanResponse"
         "404":
           description: "Action Plan not found"
 
@@ -5596,7 +5608,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ActionPlanRequest'
+              $ref: "#/components/schemas/ActionPlanRequest"
       responses:
         "200":
           description: "Updated successfully"
@@ -5620,9 +5632,7 @@ paths:
     Forbidden:
       description: "Access Denied - Admins/Owners only"
 
-
-
-# --- SYSTEM SETTINGS: INTEGRATIONS ---
+  # --- SYSTEM SETTINGS: INTEGRATIONS ---
   /api/system-settings/integrations/create:
     post:
       summary: "Create/Connect Integration"
@@ -5639,7 +5649,17 @@ paths:
               properties:
                 provider:
                   type: string
-                  enum: [TWILIO, GOOGLE_MAPS, REALTOR_DOT_COM, BOMB_BOMB, GMAIL, STANPP_DOT_COM, MY_PLUS_LEADS, ZAPIER]
+                  enum:
+                    [
+                      TWILIO,
+                      GOOGLE_MAPS,
+                      REALTOR_DOT_COM,
+                      BOMB_BOMB,
+                      GMAIL,
+                      STANPP_DOT_COM,
+                      MY_PLUS_LEADS,
+                      ZAPIER,
+                    ]
                   example: "GMAIL"
                 credentials:
                   type: object
@@ -5650,7 +5670,7 @@ paths:
           description: "Connected successfully"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/IntegrationResponse' }
+              schema: { $ref: "#/components/schemas/IntegrationResponse" }
 
   /api/system-settings/integrations/all:
     get:
@@ -5666,7 +5686,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/IntegrationResponse'
+                  $ref: "#/components/schemas/IntegrationResponse"
 
   /api/system-settings/integrations:
     get:
@@ -5682,7 +5702,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/IntegrationResponse'
+                  $ref: "#/components/schemas/IntegrationResponse"
 
   /api/system-settings/integrations/{id}:
     parameters:
@@ -5702,7 +5722,7 @@ paths:
           description: "Fetched successfully"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/IntegrationResponse' }
+              schema: { $ref: "#/components/schemas/IntegrationResponse" }
         "404":
           description: "Integration not found"
 
@@ -5726,7 +5746,7 @@ paths:
           description: "Updated successfully"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/IntegrationResponse' }
+              schema: { $ref: "#/components/schemas/IntegrationResponse" }
 
     delete:
       summary: "Delete Integration (Disconnect)"
@@ -6774,4 +6794,126 @@ paths:
         "404":
           description: "Lead sheet not found"
 
-  
+  /api/user/create:
+    post:
+      summary: "Create User"
+      tags:
+        - User Management
+      description: "Create a new user"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fullName
+                - email
+                - password
+              properties:
+                fullName:
+                  type: string
+                email:
+                  type: string
+                password:
+                  type: string
+                role:
+                  type: string
+                  enum: [AGENT, ADMIN, OWNER]
+                status:
+                  type: string
+                  enum: [ACTIVE, DEACTIVATED, SUSPENDED, PENDING, EXPIRING_SOON]
+                image:
+                  type: string
+      responses:
+        "201":
+          description: "User created successfully"
+        "400":
+          description: "Validation error"
+
+  /api/user:
+    get:
+      summary: "Get All Users"
+      tags:
+        - User Management
+      description: "Retrieve a list of all users"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Users fetched successfully"
+    delete:
+      summary: "Delete All Users"
+      tags:
+        - User Management
+      description: "Delete all users from the system"
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All users deleted successfully"
+
+  /api/user/{id}:
+    put:
+      summary: "Update User"
+      tags:
+        - User Management
+      description: "Update a user by ID"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "User ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fullName:
+                  type: string
+                email:
+                  type: string
+                password:
+                  type: string
+                role:
+                  type: string
+                  enum: [AGENT, ADMIN, OWNER]
+                status:
+                  type: string
+                  enum: [ACTIVE, DEACTIVATED, SUSPENDED, PENDING, EXPIRING_SOON]
+                image:
+                  type: string
+                emailVerified:
+                  type: boolean
+      responses:
+        "200":
+          description: "User updated successfully"
+        "404":
+          description: "User not found"
+    delete:
+      summary: "Delete User"
+      tags:
+        - User Management
+      description: "Delete a user by ID"
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: "User ID"
+      responses:
+        "200":
+          description: "User deleted successfully"
+        "404":
+          description: "User not found"

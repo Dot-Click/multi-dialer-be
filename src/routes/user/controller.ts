@@ -9,10 +9,18 @@ import {
     deleteUserFromDb,
     deleteAllUsersFromDb,
 } from "./service";
+import { generateSecurePassword } from "../../utils/password";
+
 
 export const createUser = async (req: Request, res: Response): Promise<void> => {
     try {
         const payload = { ...req.body };
+
+        // Auto-generate password if not provided
+        if (!payload.password) {
+            payload.password = generateSecurePassword();
+            console.log(`Generated temporary password for ${payload.email}: ${payload.password}`);
+        }
 
         // If authenticated user is creating this user, set createdById
         if ((req as any).user?.id) {

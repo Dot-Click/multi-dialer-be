@@ -4,9 +4,9 @@ import { openAPI, customSession, createAuthMiddleware, admin as adminPlugin } fr
 import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
-import { sendEmail } from "../utils/email";
 import { admin } from "./permissions";
-// import { errorResponse } from "@/utils/handler";
+import { sendEmail } from "../utils/email";
+import { errorResponse } from "@/utils/handler";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -21,6 +21,8 @@ interface AuthUser {
   fullName?: string | null;
   status?: string | null;
 }
+
+const pendingPasswords = new Map<string, string>();
 
 export const auth = betterAuth({
   appName: "Boilerplate",
@@ -45,16 +47,55 @@ export const auth = betterAuth({
       user,
       url,
     }: {
-      user: { email: string; fullName?: string | null };
+      user: AuthUser;
       url: string;
+      token: string;
     }) => {
+     const data =
       await sendEmail(
-        user.email,
-        "Verify your email",
-        `<p>Hello ${user.fullName ?? "User"}</p>
-         <p>Click below to verify your email</p>
-         <a href="${envConfig.FRONTEND_URL}/admin/login">Verify Email</a>`
-      );
+  user.email,
+  "Welcome to CallScout – Your Account Details",
+  `
+  <div style="font-family: Arial, sans-serif; background-color: #f4f6f8; padding: 20px;">
+    <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+      
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h1 style="color: #2c3e50; margin: 0;">CallScout</h1>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hello <strong>${user.fullName ?? "User"}</strong>,
+      </p>
+
+      <h2 style="color: #28a745; margin-top: 20px;">
+        Welcome to CallScout!
+      </h2>
+
+      <p style="font-size: 15px; color: #555;">
+        Your account has been successfully created. Below are your login details:
+      </p>
+
+      <div style="background: #f8f9fa; border: 2px dashed #28a745; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 5px 0; font-size: 15px;">
+          <strong>Email:</strong> ${user.email}
+        </p>
+        <p style="margin: 5px 0; font-size: 15px;">
+          <strong>Password:</strong> ${pendingPasswords.get(user.email.toLowerCase()) || "Undefined (Wait for console log)"}
+        </p>
+      </div>
+
+      <p style="font-size: 14px; color: #666;">
+        Please login and change your password after your first login.
+      </p>
+
+      <p style="font-size: 12px; color: #999; text-align: center; margin-top: 30px;">
+        © 2026 CallScout. All rights reserved.
+      </p>
+
+    </div>
+  </div>
+  `
+);
     },
   },
   emailAndPassword: {
@@ -64,6 +105,7 @@ export const auth = betterAuth({
     password: {
       hash: async (password: string): Promise<string> => {
         if (!password) throw new Error("Password required");
+        console.log(password)
         return bcrypt.hash(password, 10);
       },
       verify: async ({
@@ -117,7 +159,35 @@ export const auth = betterAuth({
   ],
 
   hooks: {
-    after: createAuthMiddleware(async (ctx) => {
+    before: createAuthMiddleware(async (ctx: any) => {
+      // Capture plain password for the email hook
+      if (ctx.path.includes("sign-up")) {
+        const body = ctx.body;
+        if (body?.email && body?.password) {
+          console.log(`[Auth] Captured password for ${body.email}`);
+          pendingPasswords.set(body.email.toLowerCase(), body.password);
+        }
+      }
+    }),
+    after: createAuthMiddleware(async (ctx: any) => {
+      // Cleanup password store after request
+      if (ctx.path.includes("sign-up")) {
+        const body = ctx.body;
+        if (body?.email) {
+          setTimeout(() => pendingPasswords.delete(body.email.toLowerCase()), 10000);
+        }
+        const user = await prisma.user.findUnique({
+          where: { email: body.email },
+        });
+        if (user) {
+          await prisma.user.update({
+            where: { email: body.email },
+            data: { emailVerified: true },
+          });
+        }
+        console.log("User email verified successfully", user);
+      }
+
       if (ctx.path.startsWith("/sign-in") || ctx.path.startsWith("/callback")) {
         const resp = ctx.context.returned as any;
         if (!resp || !resp.user?.email) return resp;
@@ -128,7 +198,7 @@ export const auth = betterAuth({
           data: { lastLogin: new Date() },
         });
 
-        // Fetch additional user data for response augmentation
+        // Fetch additional user data
         const userFromDb = await prisma.user.findUnique({
           where: { email: resp.user.email },
           select: { role: true, fullName: true, status: true },
@@ -154,7 +224,6 @@ export const auth = betterAuth({
       if (ctx.path.startsWith("/sign-up")) {
         const resp = ctx.context.returned as any;
         if (resp?.user?.id) {
-          // Handle user setup logic
           try {
             const library = await prisma.library.findFirst({ where: { userId: resp.user.id } });
             if (!library) await prisma.library.create({ data: { userId: resp.user.id } });
@@ -176,7 +245,7 @@ export const auth = betterAuth({
 
   onAPIError: {
     throw: true,
-    onError: async (error, ctx: any) => {
+    onError: async (error, ctx:any) => {
       // Log error for debugging but let standard auth errors pass through
       console.error("Better-Auth API Error:", (error as any).message);
     }
