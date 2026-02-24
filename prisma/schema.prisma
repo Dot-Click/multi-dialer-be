@@ -176,6 +176,8 @@ model User {
 
   companies Company[]
 
+  signature  Signature?
+
   @@map("users")
 }
 
@@ -380,6 +382,17 @@ model EmailTemplate {
 
   @@unique([libraryId, templateName])
   @@map("email_templates")
+}
+
+model Signature {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // If signature is per-user/admin:
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model CallbackPrompt {

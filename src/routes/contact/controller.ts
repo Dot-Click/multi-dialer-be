@@ -161,7 +161,7 @@ export const updateContactFolder = async (req: Request, res: Response): Promise<
     }
     const payload = { ...req.body };
     const result = (await validateData(createListFolderSchema.partial(), payload)) as any;
-    
+
     if (!("data" in result)) {
       errorResponse(res, "Validation error", 400);
       return;

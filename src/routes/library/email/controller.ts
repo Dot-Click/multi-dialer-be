@@ -8,7 +8,7 @@ import { updateEmailSchema } from "../../../schemas/email.schema";
 export const getAllEmailTemplatesOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId } = req.user!;
-    
+
     // Get user's library
     const library = await prisma.library.findFirst({
       where: { userId },
@@ -90,7 +90,7 @@ export const getEmailTemplateById = async (req: Request, res: Response): Promise
     }
 
     const emailTemplate = await prisma.emailTemplate.findFirst({
-      where: { 
+      where: {
         id,
         libraryId: library.id, // Ensure email template belongs to user's library
       },
@@ -108,7 +108,7 @@ export const getEmailTemplateById = async (req: Request, res: Response): Promise
         },
       },
     });
-    
+
     if (!emailTemplate) {
       errorResponse(res, "Email template not found", 404);
       return;
@@ -132,7 +132,7 @@ export const createEmailTemplate = async (req: Request, res: Response): Promise<
       errorResponse(res, "User not found", 404);
       return;
     }
-      
+
     const payload = { ...req.body };
     const newEmailTemplate = await insertEmailTemplateInDb(payload, userId);
 
@@ -153,9 +153,9 @@ export const createEmailTemplate = async (req: Request, res: Response): Promise<
         },
       },
     });
-    
+
     successResponse(res, 201, "Email template created", populatedEmailTemplate);
-    
+
   } catch (error: any) {
     // Handle unique constraint error with user-friendly message
     if (error.message === "Email template name already exists for this library") {
@@ -242,7 +242,7 @@ export const updateEmailTemplate = async (req: Request, res: Response): Promise<
     });
 
     successResponse(res, 200, "Email template updated", updatedEmailTemplate);
-    
+
   } catch (error: any) {
     // Handle unique constraint error
     if (error.code === 'P2002' && error.meta?.target?.includes('templateName')) {
@@ -307,7 +307,7 @@ export const deleteEmailTemplate = async (req: Request, res: Response): Promise<
     });
 
     successResponse(res, 200, "Email template deleted successfully", null);
-    
+
   } catch (error: any) {
     // Check if it's a Prisma error related to record not found
     if (error.code === 'P2025') {

@@ -4,6 +4,7 @@ import { Router } from "express";
 import scriptRoutes from "./library/scripts"
 import smsRoutes from "./library/sms"
 import emailRoutes from "./library/email"
+import signatureRoutes from "./library/signatures"
 import mediaCenterRoutes from "./library/mediaCenter"
 import callerIdRoutes from "./systemSettings/callerId"
 import callSettingsRoutes from "./systemSettings/callSettings"
@@ -33,6 +34,7 @@ router.use("/calendar", protectRoute, calendarRoutes)
 router.use("/library/script", protectRoute, scriptRoutes)
 router.use("/library/sms", protectRoute, smsRoutes)
 router.use("/library/email", protectRoute, emailRoutes)
+router.use("/library/signatures", protectRoute, signatureRoutes)
 router.use("/library/media-center", protectRoute, mediaCenterRoutes)
 router.use("/library/callback-prompt", protectRoute, callbackPromptRoutes);
 

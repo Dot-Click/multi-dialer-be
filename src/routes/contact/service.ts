@@ -194,7 +194,7 @@ export async function updateContactListInDb(id: string, payload: {
       },
     },
   });
-} 
+}
 
 export async function createContactFolderInDb(payload: {
   name: string;
