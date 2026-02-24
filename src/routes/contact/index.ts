@@ -16,7 +16,8 @@ import {
   updateContactGroup,
   deleteContactList,
   deleteContactFolder,
-  deleteContactGroup
+  deleteContactGroup,
+  getContactsByList
 } from "./controller";
 
 const router = Router();
@@ -25,6 +26,7 @@ router.get("/list", getAllContactLists);
 router.get("/folder", getAllContactFolders);
 router.get("/group", getAllContactGroups);
 router.get("/", getAllContacts);
+router.get("/contacts-list/:lid", getContactsByList)
 router.get("/:id", getContactById);
 router.put("/:id", updateContact);
 router.delete("/:id", deleteContact);

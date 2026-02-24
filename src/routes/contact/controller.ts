@@ -20,6 +20,7 @@ import {
   deleteContactListFromDb,
   deleteContactFolderFromDb,
   deleteContactGroupFromDb,
+  getContactsByListFromDb,
 } from "./service";
 import { createContactListSchema } from "@/schemas/contactlist.schema";
 
@@ -277,6 +278,21 @@ export const getAllContactGroups = async (req: Request, res: Response): Promise<
   try {
     const contactGroups = await getAllContactGroupsFromDb();
     successResponse(res, 200, "Contact groups fetched", contactGroups);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+
+export const getContactsByList = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { lid } = req.params;
+    if (!lid) {
+      errorResponse(res, "Contact list id is required", 400);
+      return;
+    }
+    const contacts = await getContactsByListFromDb(lid);
+    successResponse(res, 200, "Contacts fetched", contacts);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

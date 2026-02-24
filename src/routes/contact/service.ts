@@ -280,3 +280,27 @@ export async function getAllContactGroupsFromDb() {
     orderBy: { createdAt: "desc" },
   });
 }
+
+export async function getContactsByListFromDb(listId: string) {
+  return prisma.$transaction(async (tx) => {
+    const list = await tx.contactList.findUnique({
+      where: { id: listId },
+      select: {
+        contactIds: true,
+      },
+    });
+
+    if (!list) throwHttp(404, "Contact list not found");
+
+    const contacts = await tx.contact.findMany({
+      where: { id: { in: list.contactIds } },
+      include: {
+        emails: true,
+        phones: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return contacts;
+  });
+}
