@@ -4,7 +4,7 @@ import { openAPI, customSession, createAuthMiddleware, admin as adminPlugin } fr
 import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
-import { admin } from "./permissions";
+import { ac, admin, agent, owner } from "./permissions";
 import { sendEmail } from "../utils/email";
 import { errorResponse } from "@/utils/handler";
 
@@ -29,6 +29,9 @@ export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: "postgresql" }),
   user: {
     modelName: "User",
+    fields: {
+      name: "fullName",
+    },
     additionalFields: {
       role: { type: "string", required: false },
       fullName: { type: "string", required: false },
@@ -51,11 +54,11 @@ export const auth = betterAuth({
       url: string;
       token: string;
     }) => {
-     const data =
-      await sendEmail(
-  user.email,
-  "Welcome to CallScout – Your Account Details",
-  `
+      const data =
+        await sendEmail(
+          user.email,
+          "Welcome to CallScout – Your Account Details",
+          `
   <div style="font-family: Arial, sans-serif; background-color: #f4f6f8; padding: 20px;">
     <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
       
@@ -95,7 +98,7 @@ export const auth = betterAuth({
     </div>
   </div>
   `
-);
+        );
     },
   },
   emailAndPassword: {
@@ -126,10 +129,14 @@ export const auth = betterAuth({
     cookieCache: { enabled: false },
   },
   advanced: {
-    useSecureCookies: true,
+    useSecureCookies: process.env.NODE_ENV === "production",
     cookies: {
       session_token: {
-        attributes: { httpOnly: true, secure: true, sameSite: "none" },
+        attributes: {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
+        },
       },
     },
   },
@@ -154,7 +161,12 @@ export const auth = betterAuth({
       };
     }),
     adminPlugin({
-      roles: {admin},
+      ac,
+      roles: {
+        ADMIN: admin,
+        AGENT: agent,
+        OWNER: owner,
+      },
     }),
   ],
 
@@ -168,7 +180,13 @@ export const auth = betterAuth({
           pendingPasswords.set(body.email.toLowerCase(), body.password);
         }
       }
+
+      // if(ctx){
+      //   console.log("ctx", ctx)
+      // }
+
     }),
+
     after: createAuthMiddleware(async (ctx: any) => {
       // Cleanup password store after request
       if (ctx.path.includes("sign-up")) {
@@ -245,7 +263,7 @@ export const auth = betterAuth({
 
   onAPIError: {
     throw: true,
-    onError: async (error, ctx:any) => {
+    onError: async (error, ctx: any) => {
       // Log error for debugging but let standard auth errors pass through
       console.error("Better-Auth API Error:", (error as any).message);
     }
