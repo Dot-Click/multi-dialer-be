@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { cloudinaryUploader } from "@/utils/handler";
-import {envConfig} from "@/lib/config";
+import { envConfig } from "@/lib/config";
 import Groq from "groq-sdk";
 
 const groq = new Groq({ apiKey: envConfig.GROK_API_KEY });
@@ -25,40 +25,41 @@ export interface Lead {
  * Manages leads based on their priority (higher number = higher priority)
  */
 export class PriorityCallQueue {
-    private queue: Lead[] = [];
+  private queue: Lead[] = [];
 
-    enqueue(lead: Lead) {
-      this.queue.push(lead);
-      this.queue.sort((a, b) => b.priority - a.priority);
-    }
+  enqueue(lead: Lead) {
+    this.queue.push(lead);
+    this.queue.sort((a, b) => b.priority - a.priority);
+  }
 
-    dequeue(): Lead | undefined {
-      return this.queue.shift();
-    }
+  dequeue(): Lead | undefined {
+    return this.queue.shift();
+  }
 
-    isEmpty(): boolean {
-      return this.queue.length === 0;
-    }
+  isEmpty(): boolean {
+    return this.queue.length === 0;
+  }
 
-    size(): number {
-      return this.queue.length;
-    }
+  size(): number {
+    return this.queue.length;
+  }
 
-    getQueue() {
-      return this.queue;
-    }
+  getQueue() {
+    return this.queue;
+  }
 
-    clear() {
-      this.queue = [];
-    }
+  clear() {
+    this.queue = [];
+  }
 }
 
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId: string; userId: string }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId: string; userId: string; sessionId?: string }> = new Map(); // SID -> Metadata
+  private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
 
-  private constructor() {}
+  private constructor() { }
 
   public static getInstance(): DialerService {
     if (!DialerService.instance) {
@@ -80,7 +81,7 @@ export class DialerService {
   async addLeadsToQueue(userId: string, leads: Lead[]) {
     const queue = this.getOrCreateQueue(userId);
     leads.forEach((lead) => queue.enqueue(lead));
-    
+
     // Process queue immediately
     this.processQueue(userId);
   }
@@ -94,7 +95,7 @@ export class DialerService {
 
     // 1. Get user capacity (simultaneous lines)
     const capacity = await this.getUserCapacity(userId);
-    
+
     // 2. Count current active calls for this user
     const currentActiveCount = Array.from(this.activeCalls.values()).filter(
       (call) => call.userId === userId
@@ -119,7 +120,7 @@ export class DialerService {
   private pendingCallsCount(userId: string): number {
     // This is a simple counter if we had a state for "initiating"
     // For now, activeCalls covers it once Twilio responds
-    return 0; 
+    return 0;
   }
 
   private async getUserCapacity(userId: string): Promise<number> {
@@ -163,11 +164,24 @@ export class DialerService {
       });
 
       console.log(`Call initiated for ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
-      this.activeCalls.set(call.sid, { leadId: lead.id, userId: lead.userId });
+      const sessionId = this.userActiveSessions.get(lead.userId);
+      this.activeCalls.set(call.sid, { leadId: lead.id, userId: lead.userId, sessionId });
+
+      // Create CallRecord in DB
+      await prisma.callRecord.create({
+        data: {
+          callSid: call.sid,
+          leadId: lead.id,
+          userId: lead.userId,
+          sessionId: sessionId || null,
+          status: "initiated",
+          startTime: new Date(),
+        }
+      });
     } catch (error: any) {
       console.error(`Failed to call lead ${lead.id}:`, error.message);
       await this.updateLeadStatusInDB(lead.id, "FAILED");
-      
+
       // If a call failed to initiate, try to process next in queue
       this.processQueue(lead.userId);
     }
@@ -211,9 +225,9 @@ export class DialerService {
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
-          {
-            role: "system",
-            content: `
+        {
+          role: "system",
+          content: `
             You are a sales call analyzer.
 
             Return ONLY valid JSON:
@@ -223,16 +237,16 @@ export class DialerService {
               "lead_interest": "high" | "medium" | "low",
               "summary": "2-3 line short summary"
             }`
-            },
-            {
-              role: "user",
-              content: transcript
-            }
-          ]
-        });
+        },
+        {
+          role: "user",
+          content: transcript
+        }
+      ]
+    });
 
-      return JSON.parse(completion.choices[0].message.content!);
-    }
+    return JSON.parse(completion.choices[0].message.content!);
+  }
 
   async handleCallStatusUpdate(sid: string, twilioStatus: string) {
     const metadata = this.activeCalls.get(sid);
@@ -240,7 +254,7 @@ export class DialerService {
 
     const { leadId, userId } = metadata;
     let dbStatus: LeadCallStatus = "CALLED";
-    console.log("twilioStatus===>",twilioStatus)
+    console.log("twilioStatus===>", twilioStatus)
     const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
     if (!terminalStatuses.includes(twilioStatus)) return;
 
@@ -254,24 +268,39 @@ export class DialerService {
       this.clearTranscriptionLogs(sid);
     };
 
-      await this.updateLeadStatusInDB(leadId, dbStatus);
-      
-      // Remove from active calls
-      this.activeCalls.delete(sid);
+    await this.updateLeadStatusInDB(leadId, dbStatus);
 
-      // CALL IS FINISHED -> Automatically trigger next call for this user
-      console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
-      this.processQueue(userId);
+    // Update CallRecord in DB
+    const callRecord = await prisma.callRecord.findUnique({ where: { callSid: sid } });
+    if (callRecord) {
+      const endTime = new Date();
+      const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000);
+      await prisma.callRecord.update({
+        where: { callSid: sid },
+        data: {
+          status: twilioStatus,
+          endTime,
+          duration
+        }
+      });
     }
+
+    // Remove from active calls
+    this.activeCalls.delete(sid);
+
+    // CALL IS FINISHED -> Automatically trigger next call for this user
+    console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
+    this.processQueue(userId);
+  }
 
   async handleRecordingUpdate(callSid: string, recordingUrl: string, RecordingSid: string) {
     try {
       console.log(`[Recording] Updating for ${callSid}: ${recordingUrl}`);
-        
+
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
 
-        
+
       const transcription = await groq.audio.transcriptions.create({
         url: cloudinaryUrl,
         model: "whisper-large-v3",
@@ -280,9 +309,9 @@ export class DialerService {
       });
       // AI Sentiments Logic should be implemented here
       const sentimentAnalysis = await this.analyzeSentiment(transcription.text);
-      
+
       // console.log("sentimentAnalysis",sentimentAnalysis)
-        
+
       await prisma.callAnalysis.upsert({
         where: { callSid: callSid },
         update: { recordingUrl: cloudinaryUrl },
@@ -306,7 +335,7 @@ export class DialerService {
     const tempPath = path.join(os.tmpdir(), `recording-${callSid}.mp3`);
     try {
       const downloadUrl = twilioUrl.endsWith('.mp3') ? twilioUrl : `${twilioUrl}.mp3`;
-      
+
       const response = await axios({
         url: downloadUrl,
         method: 'GET',
@@ -327,7 +356,7 @@ export class DialerService {
 
       // Use the user's utility function
       const result = await cloudinaryUploader(tempPath);
-      
+
       // Cleanup temp file
       if (fs.existsSync(tempPath)) {
         fs.unlinkSync(tempPath);
@@ -362,6 +391,15 @@ export class DialerService {
 
   clearTranscriptionLogs(callSid: string) {
     this.transcriptionLogs.delete(callSid);
+  }
+
+  // Session Management
+  setActiveSession(userId: string, sessionId: string) {
+    this.userActiveSessions.set(userId, sessionId);
+  }
+
+  clearActiveSession(userId: string) {
+    this.userActiveSessions.delete(userId);
   }
 }
 

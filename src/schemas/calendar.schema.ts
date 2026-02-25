@@ -23,6 +23,8 @@ const optionalDate = parseDate.optional();
 
 export const calendarEventType = z.enum(["START_ONLY", "FROM_TO", "ALL_DAY"]);
 
+export const appointmentStatus = z.enum(["SET", "MET", "CANCELLED"]);
+
 export const createCalendarEventSchema = z
   .object({
     title: z.string(),
@@ -32,6 +34,7 @@ export const createCalendarEventSchema = z
     startDate: parseDate,
     endDate: optionalDate,
     assignToId: z.string().optional(),
+    status: appointmentStatus.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.eventType === "FROM_TO" && !data.endDate) {
@@ -51,6 +54,7 @@ export const updateCalendarEventSchema = z
     eventType: calendarEventType.optional(),
     startDate: parseDate.optional(),
     endDate: optionalDate,
+    status: appointmentStatus.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.eventType === "FROM_TO" && !data.endDate) {

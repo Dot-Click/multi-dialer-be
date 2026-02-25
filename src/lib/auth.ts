@@ -7,6 +7,7 @@ import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
 import { sendEmail } from "../utils/email";
 import { errorResponse } from "@/utils/handler";
+import { Console } from "console";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -200,7 +201,7 @@ export const auth = betterAuth({
         if (user) {
           await prisma.user.update({
             where: { email: body.email },
-            data: { emailVerified: true },
+            data: { emailVerified: true, role: body.role },
           });
         }
         console.log("User email verified successfully", user);

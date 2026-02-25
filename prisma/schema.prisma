@@ -180,7 +180,10 @@ model User {
 
   companies Company[]
 
-  signature  Signature?
+  signature Signature?
+
+  agentSessions AgentSession[]
+  callRecords   CallRecord[]
 
   @@map("users")
 }
@@ -645,12 +648,26 @@ model LeadStoreService {
 }
 
 enum LeadCallStatus {
+  // Existing
   PENDING
   CALLING
   CALLED
   FAILED
   BUSY
   NO_ANSWER
+  // New dispositions from frontend
+  HOT
+  WARM
+  COLD
+  CALL_BACK
+  DO_NOT_CALL
+  NOT_INTERESTED
+}
+
+enum AppointmentStatus {
+  SET
+  MET
+  CANCELLED
 }
 
 model Lead {
@@ -669,6 +686,8 @@ model Lead {
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  callRecords CallRecord[]
 
   @@map("leads")
 }
@@ -849,7 +868,51 @@ model Calendar {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  status AppointmentStatus @default(SET)
+
   @@map("calendar")
+}
+
+model AgentSession {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startTime DateTime @default(now())
+  endTime   DateTime?
+  duration  Int?     // In seconds
+  type      String   @default("C2C") // e.g., C2C Session
+  listId    String?  // The contact list dialed during this session
+
+  calls     CallRecord[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("agent_sessions")
+}
+
+model CallRecord {
+  id           String         @id @default(uuid())
+  callSid      String         @unique
+  leadId       String
+  lead         Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId    String?
+  session      AgentSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  
+  startTime    DateTime       @default(now())
+  endTime      DateTime?
+  duration     Int?           // In seconds
+  status       String         // Twilio status: completed, failed, etc.
+  disposition  LeadCallStatus?
+  
+  recordingUrl String?
+  transcript   String?        @db.Text
+  
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@map("call_records")
 }
 
 // --- NEW ACTION PLAN MODELS ---
