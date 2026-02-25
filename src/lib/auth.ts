@@ -1,6 +1,11 @@
-import { betterAuth } from "better-auth";
+import { betterAuth, APIError } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { openAPI, customSession, createAuthMiddleware, admin as adminPlugin } from "better-auth/plugins";
+import {
+  openAPI,
+  customSession,
+  createAuthMiddleware,
+  admin as adminPlugin,
+} from "better-auth/plugins";
 import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
@@ -55,11 +60,10 @@ export const auth = betterAuth({
       url: string;
       token: string;
     }) => {
-      const data =
-        await sendEmail(
-          user.email,
-          "Welcome to CallScout – Your Account Details",
-          `
+      const data = await sendEmail(
+        user.email,
+        "Welcome to CallScout – Your Account Details",
+        `
   <div style="font-family: Arial, sans-serif; background-color: #f4f6f8; padding: 20px;">
     <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
       
@@ -98,8 +102,8 @@ export const auth = betterAuth({
 
     </div>
   </div>
-  `
-        );
+  `,
+      );
     },
   },
   emailAndPassword: {
@@ -109,7 +113,7 @@ export const auth = betterAuth({
     password: {
       hash: async (password: string): Promise<string> => {
         if (!password) throw new Error("Password required");
-        console.log(password)
+        console.log(password);
         return bcrypt.hash(password, 10);
       },
       verify: async ({
@@ -136,31 +140,34 @@ export const auth = betterAuth({
         attributes: {
           httpOnly: true,
           secure: process.env.NODE_ENV === "production",
-          sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
         },
       },
     },
   },
   plugins: [
     openAPI({ disableDefaultReference: true }),
-    customSession(async ({ user, session }: { user: AuthUser; session: any }) => {
-      const displayName = user.fullName ?? user.email?.split("@")[0] ?? "User";
-      return {
-        user: {
-          ...user,
-          displayName,
-          role: user.role,
-          status: user.status,
-        },
-        session: {
-          ...session,
-          isActive: session.expiresAt
-            ? new Date(session.expiresAt) > new Date()
-            : false,
-          role: user.role,
-        },
-      };
-    }),
+    customSession(
+      async ({ user, session }: { user: AuthUser; session: any }) => {
+        const displayName =
+          user.fullName ?? user.email?.split("@")[0] ?? "User";
+        return {
+          user: {
+            ...user,
+            displayName,
+            role: user.role,
+            status: user.status,
+          },
+          session: {
+            ...session,
+            isActive: session.expiresAt
+              ? new Date(session.expiresAt) > new Date()
+              : false,
+            role: user.role,
+          },
+        };
+      },
+    ),
     adminPlugin({
       ac,
       roles: {
@@ -176,6 +183,9 @@ export const auth = betterAuth({
       // Capture plain password for the email hook
       if (ctx.path.includes("sign-up")) {
         const body = ctx.body;
+        if (body?.role?.toLowerCase() === "owner") {
+          throw new APIError("BAD_REQUEST", { message: "invalid role" });
+        }
         if (body?.email && body?.password) {
           console.log(`[Auth] Captured password for ${body.email}`);
           pendingPasswords.set(body.email.toLowerCase(), body.password);
@@ -185,26 +195,43 @@ export const auth = betterAuth({
       // if(ctx){
       //   console.log("ctx", ctx)
       // }
-
     }),
 
     after: createAuthMiddleware(async (ctx: any) => {
       // Cleanup password store after request
       if (ctx.path.includes("sign-up")) {
         const body = ctx.body;
+
         if (body?.email) {
-          setTimeout(() => pendingPasswords.delete(body.email.toLowerCase()), 10000);
+          setTimeout(
+            () => pendingPasswords.delete(body.email.toLowerCase()),
+            10000,
+          );
         }
+
         const user = await prisma.user.findUnique({
           where: { email: body.email },
         });
         if (user) {
+          // Map status and role to uppercase enum values to match Prisma schema
+          const mappedStatus = body.status
+            ? body.status.toUpperCase().replace(/\s+/g, "_")
+            : undefined;
+          const mappedRole = body.role ? body.role.toUpperCase() : undefined;
+
           await prisma.user.update({
             where: { email: body.email },
-            data: { emailVerified: true, role: body.role },
+            data: {
+              emailVerified: true,
+              role: mappedRole as any,
+              status: mappedStatus as any,
+            },
           });
         }
-        console.log("User email verified successfully", user);
+        console.log(
+          "User email verified and profile updated successfully",
+          user,
+        );
       }
 
       if (ctx.path.startsWith("/sign-in") || ctx.path.startsWith("/callback")) {
@@ -244,11 +271,19 @@ export const auth = betterAuth({
         const resp = ctx.context.returned as any;
         if (resp?.user?.id) {
           try {
-            const library = await prisma.library.findFirst({ where: { userId: resp.user.id } });
-            if (!library) await prisma.library.create({ data: { userId: resp.user.id } });
+            const library = await prisma.library.findFirst({
+              where: { userId: resp.user.id },
+            });
+            if (!library)
+              await prisma.library.create({ data: { userId: resp.user.id } });
 
-            const settings = await prisma.system_Setting.findFirst({ where: { userId: resp.user.id } });
-            if (!settings) await prisma.system_Setting.create({ data: { userId: resp.user.id } });
+            const settings = await prisma.system_Setting.findFirst({
+              where: { userId: resp.user.id },
+            });
+            if (!settings)
+              await prisma.system_Setting.create({
+                data: { userId: resp.user.id },
+              });
           } catch (error) {
             console.error("User setup failed", error);
           }
@@ -267,6 +302,6 @@ export const auth = betterAuth({
     onError: async (error, ctx: any) => {
       // Log error for debugging but let standard auth errors pass through
       console.error("Better-Auth API Error:", (error as any).message);
-    }
-  }
+    },
+  },
 });
