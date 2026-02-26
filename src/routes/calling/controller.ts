@@ -12,8 +12,9 @@ const VoiceGrant = AccessToken.VoiceGrant;
 
 const fromNumber = envConfig.TWILIO_PHONE_NUMBER as string;
 export const startCalling: RequestHandler = async (req, res) => {
- try {
-    const { to } = req.body;
+  console.log(`[startCalling] ENTERED - Body: ${JSON.stringify(req.body)}`);
+  try {
+    const { to, contactId } = req.body;
     if (!to) {
       errorResponse(res, { message: "Phone number is required" }, 400);
       return;
@@ -30,6 +31,66 @@ export const startCalling: RequestHandler = async (req, res) => {
     });
 
     console.log("Single Test Call SID:", call.sid);
+
+    // PERSISTENCE: Create CallRecord immediately for manual calls
+    const userId = (req as any).user?.id;
+    const toDigits = to.replace(/\D/g, ""); // Strip non-digits
+    console.log("====================================================");
+    console.log("--- DEBUG START: startCalling Persistence ---");
+    console.log(`[startCalling] Time: ${new Date().toISOString()}`);
+    console.log(`[startCalling] User ID from Req: ${userId}`);
+    console.log(`[startCalling] Call To (original): ${to}`);
+    console.log(`[startCalling] Call To (digits): ${toDigits}`);
+
+    if (userId) {
+      // Find the phone record directly and include the contact
+      // We match the last 10 digits to handle country code variations (+1, 0, etc.)
+      const last10 = toDigits.slice(-10);
+      console.log(`[startCalling] Searching for phone containing: ${last10}`);
+
+      const phoneRecord = await (prisma.contactPhone as any).findFirst({
+        where: {
+          number: { contains: last10 },
+          contactId: contactId
+        },
+        include: { contact: true }
+      });
+
+      console.log(`[startCalling] Phone lookup result: ${phoneRecord ? 'FOUND (Phone ID: ' + phoneRecord.id + ')' : 'NOT FOUND'}`);
+
+      if (phoneRecord && (phoneRecord as any).contact) {
+        const contact = (phoneRecord as any).contact;
+        try {
+          // Register with dialerService for status updates
+          (dialerService as any).activeCalls.set(call.sid, { 
+            contactId: contact.id, 
+            userId, 
+            sessionId: null 
+          });
+
+          // Create the record. Cast to any in case schema isn't generated.
+          await (prisma.callRecord as any).create({
+            data: {
+              callSid: call.sid,
+              contactId: contact.id,
+              userId,
+              status: "queued",
+              startTime: new Date(),
+            } as any
+          });
+          console.log(`[startCalling] SUCCESS: CallRecord created for SID: ${call.sid}`);
+        } catch (dbError: any) {
+          console.error(`[startCalling] ERROR: Database insertion failed: ${dbError.message}`);
+        }
+      } else {
+        console.warn(`[startCalling] WARN: No contact found for last10 digits: ${last10} for user ${userId}`);
+      }
+    } else {
+      console.warn(`[startCalling] WARN: Skipping persistence - userId is missing in req.user`);
+    }
+    console.log("--- DEBUG END: startCalling Persistence ---");
+    console.log("====================================================");
+
     successResponse(res, 200, "Single test call lagi!", call);
     return;
   } catch (error: any) {
@@ -413,6 +474,26 @@ export const insights: RequestHandler = async (req: Request, res: Response) => {
     return;
   } catch (error: any) {
     console.error("Calls insights fetch failed:", error);
+    
+    const statusCode = error.status || 500;
+    const message = error.code === 20003 
+      ? "Twilio authentication failed. Please check your credentials." 
+      : error.message;
+
+    errorResponse(res, { message }, statusCode);
+    return;
+  }
+};
+
+
+export const getHistory: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const calls = await client.calls.list({ limit: 20 });
+    const history = calls.map(call => call.toJSON());
+    successResponse(res, 200, "Calls history fetched successfully", history);
+    return;
+  } catch (error: any) {
+    console.error("Calls history fetch failed:", error);
     
     const statusCode = error.status || 500;
     const message = error.code === 20003 
