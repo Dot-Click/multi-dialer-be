@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { 
+import {
   createDialerSettings,
-  getMyDialerSettings, 
+  getMyDialerSettings,
   getAllDialerSettings,
   getDialerSettingById,
   updateDialerSettings,

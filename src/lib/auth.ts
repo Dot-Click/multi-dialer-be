@@ -228,10 +228,6 @@ export const auth = betterAuth({
             },
           });
         }
-        console.log(
-          "User email verified and profile updated successfully",
-          user,
-        );
       }
 
       if (ctx.path.startsWith("/sign-in") || ctx.path.startsWith("/callback")) {
