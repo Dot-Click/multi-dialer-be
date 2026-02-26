@@ -157,13 +157,13 @@ export class DialerService {
       const call = await client.calls.create({
         to: lead.phone,
         from: envConfig.TWILIO_PHONE_NUMBER as string,
-        url: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`,
-        statusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${lead.userId}`,
+        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
       });
 
-      console.log(`[makeCall] Call initiated for ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
+      console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
       this.activeCalls.set(call.sid, { leadId: lead.id, userId: lead.userId, sessionId });
 
