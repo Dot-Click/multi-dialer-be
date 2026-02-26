@@ -13,7 +13,8 @@ import {
   getTranscriptionLogs,
   getTwilioToken,
   endCall,
-  getCallsInsights
+  getCallsInsights,
+  getHistory
 } from "./controller";
 import {
   getAggregateStats,
@@ -27,10 +28,11 @@ import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 const router = Router();
 
 // Calling Control
-router.post("/test-call", startCalling);
-router.post("/end-call", endCall);
-router.post("/leads", addLeadsToDialer);
-router.get("/status", protectRoute, getDialerStatus);
+router.post("/test-call",protectRoute,  startCalling);
+router.post("/end-call",protectRoute,  endCall);
+router.post("/leads",protectRoute,  addLeadsToDialer);
+router.get("/status",protectRoute,  getDialerStatus);
+router.get("/getHistory/:id",protectRoute,  getHistory);
 
 // Analytics & Reports
 router.get("/stats", protectRoute, getAggregateStats);
