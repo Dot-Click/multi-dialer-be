@@ -22,6 +22,7 @@ import contactRoutes from "./contact"
 import contactListRoutes from "./contactlist"
 import userRoutes from "./user"
 import companyRoutes from "./company"
+import reportRoutes from "./reports"
 // import subscriptionRoutes from "./subscription"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { envConfig } from "@/lib/config";
@@ -56,6 +57,7 @@ router.use("/contact", protectRoute, contactRoutes)
 router.use("/contact-list", protectRoute, contactListRoutes)
 router.use("/user", protectRoute, userRoutes)
 router.use("/company", protectRoute, checkRole(["OWNER"]), companyRoutes)
+router.use("/reports", protectRoute, reportRoutes)
 
 
 router.use("/calling", callingRoutes)
