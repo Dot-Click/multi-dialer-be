@@ -488,9 +488,16 @@ export const insights: RequestHandler = async (req: Request, res: Response) => {
 
 export const getHistory: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const calls = await client.calls.list({ limit: 20 });
-    const history = calls.map(call => call.toJSON());
-    successResponse(res, 200, "Calls history fetched successfully", history);
+    const contactId = req.params.id;
+    const calls = await prisma.callRecord.findMany({
+      where: {
+        contactId: contactId,
+      },
+      include: {
+        lead: true,
+      },
+    });
+    successResponse(res, 200, "Calls history fetched successfully", calls);
     return;
   } catch (error: any) {
     console.error("Calls history fetch failed:", error);

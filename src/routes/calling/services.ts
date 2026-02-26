@@ -285,6 +285,7 @@ export class DialerService {
           const endTime = new Date();
           const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000); // in seconds
           updateData.endTime = endTime;
+          updateData.sessionId = metadata.sessionId;
           updateData.duration = duration;
           updateData.disposition = dbStatus;
         }
