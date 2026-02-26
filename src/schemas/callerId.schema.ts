@@ -18,6 +18,10 @@ export const createCallerIdSchema = z.object({
   callScriptId: z.string().optional(),
   sendEmail: z.boolean().optional(),
   sendText: z.boolean().optional(),
+  dialerType: z.enum(["PREDICTIVE", "POWER", "PREVIEW"]).optional(),
+  aiPacing: z.boolean().optional(),
+  sid: z.string().optional(),
+  friendlyName: z.string().optional(),
 });
 
 export const updateCallerIdSchema = z.object({
@@ -38,6 +42,10 @@ export const updateCallerIdSchema = z.object({
   callScriptId: z.string().optional(),
   sendEmail: z.boolean().optional(),
   sendText: z.boolean().optional(),
+  dialerType: z.enum(["PREDICTIVE", "POWER", "PREVIEW"]).optional(),
+  aiPacing: z.boolean().optional(),
+  sid: z.string().optional(),
+  friendlyName: z.string().optional(),
 });
 
 
