@@ -62,11 +62,11 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
         const reportData = calls.map(call => {
             return {
                 id: call.id,
-                name: call.lead.fullName,
-                address: `${call.lead.address}, ${call.lead.city}, ${call.lead.state} ${call.lead.zip}`,
+                name: call?.lead?.fullName,
+                address: `${call?.lead?.address}, ${call?.lead?.city}, ${call?.lead?.state} ${call?.lead?.zip}`,
                 list: call.session?.listId ? (listMap.get(call.session.listId) || "Unknown List") : "N/A",
                 group: "N/A", // Group relation not explicitly in schema for CallRecord/Lead
-                phoneNumber: call.lead.phone,
+                phoneNumber: call?.lead?.phone,
                 result: call.disposition || call.status,
                 startTime: call.startTime,
                 duration: call.duration
