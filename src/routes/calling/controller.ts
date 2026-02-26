@@ -12,7 +12,7 @@ const VoiceGrant = AccessToken.VoiceGrant;
 
 const fromNumber = envConfig.TWILIO_PHONE_NUMBER as string;
 export const startCalling: RequestHandler = async (req, res) => {
-  console.log(`[startCalling] ENTERED - Body: ${JSON.stringify(req.body)}`);
+  const agentId = req.params.agentId;
   try {
     const { to, contactId } = req.body;
     if (!to) {
@@ -21,8 +21,8 @@ export const startCalling: RequestHandler = async (req, res) => {
     }
     const call = await client.calls.create({
       to: to, // Lead Number (here the number is dynamic for now on testing account i've only 1 verified caller ID)
-      url: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`, // This will now bridge to Agent
-      statusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
+      url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${agentId}`,
+      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${agentId}`,
       statusCallbackMethod: "POST",
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
       from: fromNumber,
@@ -235,7 +235,7 @@ export const getDialerStatus: RequestHandler = async (req, res) => {
  */
 export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const twiml = new VoiceResponse();
-  
+  const agentId = req.params.agentId;
   // Start Real-time Transcription
   const start = twiml.start();
   start.transcription({
@@ -251,7 +251,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   });
   
   // Bridge to the browser-based tester agent
-  dial.client('tester_agent');
+  dial.client(agentId);
 
   res.type('text/xml');
   res.send(twiml.toString());
@@ -383,25 +383,25 @@ export const buyNumber: RequestHandler = async (req, res) => {
 export const getTwilioToken: RequestHandler = async (req, res) => {
   try {
     const accountSid = envConfig.TWILIO_ACCOUNT_SID!;
-    // Note: Trial accounts can typically use AuthToken for simple tokens if needed, 
-    // but standard approach uses API Key. For this project, we'll try to generate a basic token.
     const apiKey = envConfig.TWILIO_API_KEY;
     const apiSecret = envConfig.TWILIO_API_SECRET;
+    
+    // Use the authenticated user's ID as identity
+    const identity = req.user?.id || (req.query.identity as string) || 'tester_agent';
+    
     if (!apiKey || !apiSecret) {
-      // Fallback for user: Tell them they need to add these to .env if standard token fails
-      console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env. Use Twilio Console to create them.");
+      console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env.");
     }
 
-    const identity = 'tester_agent';
     const token = new AccessToken(
       accountSid,
-      apiKey || '', // If missing, the SDK will error, prompting the user to add them
+      apiKey || '',
       apiSecret || '',
       { identity: identity }
     );
 
     const grant = new VoiceGrant({
-      incomingAllow: true, // Allow receiving bridged calls
+      incomingAllow: true,
     });
     token.addGrant(grant);
 
@@ -411,7 +411,7 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("Token generation failed:", error);
-    errorResponse(res, { message: "Failed to generate token. Ensure TWILIO_API_KEY and TWILIO_API_SECRET are set." });
+    errorResponse(res, { message: "Failed to generate token." });
   }
 }
 
