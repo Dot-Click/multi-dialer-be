@@ -6,6 +6,7 @@ import { dialerService } from "./services";
 import prisma from "@/lib/prisma";
 import { envConfig } from "@/lib/config";
 import twilio from "twilio";
+import { insertCallerIdInDb } from "../systemSettings/callerId/service";
 
 const { jwt: { AccessToken } } = twilio;
 const VoiceGrant = AccessToken.VoiceGrant;
@@ -95,7 +96,7 @@ export const startCalling: RequestHandler = async (req, res) => {
     return;
   } catch (error: any) {
     console.error("Single call failed:", error);
-    errorResponse(res, {message: error.message});
+    errorResponse(res, { message: error.message });
     return;
   }
 }
@@ -110,7 +111,7 @@ export const endCall: RequestHandler = async (req, res) => {
 
     console.log("Terminating call:", callSid);
     const call = await client.calls(callSid).update({ status: 'completed' });
-    
+
     successResponse(res, 200, "Call terminated successfully", call);
     return;
   } catch (error: any) {
@@ -244,12 +245,12 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   });
 
   twiml.say('Please wait while we connect you to an agent.');
-  
+
   const dial = twiml.dial({
     record: 'record-from-answer-dual', // Records both channels
     recordingStatusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/recording-status`,
   });
-  
+
   // Bridge to the browser-based tester agent
   dial.client(agentId);
 
@@ -273,7 +274,7 @@ export const handleRecordingStatus: RequestHandler = async (req, res) => {
     return;
   } catch (error: any) {
     console.error("Recording webhook error:", error);
-    errorResponse(res, {message: error.message});
+    errorResponse(res, { message: error.message });
     return;
   }
 }
@@ -284,17 +285,17 @@ export const handleRecordingStatus: RequestHandler = async (req, res) => {
 export const handleTranscriptionWebhook: RequestHandler = async (req, res) => {
   try {
     const { CallSid, TranscriptionData, Track } = req.body;
-    console.log("[TranscriptionDataJSON]  ",JSON.stringify(TranscriptionData))
+    console.log("[TranscriptionDataJSON]  ", JSON.stringify(TranscriptionData))
     // Twilio sends TranscriptionData as a JSON string or object
     const data = typeof TranscriptionData === 'string' ? JSON.parse(TranscriptionData) : TranscriptionData;
-    
+
     if (data && data.transcript) {
       // Diagnostic analysis showed:
       // inbound_track -> "Welcome back to productivity..." (Agent)
       // outbound_track -> "Hello.", "Okay." (Customer)
       const track = (data.track || data.Track || Track || '').toLowerCase();
       const speaker = track.includes('inbound') ? 'AGENT' : 'CUSTOMER';
-      
+
       dialerService.addTranscription(CallSid, speaker, data.transcript);
     }
 
@@ -335,17 +336,17 @@ export const handleCallStatus: RequestHandler = async (req, res) => {
     successResponse(res, 200, "Call status updated", req.body);
     return;
   } catch (error: any) {
-    errorResponse(res, {message: error.message});
+    errorResponse(res, { message: error.message });
     return;
   }
 }
 
 export const voiceCall: RequestHandler = async (req, res) => {
-    const twiml = new VoiceResponse();
-    twiml.say('Hello from the multi-dialer! Integration successful.');
-    res.type('text/xml');
-    res.send(twiml.toString());
-    return;
+  const twiml = new VoiceResponse();
+  twiml.say('Hello from the multi-dialer! Integration successful.');
+  res.type('text/xml');
+  res.send(twiml.toString());
+  return;
 }
 
 export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
@@ -357,22 +358,41 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     return;
   } catch (error: any) {
     console.error("Available numbers fetch failed:", error);
-    errorResponse(res, {message: error.message});
+    errorResponse(res, { message: error.message });
     return;
   }
 }
 
 export const buyNumber: RequestHandler = async (req, res) => {
   try {
-    const { phoneNumber } = req.body;
+    const { phoneNumber, countryCode, label } = req.body;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
+      return;
+    }
+
     const number = await client.incomingPhoneNumbers.create({
       phoneNumber: phoneNumber,
     });
-    successResponse(res, 200, "Number bought successfully", number);
+
+    // Save the new number to the caller ID table
+    const callerIdPayload = {
+      label: label || number.friendlyName || phoneNumber,
+      countryCode: countryCode || "US", // Default to US if not provided
+      callerId: number.phoneNumber,
+      sid: number.sid,
+      friendlyName: number.friendlyName,
+    };
+
+    const newCallerId = await insertCallerIdInDb(callerIdPayload, userId);
+
+    successResponse(res, 200, "Number bought successfully", { number, callerId: newCallerId });
     return;
   } catch (error: any) {
     console.error("Number buy failed:", error);
-    errorResponse(res, {message: error.message});
+    errorResponse(res, { message: error.message });
     return;
   }
 }
@@ -418,19 +438,19 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
 
 export const sendSms: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const {message} = req.body
-    const service =  await client.messages.create({
-    body: message,
-    from: fromNumber,
-    to: "+923413227282",
-  });
+    const { message } = req.body
+    const service = await client.messages.create({
+      body: message,
+      from: fromNumber,
+      to: "+923413227282",
+    });
 
-  console.log(service.sid);
-  successResponse(res, 200, "SMS sent successfully", service);
-  return;
+    console.log(service.sid);
+    successResponse(res, 200, "SMS sent successfully", service);
+    return;
   } catch (error: any) {
     console.error("Number buy failed:", error);
-    errorResponse(res, {message: error.message});
+    errorResponse(res, { message: error.message });
     return;
   }
 }
@@ -439,15 +459,15 @@ export const getCallsInsights: RequestHandler = async (req, res) => {
   try {
     const insights = await client.calls.list({ status: "completed", limit: 10 });
     const serializedInsights = insights.map(call => call.toJSON());
-    
+
     successResponse(res, 200, "Calls insights fetched successfully", serializedInsights);
     return;
   } catch (error: any) {
     console.error("Calls insights fetch failed:", error);
-    
+
     const statusCode = error.status || 500;
-    const message = error.code === 20003 
-      ? "Twilio authentication failed. Please check your credentials." 
+    const message = error.code === 20003
+      ? "Twilio authentication failed. Please check your credentials."
       : error.message;
 
     errorResponse(res, { message }, statusCode);
@@ -459,7 +479,7 @@ export const getCallsInsights: RequestHandler = async (req, res) => {
 export const insights: RequestHandler = async (req: Request, res: Response) => {
   try {
     const serviceSid = process.env.TWILIO_INTELLIGENCE_SERVICE_SID;
-    const {RecordingSid} = req.body;
+    const { RecordingSid } = req.body;
     const insights = await client.intelligence.v2.transcripts.create({
       serviceSid: serviceSid!,
       channel: JSON.stringify({
@@ -467,9 +487,9 @@ export const insights: RequestHandler = async (req: Request, res: Response) => {
           source_sid: RecordingSid
         }
       })
-    })  
+    })
     console.log(insights)
-    
+
     successResponse(res, 200, "Calls insights fetched successfully", insights);
     return;
   } catch (error: any) {

@@ -134,6 +134,12 @@ enum LeadSheetQuestionType {
   DATETIME
 }
 
+enum DialerType {
+  PREDICTIVE
+  POWER
+  PREVIEW
+}
+
 model User {
   id       String   @id @default(uuid())
   fullName String?
@@ -748,6 +754,8 @@ model CallerId {
   sendEmail                 Boolean        @default(false)
   sendText                  Boolean        @default(false)
   systemSettingId           String
+  twillioNumber             String? 
+  twillioSid                String? 
   systemSetting             System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
   createdAt                 DateTime       @default(now())
   updatedAt                 DateTime       @updatedAt
