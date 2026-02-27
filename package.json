@@ -12,7 +12,7 @@
     "studio": "prisma studio",
     "build": "tsc && tsc-alias && npm run copy-assets",
     "copy-assets": "node scripts/copy-assets.js",
-    "start": "npx prisma migrate deploy && node dist/index.js"
+    "start": "node dist/index.js"
   },
   "engines": {
     "node": "20.x"

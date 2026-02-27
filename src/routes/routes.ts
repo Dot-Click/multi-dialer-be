@@ -6,7 +6,6 @@ import smsRoutes from "./library/sms"
 import emailRoutes from "./library/email"
 import signatureRoutes from "./library/signatures"
 import mediaCenterRoutes from "./library/mediaCenter"
-import recordingsRoutes from "./library/recordings";
 import callerIdRoutes from "./systemSettings/callerId"
 import callSettingsRoutes from "./systemSettings/callSettings"
 import callbackPromptRoutes from "./library/callBackPrompt";
@@ -26,7 +25,7 @@ import contactListRoutes from "./contactlist"
 import userRoutes from "./user"
 import companyRoutes from "./company"
 import reportRoutes from "./reports"
-import subscriptionRoutes from "./subscription"
+// import subscriptionRoutes from "./subscription"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { envConfig } from "@/lib/config";
 
@@ -40,7 +39,6 @@ router.use("/library/sms", protectRoute, smsRoutes)
 router.use("/library/email", protectRoute, emailRoutes)
 router.use("/library/signatures", protectRoute, signatureRoutes)
 router.use("/library/media-center", protectRoute, mediaCenterRoutes)
-router.use("/library/recordings", protectRoute, recordingsRoutes)
 router.use("/library/callback-prompt", protectRoute, callbackPromptRoutes);
 
 
@@ -68,7 +66,7 @@ router.use("/reports", protectRoute, reportRoutes)
 
 router.use("/calling", callingRoutes)
 
-router.use("/subscriptions", subscriptionRoutes)
+// router.use("/subscriptions", subscriptionRoutes)
 
 router.get("/verified", (req, res) => {
   res.send(`<h1 style="text-align: center; flex: 1; justify-content: center; align-items: center; height: 100vh;">Email verified successfully <a href="${envConfig.FRONTEND_URL}/admin/login">Go to app</a></h1>`)

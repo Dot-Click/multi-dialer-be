@@ -13,16 +13,18 @@ export async function createNotificationInDb(payload: any, userId: string) {
     });
   }
 
+  const data = payload
+  console.log(data)
   // Create Notification Setting
-  return await prisma.notificationSetting.create({
-    data: {
-      ...payload,
-      systemSettingId: systemSetting.id,
-    },
-    include: {
-      systemSetting: true // Optional return data
-    }
-  });
+  // return await prisma.notificationSetting.create({
+  //   data: {
+  //     ...payload,
+  //     systemSettingId: systemSetting.id,
+  //   },
+  //   include: {
+  //     systemSetting: true // Optional return data
+  //   }
+  // });
 }
 
 // 2. Get All (For Admin/Owner viewing)
