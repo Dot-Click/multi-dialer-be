@@ -56,7 +56,7 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId: string; userId: string; sessionId?: string }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
 
   private constructor() { }
@@ -157,27 +157,32 @@ export class DialerService {
       const call = await client.calls.create({
         to: lead.phone,
         from: envConfig.TWILIO_PHONE_NUMBER as string,
-        url: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`,
-        statusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${lead.userId}`,
+        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
       });
 
-      console.log(`Call initiated for ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
+      console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
       this.activeCalls.set(call.sid, { leadId: lead.id, userId: lead.userId, sessionId });
 
-      // Create CallRecord in DB
-      await prisma.callRecord.create({
-        data: {
-          callSid: call.sid,
-          leadId: lead.id,
-          userId: lead.userId,
-          sessionId: sessionId || null,
-          status: "initiated",
-          startTime: new Date(),
-        }
-      });
+      // 3. Create CallRecord in DB immediately
+      try {
+        await prisma.callRecord.create({
+          data: {
+            callSid: call.sid,
+            leadId: lead.id,
+            userId: lead.userId,
+            sessionId: sessionId || null,
+            status: "queued",
+            startTime: new Date(),
+          }
+        });
+        console.log(`[makeCall] SUCCESS: CallRecord created for SID: ${call.sid}`);
+      } catch (dbError: any) {
+        console.error(`[makeCall] ERROR: CallRecord creation failed: ${dbError.message}`);
+      }
     } catch (error: any) {
       console.error(`Failed to call lead ${lead.id}:`, error.message);
       await this.updateLeadStatusInDB(lead.id, "FAILED");
@@ -252,45 +257,54 @@ export class DialerService {
     const metadata = this.activeCalls.get(sid);
     if (!metadata) return;
 
-    const { leadId, userId } = metadata;
+    const { leadId, contactId, userId } = metadata;
     let dbStatus: LeadCallStatus = "CALLED";
-    console.log("twilioStatus===>", twilioStatus)
     const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
-    if (!terminalStatuses.includes(twilioStatus)) return;
+    const isTerminal = terminalStatuses.includes(twilioStatus);
 
     if (twilioStatus === "failed") dbStatus = "FAILED";
     else if (twilioStatus === "busy") dbStatus = "BUSY";
     else if (twilioStatus === "no-answer") dbStatus = "NO_ANSWER";
     else if (twilioStatus === "completed") {
       dbStatus = "CALLED";
-
-      // Clear logs from memory after saving
       this.clearTranscriptionLogs(sid);
-    };
-
-    await this.updateLeadStatusInDB(leadId, dbStatus);
-
-    // Update CallRecord in DB
-    const callRecord = await prisma.callRecord.findUnique({ where: { callSid: sid } });
-    if (callRecord) {
-      const endTime = new Date();
-      const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000);
-      await prisma.callRecord.update({
-        where: { callSid: sid },
-        data: {
-          status: twilioStatus,
-          endTime,
-          duration
-        }
-      });
     }
 
-    // Remove from active calls
-    this.activeCalls.delete(sid);
+    if (leadId) {
+      await this.updateLeadStatusInDB(leadId, dbStatus);
+    }
 
-    // CALL IS FINISHED -> Automatically trigger next call for this user
-    console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
-    this.processQueue(userId);
+    // Update CallRecord in DB
+    try {
+      const callRecord = await (prisma.callRecord as any).findUnique({ where: { callSid: sid } });
+      
+      if (callRecord) {
+        const updateData: any = { status: twilioStatus };
+        
+        if (isTerminal) {
+          const endTime = new Date();
+          const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000); // in seconds
+          updateData.endTime = endTime;
+          updateData.sessionId = metadata.sessionId;
+          updateData.duration = duration;
+          updateData.disposition = dbStatus;
+        }
+
+        await (prisma.callRecord as any).update({
+          where: { callSid: sid },
+          data: updateData
+        });
+        console.log(`[handleCallStatusUpdate] Updated CallRecord status to ${twilioStatus}${isTerminal ? ', duration: ' + updateData.duration + 's' : ''}`);
+      }
+    } catch (dbError: any) {
+      console.error(`[handleCallStatusUpdate] ERROR: CallRecord update failed: ${dbError.message}`);
+    }
+
+    if (isTerminal) {
+      this.activeCalls.delete(sid);
+      console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
+      this.processQueue(userId);
+    }
   }
 
   async handleRecordingUpdate(callSid: string, recordingUrl: string, RecordingSid: string) {
@@ -299,8 +313,8 @@ export class DialerService {
 
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
-
-
+      
+      
       const transcription = await groq.audio.transcriptions.create({
         url: cloudinaryUrl,
         model: "whisper-large-v3",
@@ -309,11 +323,16 @@ export class DialerService {
       });
       // AI Sentiments Logic should be implemented here
       const sentimentAnalysis = await this.analyzeSentiment(transcription.text);
-
+      
       // console.log("sentimentAnalysis",sentimentAnalysis)
-
-      await prisma.callAnalysis.upsert({
-        where: { callSid: callSid },
+      
+      Promise.allSettled([
+        await prisma.callRecord.update({
+          where: { callSid: callSid },
+          data: { recordingUrl: cloudinaryUrl },
+      }),
+        await prisma.callAnalysis.upsert({
+          where: { callSid: callSid },
         update: { recordingUrl: cloudinaryUrl },
         create: {
           callSid: callSid,
@@ -324,7 +343,8 @@ export class DialerService {
           aiSummary: sentimentAnalysis?.summary || "",
           transcript: transcription.text
         }
-      });
+      })
+    ])  
       console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
     } catch (error) {
       console.error("Failed to handle recording update:", error);

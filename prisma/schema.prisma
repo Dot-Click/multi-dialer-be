@@ -242,6 +242,8 @@ model Contact {
 
   @@index([dataDialerId])
   @@map("contacts")
+
+  callRecords CallRecord[]
 }
 
 model ContactEmail {
@@ -901,8 +903,10 @@ model AgentSession {
 model CallRecord {
   id           String         @id @default(uuid())
   callSid      String         @unique
-  leadId       String
-  lead         Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId       String?
+  lead         Lead?          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contactId    String?
+  contact      Contact?       @relation(fields: [contactId], references: [id], onDelete: Cascade)
   userId       String
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   sessionId    String?

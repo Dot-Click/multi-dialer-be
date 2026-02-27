@@ -13,16 +13,17 @@ const VoiceGrant = AccessToken.VoiceGrant;
 
 const fromNumber = envConfig.TWILIO_PHONE_NUMBER as string;
 export const startCalling: RequestHandler = async (req, res) => {
+  const agentId = req.params.agentId;
   try {
-    const { to } = req.body;
+    const { to, contactId } = req.body;
     if (!to) {
       errorResponse(res, { message: "Phone number is required" }, 400);
       return;
     }
     const call = await client.calls.create({
       to: to, // Lead Number (here the number is dynamic for now on testing account i've only 1 verified caller ID)
-      url: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/voice`, // This will now bridge to Agent
-      statusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/call-status`,
+      url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${agentId}`,
+      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${agentId}`,
       statusCallbackMethod: "POST",
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
       from: fromNumber,
@@ -31,6 +32,66 @@ export const startCalling: RequestHandler = async (req, res) => {
     });
 
     console.log("Single Test Call SID:", call.sid);
+
+    // PERSISTENCE: Create CallRecord immediately for manual calls
+    const userId = (req as any).user?.id;
+    const toDigits = to.replace(/\D/g, ""); // Strip non-digits
+    console.log("====================================================");
+    console.log("--- DEBUG START: startCalling Persistence ---");
+    console.log(`[startCalling] Time: ${new Date().toISOString()}`);
+    console.log(`[startCalling] User ID from Req: ${userId}`);
+    console.log(`[startCalling] Call To (original): ${to}`);
+    console.log(`[startCalling] Call To (digits): ${toDigits}`);
+
+    if (userId) {
+      // Find the phone record directly and include the contact
+      // We match the last 10 digits to handle country code variations (+1, 0, etc.)
+      const last10 = toDigits.slice(-10);
+      console.log(`[startCalling] Searching for phone containing: ${last10}`);
+
+      const phoneRecord = await (prisma.contactPhone as any).findFirst({
+        where: {
+          number: { contains: last10 },
+          contactId: contactId
+        },
+        include: { contact: true }
+      });
+
+      console.log(`[startCalling] Phone lookup result: ${phoneRecord ? 'FOUND (Phone ID: ' + phoneRecord.id + ')' : 'NOT FOUND'}`);
+
+      if (phoneRecord && (phoneRecord as any).contact) {
+        const contact = (phoneRecord as any).contact;
+        try {
+          // Register with dialerService for status updates
+          (dialerService as any).activeCalls.set(call.sid, { 
+            contactId: contact.id, 
+            userId, 
+            sessionId: null 
+          });
+
+          // Create the record. Cast to any in case schema isn't generated.
+          await (prisma.callRecord as any).create({
+            data: {
+              callSid: call.sid,
+              contactId: contact.id,
+              userId,
+              status: "queued",
+              startTime: new Date(),
+            } as any
+          });
+          console.log(`[startCalling] SUCCESS: CallRecord created for SID: ${call.sid}`);
+        } catch (dbError: any) {
+          console.error(`[startCalling] ERROR: Database insertion failed: ${dbError.message}`);
+        }
+      } else {
+        console.warn(`[startCalling] WARN: No contact found for last10 digits: ${last10} for user ${userId}`);
+      }
+    } else {
+      console.warn(`[startCalling] WARN: Skipping persistence - userId is missing in req.user`);
+    }
+    console.log("--- DEBUG END: startCalling Persistence ---");
+    console.log("====================================================");
+
     successResponse(res, 200, "Single test call lagi!", call);
     return;
   } catch (error: any) {
@@ -175,7 +236,7 @@ export const getDialerStatus: RequestHandler = async (req, res) => {
  */
 export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const twiml = new VoiceResponse();
-
+  const agentId = req.params.agentId;
   // Start Real-time Transcription
   const start = twiml.start();
   start.transcription({
@@ -191,7 +252,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   });
 
   // Bridge to the browser-based tester agent
-  dial.client('tester_agent');
+  dial.client(agentId);
 
   res.type('text/xml');
   res.send(twiml.toString());
@@ -342,25 +403,25 @@ export const buyNumber: RequestHandler = async (req, res) => {
 export const getTwilioToken: RequestHandler = async (req, res) => {
   try {
     const accountSid = envConfig.TWILIO_ACCOUNT_SID!;
-    // Note: Trial accounts can typically use AuthToken for simple tokens if needed, 
-    // but standard approach uses API Key. For this project, we'll try to generate a basic token.
     const apiKey = envConfig.TWILIO_API_KEY;
     const apiSecret = envConfig.TWILIO_API_SECRET;
+    
+    // Use the authenticated user's ID as identity
+    const identity = req.user?.id || (req.query.identity as string) || 'tester_agent';
+    
     if (!apiKey || !apiSecret) {
-      // Fallback for user: Tell them they need to add these to .env if standard token fails
-      console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env. Use Twilio Console to create them.");
+      console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env.");
     }
 
-    const identity = 'tester_agent';
     const token = new AccessToken(
       accountSid,
-      apiKey || '', // If missing, the SDK will error, prompting the user to add them
+      apiKey || '',
       apiSecret || '',
       { identity: identity }
     );
 
     const grant = new VoiceGrant({
-      incomingAllow: true, // Allow receiving bridged calls
+      incomingAllow: true,
     });
     token.addGrant(grant);
 
@@ -370,7 +431,7 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
     });
   } catch (error: any) {
     console.error("Token generation failed:", error);
-    errorResponse(res, { message: "Failed to generate token. Ensure TWILIO_API_KEY and TWILIO_API_SECRET are set." });
+    errorResponse(res, { message: "Failed to generate token." });
   }
 }
 
@@ -433,10 +494,37 @@ export const insights: RequestHandler = async (req: Request, res: Response) => {
     return;
   } catch (error: any) {
     console.error("Calls insights fetch failed:", error);
-
+    
     const statusCode = error.status || 500;
-    const message = error.code === 20003
-      ? "Twilio authentication failed. Please check your credentials."
+    const message = error.code === 20003 
+      ? "Twilio authentication failed. Please check your credentials." 
+      : error.message;
+
+    errorResponse(res, { message }, statusCode);
+    return;
+  }
+};
+
+
+export const getHistory: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const contactId = req.params.id;
+    const calls = await prisma.callRecord.findMany({
+      where: {
+        contactId: contactId,
+      },
+      include: {
+        lead: true,
+      },
+    });
+    successResponse(res, 200, "Calls history fetched successfully", calls);
+    return;
+  } catch (error: any) {
+    console.error("Calls history fetch failed:", error);
+    
+    const statusCode = error.status || 500;
+    const message = error.code === 20003 
+      ? "Twilio authentication failed. Please check your credentials." 
       : error.message;
 
     errorResponse(res, { message }, statusCode);

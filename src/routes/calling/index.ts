@@ -13,7 +13,8 @@ import {
   getTranscriptionLogs,
   getTwilioToken,
   endCall,
-  getCallsInsights
+  getCallsInsights,
+  getHistory
 } from "./controller";
 import {
   getAggregateStats,
@@ -27,10 +28,11 @@ import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 const router = Router();
 
 // Calling Control
-router.post("/test-call", startCalling);
-router.post("/end-call", endCall);
-router.post("/leads", addLeadsToDialer);
-router.get("/status", protectRoute, getDialerStatus);
+router.post("/test-call/:agentId",protectRoute,  startCalling);
+router.post("/end-call",protectRoute,  endCall);
+router.post("/leads",protectRoute,  addLeadsToDialer);
+router.get("/status",protectRoute,  getDialerStatus);
+router.get("/getHistory/:id",protectRoute,  getHistory);
 
 // Analytics & Reports
 router.get("/stats", protectRoute, getAggregateStats);
@@ -40,21 +42,21 @@ router.post("/session/start", protectRoute, startSession);
 router.post("/session/:sessionId/end", protectRoute, endSession);
 
 // Twilio Webhooks
-router.post("/webhooks/voice", handleVoiceWebhook);
-router.post("/webhooks/call-status", handleCallStatus);
-router.post("/webhooks/recording-status", handleRecordingStatus);
-router.post("/webhooks/transcription", handleTranscriptionWebhook);
+router.post("/webhooks/voice/:agentId", protectRoute, handleVoiceWebhook);
+router.post("/webhooks/call-status/:agentId", protectRoute, handleCallStatus);
+router.post("/webhooks/recording-status", protectRoute, handleRecordingStatus);
+router.post("/webhooks/transcription", protectRoute, handleTranscriptionWebhook);
 
-router.get("/transcription-logs", getTranscriptionLogs);
-router.get("/token", getTwilioToken);
+router.get("/transcription-logs", protectRoute, getTranscriptionLogs);
+router.get("/token", protectRoute, getTwilioToken);
 
 // messagings
-router.post("/send-sms", sendSms);
+router.post("/send-sms", protectRoute, sendSms);
 
 // Number Management
-router.get("/available-numbers", getAvailableUsNumbers);
-router.post("/buy-number", buyNumber);
+router.get("/available-numbers", protectRoute, getAvailableUsNumbers);
+router.post("/buy-number", protectRoute, buyNumber);
 
 //calls insights
-router.get("/calls-insights", getCallsInsights);
+router.get("/calls-insights", protectRoute, getCallsInsights);
 export default router;
