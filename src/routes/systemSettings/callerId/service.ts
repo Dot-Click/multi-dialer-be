@@ -12,6 +12,7 @@ export async function insertCallerIdInDb(payload: any, userId: string) {
     }
 
     const data = result.data;
+    const { agentIds, ...callerIdData } = data;
 
     // Get or create user's systemSettings
     let systemSettings = await prisma.system_Setting.findFirst({
@@ -30,9 +31,21 @@ export async function insertCallerIdInDb(payload: any, userId: string) {
     // Insert CallerId into DB with systemSettingId
     const callerId = await prisma.callerId.create({
       data: {
-        ...data,
+        ...callerIdData,
         systemSettingId: systemSettings.id,
+        agents: agentIds ? {
+          connect: agentIds.map((id: string) => ({ id }))
+        } : undefined
       },
+      include: {
+        agents: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          }
+        }
+      }
     });
 
     return callerId;

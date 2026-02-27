@@ -28,11 +28,11 @@ import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 const router = Router();
 
 // Calling Control
-router.post("/test-call/:agentId",protectRoute,  startCalling);
-router.post("/end-call",protectRoute,  endCall);
-router.post("/leads",protectRoute,  addLeadsToDialer);
-router.get("/status",protectRoute,  getDialerStatus);
-router.get("/getHistory/:id",protectRoute,  getHistory);
+router.post("/test-call/:agentId", protectRoute, startCalling);
+router.post("/end-call", protectRoute, endCall);
+router.post("/leads", protectRoute, addLeadsToDialer);
+router.get("/status", protectRoute, getDialerStatus);
+router.get("/getHistory/:id", protectRoute, getHistory);
 
 // Analytics & Reports
 router.get("/stats", protectRoute, getAggregateStats);
@@ -54,7 +54,7 @@ router.get("/token", protectRoute, getTwilioToken);
 router.post("/send-sms", protectRoute, sendSms);
 
 // Number Management
-router.get("/available-numbers", protectRoute, getAvailableUsNumbers);
+router.post("/available-numbers", protectRoute, getAvailableUsNumbers);
 router.post("/buy-number", protectRoute, buyNumber);
 
 //calls insights

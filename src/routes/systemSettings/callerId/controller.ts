@@ -8,15 +8,16 @@ import { updateCallerIdSchema } from "../../../schemas/callerId.schema";
 export const getAllCallerIdsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId } = req.user!;
-    
-    // Get user's systemSettings
-    const systemSettings = await prisma.system_Setting.findFirst({
+
+    // Get or create user's systemSettings
+    let systemSettings = await prisma.system_Setting.findFirst({
       where: { userId },
     });
 
     if (!systemSettings) {
-      errorResponse(res, "SystemSettings not found for user", 404);
-      return;
+      systemSettings = await prisma.system_Setting.create({
+        data: { userId }
+      });
     }
 
     // Get all CallerIds from user's systemSettings
@@ -25,6 +26,13 @@ export const getAllCallerIdsOfSpecificUser = async (req: Request, res: Response)
         systemSettingId: systemSettings.id,
       },
       include: {
+        agents: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          }
+        },
         systemSetting: {
           include: {
             user: {
@@ -49,6 +57,13 @@ export const getAllCallerIdsOfAllUsers = async (req: Request, res: Response): Pr
     // Get all CallerIds from all users
     const callerIds = await prisma.callerId.findMany({
       include: {
+        agents: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          }
+        },
         systemSetting: {
           include: {
             user: {
@@ -73,22 +88,30 @@ export const getCallerIdById = async (req: Request, res: Response): Promise<void
     const { id } = req.params;
     const { id: userId } = req.user!;
 
-    // Get user's systemSettings
-    const systemSettings = await prisma.system_Setting.findFirst({
+    // Get or create user's systemSettings
+    let systemSettings = await prisma.system_Setting.findFirst({
       where: { userId },
     });
 
     if (!systemSettings) {
-      errorResponse(res, "SystemSettings not found for user", 404);
-      return;
+      systemSettings = await prisma.system_Setting.create({
+        data: { userId }
+      });
     }
 
     const callerId = await prisma.callerId.findFirst({
-      where: { 
+      where: {
         id,
         systemSettingId: systemSettings.id, // Ensure CallerId belongs to user's systemSettings
       },
       include: {
+        agents: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          }
+        },
         systemSetting: {
           include: {
             user: {
@@ -102,7 +125,7 @@ export const getCallerIdById = async (req: Request, res: Response): Promise<void
         },
       },
     });
-    
+
     if (!callerId) {
       errorResponse(res, "CallerId not found", 404);
       return;
@@ -126,7 +149,7 @@ export const createCallerId = async (req: Request, res: Response): Promise<void>
       errorResponse(res, "User not found", 404);
       return;
     }
-      
+
     // Ensure req.body exists and is an object
     if (!req.body || typeof req.body !== 'object' || Object.keys(req.body).length === 0) {
       errorResponse(res, {
@@ -141,7 +164,7 @@ export const createCallerId = async (req: Request, res: Response): Promise<void>
       }, 400);
       return;
     }
-    
+
     const payload = { ...req.body };
     const newCallerId = await insertCallerIdInDb(payload, userId);
 
@@ -162,9 +185,9 @@ export const createCallerId = async (req: Request, res: Response): Promise<void>
         },
       },
     });
-    
+
     successResponse(res, 201, "CallerId created", populatedCallerId);
-    
+
   } catch (error: any) {
     errorResponse(res, error.message || error, 500);
   }
@@ -197,14 +220,15 @@ export const updateCallerId = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Get user's systemSettings
-    const systemSettings = await prisma.system_Setting.findFirst({
+    // Get or create user's systemSettings
+    let systemSettings = await prisma.system_Setting.findFirst({
       where: { userId },
     });
 
     if (!systemSettings) {
-      errorResponse(res, "SystemSettings not found for user", 404);
-      return;
+      systemSettings = await prisma.system_Setting.create({
+        data: { userId }
+      });
     }
 
     // Check if CallerId belongs to the user's systemSettings
@@ -223,14 +247,25 @@ export const updateCallerId = async (req: Request, res: Response): Promise<void>
     }
 
     const data = result.data;
+    const { agentIds, ...updateData } = data;
 
     // Update the CallerId
     const updatedCallerId = await prisma.callerId.update({
       where: { id },
       data: {
-        ...data,
+        ...updateData,
+        agents: agentIds ? {
+          set: agentIds.map((agentId: string) => ({ id: agentId }))
+        } : undefined
       },
       include: {
+        agents: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          }
+        },
         systemSetting: {
           include: {
             user: {
@@ -246,7 +281,7 @@ export const updateCallerId = async (req: Request, res: Response): Promise<void>
     });
 
     successResponse(res, 200, "CallerId updated", updatedCallerId);
-    
+
   } catch (error: any) {
     // Check if it's a Prisma error related to record not found
     if (error.code === 'P2025') {
@@ -289,14 +324,15 @@ export const deleteCallerId = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Get user's systemSettings
-    const systemSettings = await prisma.system_Setting.findFirst({
+    // Get or create user's systemSettings
+    let systemSettings = await prisma.system_Setting.findFirst({
       where: { userId },
     });
 
     if (!systemSettings) {
-      errorResponse(res, "SystemSettings not found for user", 404);
-      return;
+      systemSettings = await prisma.system_Setting.create({
+        data: { userId }
+      });
     }
 
     // Check if CallerId belongs to the user's systemSettings
@@ -311,7 +347,7 @@ export const deleteCallerId = async (req: Request, res: Response): Promise<void>
     });
 
     successResponse(res, 200, "CallerId deleted successfully", null);
-    
+
   } catch (error: any) {
     // Check if it's a Prisma error related to record not found
     if (error.code === 'P2025') {

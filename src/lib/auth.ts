@@ -42,6 +42,7 @@ export const auth = betterAuth({
       role: { type: "string", required: false },
       fullName: { type: "string", required: false },
       status: { type: "string", required: false },
+      createdById: { type: "string", required: false },
     },
   },
   trustedOrigins: [
