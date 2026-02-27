@@ -63,10 +63,10 @@ export const startCalling: RequestHandler = async (req, res) => {
         const contact = (phoneRecord as any).contact;
         try {
           // Register with dialerService for status updates
-          (dialerService as any).activeCalls.set(call.sid, { 
-            contactId: contact.id, 
-            userId, 
-            sessionId: null 
+          (dialerService as any).activeCalls.set(call.sid, {
+            contactId: contact.id,
+            userId,
+            sessionId: null
           });
 
           // Create the record. Cast to any in case schema isn't generated.
@@ -351,12 +351,29 @@ export const voiceCall: RequestHandler = async (req, res) => {
 
 export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
   try {
-    const numbers = await client.availablePhoneNumbers("US").local.list({
-      limit: 10
+    const { countryCode, cityName, state } = req.body;
+
+    console.log("countryCode", countryCode);
+    console.log("cityName", cityName);
+    console.log("state", state);
+
+    const numbers = await client.availablePhoneNumbers(countryCode || "US").local.list({
+      limit: 10,
+      inLocality: cityName,
+      inRegion: state,      
     });
+
+    if (!numbers) {
+      errorResponse(res, { message: "No numbers found" });
+      return;
+    }
+
+    console.log("numbers", numbers);
+
     successResponse(res, 200, "Available numbers fetched successfully", numbers);
     return;
   } catch (error: any) {
+    console.log("error", error);
     console.error("Available numbers fetch failed:", error);
     errorResponse(res, { message: error.message });
     return;
@@ -382,8 +399,8 @@ export const buyNumber: RequestHandler = async (req, res) => {
       label: label || number.friendlyName || phoneNumber,
       countryCode: countryCode || "US", // Default to US if not provided
       callerId: number.phoneNumber,
-      sid: number.sid,
-      friendlyName: number.friendlyName,
+      twillioSid: number.sid,
+      twillioNumber: number.phoneNumber,
     };
 
     const newCallerId = await insertCallerIdInDb(callerIdPayload, userId);
@@ -405,10 +422,10 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
     const accountSid = envConfig.TWILIO_ACCOUNT_SID!;
     const apiKey = envConfig.TWILIO_API_KEY;
     const apiSecret = envConfig.TWILIO_API_SECRET;
-    
+
     // Use the authenticated user's ID as identity
     const identity = req.user?.id || (req.query.identity as string) || 'tester_agent';
-    
+
     if (!apiKey || !apiSecret) {
       console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env.");
     }
@@ -494,10 +511,10 @@ export const insights: RequestHandler = async (req: Request, res: Response) => {
     return;
   } catch (error: any) {
     console.error("Calls insights fetch failed:", error);
-    
+
     const statusCode = error.status || 500;
-    const message = error.code === 20003 
-      ? "Twilio authentication failed. Please check your credentials." 
+    const message = error.code === 20003
+      ? "Twilio authentication failed. Please check your credentials."
       : error.message;
 
     errorResponse(res, { message }, statusCode);
@@ -521,10 +538,10 @@ export const getHistory: RequestHandler = async (req: Request, res: Response) =>
     return;
   } catch (error: any) {
     console.error("Calls history fetch failed:", error);
-    
+
     const statusCode = error.status || 500;
-    const message = error.code === 20003 
-      ? "Twilio authentication failed. Please check your credentials." 
+    const message = error.code === 20003
+      ? "Twilio authentication failed. Please check your credentials."
       : error.message;
 
     errorResponse(res, { message }, statusCode);
