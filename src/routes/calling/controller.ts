@@ -22,8 +22,8 @@ export const startCalling: RequestHandler = async (req, res) => {
     }
     const call = await client.calls.create({
       to: to, // Lead Number (here the number is dynamic for now on testing account i've only 1 verified caller ID)
-      url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${agentId}`,
-      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${agentId}`,
+      url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentId}`,
+      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
       statusCallbackMethod: "POST",
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
       from: fromNumber,
@@ -236,28 +236,82 @@ export const getDialerStatus: RequestHandler = async (req, res) => {
  */
 export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const twiml = new VoiceResponse();
-  const agentId = req.params.agentId;
+  const body = req.body;
+  
+  // Robust parameter extraction
+  const to = body.To || req.query.To;
+  const from = body.From || req.query.From;
+  const caller = body.Caller || req.query.Caller || "";
+  const agentId = body.agentId || req.query.agentId || req.params.agentId;
+
+  console.log("================= Voice Webhook Dispatcher ================");
+  console.log("Caller:", caller);
+  console.log("To:", to);
+  console.log("From:", from);
+  console.log("AgentId:", agentId);
+
+  // PERSISTENCE: Create CallRecord for browser-initiated calls if not present
+  if (caller.startsWith("client:") && agentId) {
+    try {
+      // Register with dialerService for status tracking
+      (dialerService as any).activeCalls.set(body.CallSid, { 
+        userId: agentId, 
+        sessionId: null 
+      });
+
+      await prisma.callRecord.create({
+        data: {
+          callSid: body.CallSid,
+          userId: agentId,
+          status: "in-progress",
+          startTime: new Date(),
+        }
+      });
+      console.log(`[VoiceWebhook] SUCCESS: CallRecord created for Browser Call: ${body.CallSid}`);
+    } catch (dbError: any) {
+      console.error(`[VoiceWebhook] ERROR: CallRecord creation failed: ${dbError.message}`);
+    }
+  }
+
   // Start Real-time Transcription
   const start = twiml.start();
   start.transcription({
-    track: 'both_tracks',
-    statusCallbackUrl: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/transcription`,
+    track: "both_tracks",
+    statusCallbackUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/transcription`,
   });
 
-  twiml.say('Please wait while we connect you to an agent.');
+  // CASE A: Call initiated FROM the Browser SDK (TwiML App flow)
+  // In this case, 'Caller' starts with 'client:'
+  if (caller.startsWith("client:")) {
+    console.log("[VoiceWebhook] Browser-to-PSTN Call detected");
+    const dial = twiml.dial({
+      callerId: from, // This is the Twilio number assigned to the app/device
+      record: "record-from-answer-dual",
+      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
+    });
+    dial.number(to); // Dial the actual phone number
+  } 
+  
+  // CASE B: Bridged Call or Inbound (Server-side startCalling or Direct Inbound)
+  // We want to dial the Agent in the browser.
+  else {
+    console.log("[VoiceWebhook] PSTN-to-Browser (Bridge) Call detected");
+    twiml.say("Please wait while we connect you to an agent.");
+    const dial = twiml.dial({
+      callerId: from, // Keep the original caller ID
+      record: "record-from-answer-dual",
+      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
+    });
+    
+    // Bridge to the specific agent identity
+    dial.client(agentId || "tester_agent");
+  }
 
-  const dial = twiml.dial({
-    record: 'record-from-answer-dual', // Records both channels
-    recordingStatusCallback: `${envConfig.BACKEND_URL || 'https://multi-dialer-be-production.up.railway.app'}/api/calling/webhooks/recording-status`,
-  });
-
-  // Bridge to the browser-based tester agent
-  dial.client(agentId);
-
-  res.type('text/xml');
+  res.type("text/xml");
   res.send(twiml.toString());
   return;
 };
+
 
 /**
  * RecordingStatus Webhook: Triggered when recording is ready
@@ -438,6 +492,7 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
     );
 
     const grant = new VoiceGrant({
+      outgoingApplicationSid: "AP2dfe20dda942797074ca416be8142b9c", 
       incomingAllow: true,
     });
     token.addGrant(grant);
@@ -445,6 +500,7 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
     successResponse(res, 200, "Token generated successfully", {
       identity: identity,
       token: token.toJwt(),
+      completeToken: token
     });
   } catch (error: any) {
     console.error("Token generation failed:", error);
