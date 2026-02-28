@@ -243,12 +243,14 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const from = body.From || req.query.From;
   const caller = body.Caller || req.query.Caller || "";
   const agentId = body.agentId || req.query.agentId || req.params.agentId;
+  const contactId = body.contactId || req.query.contactId || req.params.contactId;
 
   console.log("================= Voice Webhook Dispatcher ================");
   console.log("Caller:", caller);
   console.log("To:", to);
   console.log("From:", from);
   console.log("AgentId:", agentId);
+  console.log("ContactId:", contactId);
 
   // PERSISTENCE: Create CallRecord for browser-initiated calls if not present
   if (caller.startsWith("client:") && agentId) {
@@ -256,14 +258,16 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       // Register with dialerService for status tracking
       (dialerService as any).activeCalls.set(body.CallSid, { 
         userId: agentId, 
-        sessionId: null 
+        sessionId: null,
+        isBrowserCall: true 
       });
 
       await prisma.callRecord.create({
         data: {
           callSid: body.CallSid,
           userId: agentId,
-          status: "in-progress",
+          contactId: contactId,
+          status: "initiated",
           startTime: new Date(),
         }
       });
@@ -284,12 +288,17 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   // In this case, 'Caller' starts with 'client:'
   if (caller.startsWith("client:")) {
     console.log("[VoiceWebhook] Browser-to-PSTN Call detected");
+    twiml.say("Please wait while we are connecting your call.");
     const dial = twiml.dial({
       callerId: from, // This is the Twilio number assigned to the app/device
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
-    dial.number(to); // Dial the actual phone number
+    dial.number({
+      statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
+      statusCallbackMethod: "POST",
+    }, to); // Dial the actual phone number
   } 
   
   // CASE B: Bridged Call or Inbound (Server-side startCalling or Direct Inbound)
@@ -304,7 +313,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     });
     
     // Bridge to the specific agent identity
-    dial.client(agentId || "tester_agent");
+    dial.client(agentId);
   }
 
   res.type("text/xml");
@@ -381,19 +390,36 @@ export const getTranscriptionLogs: RequestHandler = async (req, res) => {
  */
 export const handleCallStatus: RequestHandler = async (req, res) => {
   try {
-    const { CallSid, CallStatus } = req.body;
-    console.log(`Call ${CallSid} status update: ${CallStatus}`);
+    const { CallSid, CallStatus, ParentCallSid } = req.body;
 
-    // Update DB and Memory Queue
-    await dialerService.handleCallStatusUpdate(CallSid, CallStatus);
+    console.log(
+      `Call ${CallSid} status update: ${CallStatus}` +
+      (ParentCallSid ? ` (Parent: ${ParentCallSid})` : '')
+    );
+
+    // 🔥 ONLY propagate CHILD leg updates to parent
+    if (ParentCallSid) {
+      await dialerService.handleCallStatusUpdate(
+        ParentCallSid,
+        CallStatus,
+        true
+      );
+    }
+
+    // Optional: handle standalone calls (no parent)
+    if (!ParentCallSid) {
+      await dialerService.handleCallStatusUpdate(
+        CallSid,
+        CallStatus,
+        false
+      );
+    }
 
     successResponse(res, 200, "Call status updated", req.body);
-    return;
   } catch (error: any) {
     errorResponse(res, { message: error.message });
-    return;
   }
-}
+};
 
 export const voiceCall: RequestHandler = async (req, res) => {
   const twiml = new VoiceResponse();
@@ -581,14 +607,19 @@ export const insights: RequestHandler = async (req: Request, res: Response) => {
 
 export const getHistory: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const contactId = req.params.id;
+    const agentId = req.user?.id;
     const calls = await prisma.callRecord.findMany({
       where: {
-        contactId: contactId,
+        userId: agentId,
+        recordingUrl: {not: null}
       },
       include: {
-        lead: true,
+        contact: true,
       },
+      orderBy:{
+        createdAt: 'desc'
+      },
+      take: 10
     });
     successResponse(res, 200, "Calls history fetched successfully", calls);
     return;
@@ -604,3 +635,30 @@ export const getHistory: RequestHandler = async (req: Request, res: Response) =>
     return;
   }
 };
+
+export const getCallStatus: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { sid } = req.params;
+    if (!sid) {
+       errorResponse(res, { message: "Call SID is required" }, 400);
+       return;
+    }
+
+    const callRecord = await prisma.callRecord.findUnique({
+      where: { callSid: sid },
+    });
+
+    if (!callRecord) {
+       errorResponse(res, { message: "Call record not found" }, 404);
+       return;
+    }
+
+    successResponse(res, 200, "Call status fetched successfully", { status: callRecord.status });
+    return;
+  } catch (error: any) {
+    console.error("Get call status failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+

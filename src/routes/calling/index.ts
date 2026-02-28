@@ -14,7 +14,8 @@ import {
   getTwilioToken,
   endCall,
   getCallsInsights,
-  getHistory
+  getHistory,
+  getCallStatus
 } from "./controller";
 import {
   getAggregateStats,
@@ -31,8 +32,8 @@ const router = Router();
 router.post("/test-call/:agentId", protectRoute, startCalling);
 router.post("/end-call", protectRoute, endCall);
 router.post("/leads", protectRoute, addLeadsToDialer);
-router.get("/status", protectRoute, getDialerStatus);
-router.get("/getHistory/:id", protectRoute, getHistory);
+router.get("/status/:sid", protectRoute, getCallStatus);
+router.get("/getHistory", protectRoute, getHistory);
 
 // Analytics & Reports
 router.get("/stats", protectRoute, getAggregateStats);
