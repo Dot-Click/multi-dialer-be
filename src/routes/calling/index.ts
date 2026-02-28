@@ -14,7 +14,8 @@ import {
   getTwilioToken,
   endCall,
   getCallsInsights,
-  getHistory
+  getHistory,
+  getCallStatus
 } from "./controller";
 import {
   getAggregateStats,
@@ -31,8 +32,8 @@ const router = Router();
 router.post("/test-call/:agentId", protectRoute, startCalling);
 router.post("/end-call", protectRoute, endCall);
 router.post("/leads", protectRoute, addLeadsToDialer);
-router.get("/status", protectRoute, getDialerStatus);
-router.get("/getHistory/:id", protectRoute, getHistory);
+router.get("/status/:sid", protectRoute, getCallStatus);
+router.get("/getHistory", protectRoute, getHistory);
 
 // Analytics & Reports
 router.get("/stats", protectRoute, getAggregateStats);
@@ -42,13 +43,13 @@ router.post("/session/start", protectRoute, startSession);
 router.post("/session/:sessionId/end", protectRoute, endSession);
 
 // Twilio Webhooks
-router.post("/webhooks/voice/:agentId", protectRoute, handleVoiceWebhook);
-router.post("/webhooks/call-status/:agentId", protectRoute, handleCallStatus);
-router.post("/webhooks/recording-status", protectRoute, handleRecordingStatus);
-router.post("/webhooks/transcription", protectRoute, handleTranscriptionWebhook);
+router.post("/webhooks/voice",  handleVoiceWebhook);
+router.post("/webhooks/call-status",  handleCallStatus);
+router.post("/webhooks/recording-status", handleRecordingStatus);
+router.post("/webhooks/transcription", handleTranscriptionWebhook);
 
-router.get("/transcription-logs", protectRoute, getTranscriptionLogs);
-router.get("/token", protectRoute, getTwilioToken);
+router.get("/transcription-logs", getTranscriptionLogs);
+router.get("/token",protectRoute, getTwilioToken);
 
 // messagings
 router.post("/send-sms", protectRoute, sendSms);
