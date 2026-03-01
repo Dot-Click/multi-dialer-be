@@ -457,8 +457,9 @@ model Signature {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // If signature is per-user/admin:
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model CallbackPrompt {
@@ -753,19 +754,30 @@ model PlanFeature {
 }
 
 model CallerId {
-  id              String         @id @default(cuid())
-  label           String
-  countryCode     String
-  numberOfLines   Int            @default(1)
-  systemSettingId String
-  twillioNumber   String?
-  twillioSid      String?
-  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
-  createdAt       DateTime       @default(now())
-  agents          User[]
-  updatedAt       DateTime       @updatedAt
-  dialerType      DialerType?    @default(PREDICTIVE)
-  aiPacing        Boolean?       @default(false)
+  id                        String         @id @default(cuid())
+  label                     String
+  availableTo               TeamAccess[]
+  onHoldRecording1          String?
+  onHoldRecording2          String?
+  ivrRecording              String?
+  answeringMachineRecording String?
+  enableAutoPause           Boolean        @default(false)
+  enableRecording           Boolean        @default(false)
+  sendOutlookAppointment    Boolean        @default(false)
+  allowDncCalls             Boolean        @default(false)
+  callerId                  String?
+  countryCode               String
+  numberOfLines             Int            @default(1)
+  ringTime                  Int            @default(30)
+  callScriptId              String?
+  sendEmail                 Boolean        @default(false)
+  sendText                  Boolean        @default(false)
+  systemSettingId           String
+  twillioNumber             String? 
+  twillioSid                String? 
+  systemSetting             System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
 
   @@map("caller_id")
 }
@@ -820,11 +832,11 @@ model CallSettings {
 }
 
 model CallAnalysis {
-  id           String   @id @default(uuid())
-  callSid      String   @unique
-  leadId       String
-  sentiment    String
-  confidence   Float
+  id         String   @id @default(uuid())
+  callSid    String   @unique
+  leadId     String
+  sentiment  String   // POSITIVE | NEUTRAL | NEGATIVE
+  confidence Float
   transcript   String
   aiSummary    String?
   recordingUrl String?
@@ -914,9 +926,9 @@ model AgentSession {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   startTime DateTime  @default(now())
   endTime   DateTime?
-  duration  Int?
-  type      String    @default("C2C")
-  listId    String?
+  duration  Int?     // In seconds
+  type      String   @default("C2C") // e.g., C2C Session
+  listId    String?  // The contact list dialed during this session
 
   calls     CallRecord[]
   createdAt DateTime     @default(now())
@@ -926,23 +938,23 @@ model AgentSession {
 }
 
 model CallRecord {
-  id        String        @id @default(uuid())
-  callSid   String        @unique
-  leadId    String?
-  lead      Lead?         @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  contactId String?
-  contact   Contact?      @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sessionId String?
-  session   AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-
-  startTime   DateTime        @default(now())
-  endTime     DateTime?
-  duration    Int?
-  status      String
-  disposition LeadCallStatus?
-
+  id           String         @id @default(uuid())
+  callSid      String         @unique
+  leadId       String?
+  lead         Lead?          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contactId    String?
+  contact      Contact?       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId    String?
+  session      AgentSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  
+  startTime    DateTime       @default(now())
+  endTime      DateTime?
+  duration     Int?           // In seconds
+  status       String         // Twilio status: completed, failed, etc.
+  disposition  LeadCallStatus?
+  
   recordingUrl String?
   transcript   String? @db.Text
 

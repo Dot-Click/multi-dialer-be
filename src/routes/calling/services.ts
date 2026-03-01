@@ -56,7 +56,7 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
 
   private constructor() { }
@@ -253,9 +253,16 @@ export class DialerService {
     return JSON.parse(completion.choices[0].message.content!);
   }
 
-  async handleCallStatusUpdate(sid: string, twilioStatus: string) {
+  async handleCallStatusUpdate(sid: string, twilioStatus: string, isChildLeg: boolean = false) {
     const metadata = this.activeCalls.get(sid);
     if (!metadata) return;
+
+    // PROTECTION: For browser calls, ignore 'in-progress' from the parent leg (agent picking up)
+    // We only want 'in-progress' when the child leg (customer) picking up (isChildLeg = true)
+    if (metadata.isBrowserCall && !isChildLeg && (twilioStatus === "in-progress" || twilioStatus === "answered")) {
+      console.log(`[handleCallStatusUpdate] Ignoring premature ${twilioStatus} from parent leg of browser call: ${sid}`);
+      return;
+    }
 
     const { leadId, contactId, userId } = metadata;
     let dbStatus: LeadCallStatus = "CALLED";
