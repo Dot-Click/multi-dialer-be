@@ -6,6 +6,7 @@ import smsRoutes from "./library/sms"
 import emailRoutes from "./library/email"
 import signatureRoutes from "./library/signatures"
 import mediaCenterRoutes from "./library/mediaCenter"
+import recordingsRoutes from "./library/recordings";
 import callerIdRoutes from "./systemSettings/callerId"
 import callSettingsRoutes from "./systemSettings/callSettings"
 import callbackPromptRoutes from "./library/callBackPrompt";
@@ -37,6 +38,7 @@ router.use("/library/sms", protectRoute, smsRoutes)
 router.use("/library/email", protectRoute, emailRoutes)
 router.use("/library/signatures", protectRoute, signatureRoutes)
 router.use("/library/media-center", protectRoute, mediaCenterRoutes)
+router.use("/library/recordings", protectRoute, recordingsRoutes)
 router.use("/library/callback-prompt", protectRoute, callbackPromptRoutes);
 
 
