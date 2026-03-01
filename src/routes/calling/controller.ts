@@ -440,17 +440,27 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     const numbers = await client.availablePhoneNumbers(countryCode || "US").local.list({
       limit: 10,
       inLocality: cityName,
-      inRegion: state,      
+      inRegion: state,
     });
+
+    const pricing = await client.pricing.v1
+      .phoneNumbers
+      .countries(countryCode)
+      .fetch();
 
     if (!numbers) {
       errorResponse(res, { message: "No numbers found" });
       return;
     }
 
-    console.log("numbers", numbers);
-
-    successResponse(res, 200, "Available numbers fetched successfully", numbers);
+    
+    const data = {
+      numbers,
+      pricing
+    }
+    
+    console.log("numbers", data);
+    successResponse(res, 200, "Available numbers fetched successfully", data);
     return;
   } catch (error: any) {
     console.log("error", error);
