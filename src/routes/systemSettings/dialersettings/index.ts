@@ -1,18 +1,17 @@
 import { Router } from "express";
 import {
-  createDialerSettings,
+  // createDialerSettings,
   getMyDialerSettings,
   getAllDialerSettings,
   getDialerSettingById,
-  updateDialerSettings,
-  deleteDialerSettings
+  // updateDialerSettings,
+  deleteDialerSettings,
+  upsertDialerSettings
 } from "./controller";
 import { protectRoute } from "../../../middlewares/auth.middleware";
 
 const router = Router();
 
-// 1. Create Settings (POST /create)
-router.post("/create", protectRoute, createDialerSettings);
 
 // 2. Get All Settings (GET /all)
 // Admin/Owner sees everyone's settings
@@ -28,7 +27,7 @@ router.get("/:id", protectRoute, getDialerSettingById);
 
 // 5. Update Settings (PUT /:id)
 // Strict: Can only update YOUR OWN setting
-router.put("/:id", protectRoute, updateDialerSettings);
+router.put("/", protectRoute, upsertDialerSettings);
 
 // 6. Delete Settings (DELETE /:id)
 // Strict: Can only delete YOUR OWN setting
