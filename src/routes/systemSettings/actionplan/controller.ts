@@ -17,6 +17,7 @@ export const ActionPlanController = {
       const result = await ActionPlanService.getAll(settings.id);
       res.status(200).json({ success: true, data: result });
     } catch (error: any) {
+      console.log(error)
       res.status(500).json({ success: false, message: error.message });
     }
   },
