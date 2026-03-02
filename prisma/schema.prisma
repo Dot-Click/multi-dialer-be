@@ -189,11 +189,9 @@ model User {
 
   calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
   calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
-
   createdById  String?
   createdBy    User?   @relation("UserCreator", fields: [createdById], references: [id])
   createdUsers User[]  @relation("UserCreator")
-
   callerIds CallerId[]
   companies Company[]
 
@@ -775,13 +773,16 @@ model CallerId {
 // the slot just becomes null — CallSettings row is never broken.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL SETTINGS
+// The 4 recording slots now reference Recording rows via FK instead of
+// storing raw strings. onDelete: SetNull means if a recording is deleted,
+// the slot just becomes null — CallSettings row is never broken.
+// ─────────────────────────────────────────────────────────────────────────────
+
 model CallSettings {
   id    String @id @default(cuid())
   label String
-
-  // ── Recording slots ──────────────────────────────────────────────
-  // Admin picks from their own Recording library for each slot.
-  // All are optional — a setting can have 0, 1, or all 4 assigned.
 
   onHoldRecording1Id String?
   onHoldRecording1   Recording? @relation("OnHoldRecording1", fields: [onHoldRecording1Id], references: [id], onDelete: SetNull)
@@ -794,8 +795,6 @@ model CallSettings {
 
   answeringMachineRecordingId String?
   answeringMachineRecording   Recording? @relation("AnsweringMachineRecording", fields: [answeringMachineRecordingId], references: [id], onDelete: SetNull)
-
-  // ── Other settings ───────────────────────────────────────────────
   enableAutoPause        Boolean @default(false)
   enableRecording        Boolean @default(false)
   sendOutlookAppointment Boolean @default(false)
