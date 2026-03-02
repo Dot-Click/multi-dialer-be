@@ -142,18 +142,13 @@ enum RecordingType {
   EMAIL_VIDEO
 }
 
-// What purpose/slot this recording serves — helps the UI filter/categorize
 enum RecordingSlot {
   ON_HOLD
   IVR
   ANSWERING_MACHINE
   VOICEMAIL
-  GENERAL // uploaded but not yet categorized
+  GENERAL
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// USER
-// ─────────────────────────────────────────────────────────────────────────────
 
 model User {
   id       String   @id @default(uuid())
@@ -194,11 +189,9 @@ model User {
 
   calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
   calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
-
   createdById  String?
   createdBy    User?   @relation("UserCreator", fields: [createdById], references: [id])
   createdUsers User[]  @relation("UserCreator")
-
   callerIds CallerId[]
   companies Company[]
 
@@ -210,28 +203,24 @@ model User {
   // All recordings uploaded by this admin — reusable across any settings
   recordings Recording[]
 
+  contactLists   ContactList[]
+  contactFolders CotactFolder[]
+  contactGroups  ContactGroups[]
+
   @@map("users")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RECORDING
-// Uploaded once by an admin. Reusable across CallSettings, CallerId,
-// or any future model — all naturally scoped by userId (per-tenant).
-// ─────────────────────────────────────────────────────────────────────────────
-
 model Recording {
   id       String        @id @default(uuid())
-  name     String        // Human-readable label shown in dropdowns
-  url      String        // Storage URL (S3, Cloudinary, etc.)
-  fileSize Int?          // bytes
-  duration Int?          // seconds
-  mimeType String?       // audio/mpeg, audio/wav, etc.
-  slot     RecordingSlot @default(GENERAL) // Helps UI pre-filter by purpose
+  name     String
+  url      String
+  fileSize Int?
+  duration Int?
+  mimeType String?
+  slot     RecordingSlot @default(GENERAL)
 
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Back-relations — same recording can be assigned to multiple CallSettings
+  userId                 String
+  user                   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   usedAsOnHold1          CallSettings[] @relation("OnHoldRecording1")
   usedAsOnHold2          CallSettings[] @relation("OnHoldRecording2")
   usedAsIvr              CallSettings[] @relation("IvrRecording")
@@ -243,8 +232,6 @@ model Recording {
   @@map("recordings")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 model ContactList {
   id         String   @id @default(cuid())
   name       String
@@ -252,6 +239,9 @@ model ContactList {
   contactIds String[] @default([])
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("lists")
 }
@@ -263,6 +253,9 @@ model CotactFolder {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@map("folders")
 }
 
@@ -272,6 +265,9 @@ model ContactGroups {
   contactIds String[] @default([])
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("groups")
 }
@@ -457,7 +453,6 @@ model Signature {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // If signature is per-user/admin:
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -767,8 +762,16 @@ model CallerId {
   updatedAt       DateTime       @updatedAt
   dialerType      DialerType?    @default(PREDICTIVE)
   aiPacing        Boolean?       @default(false)
+
   @@map("caller_id")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL SETTINGS
+// The 4 recording slots now reference Recording rows via FK instead of
+// storing raw strings. onDelete: SetNull means if a recording is deleted,
+// the slot just becomes null — CallSettings row is never broken.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CALL SETTINGS
@@ -781,10 +784,6 @@ model CallSettings {
   id    String @id @default(cuid())
   label String
 
-  // ── Recording slots ──────────────────────────────────────────────
-  // Admin picks from their own Recording library for each slot.
-  // All are optional — a setting can have 0, 1, or all 4 assigned.
-
   onHoldRecording1Id String?
   onHoldRecording1   Recording? @relation("OnHoldRecording1", fields: [onHoldRecording1Id], references: [id], onDelete: SetNull)
 
@@ -796,8 +795,6 @@ model CallSettings {
 
   answeringMachineRecordingId String?
   answeringMachineRecording   Recording? @relation("AnsweringMachineRecording", fields: [answeringMachineRecordingId], references: [id], onDelete: SetNull)
-
-  // ── Other settings ───────────────────────────────────────────────
   enableAutoPause        Boolean @default(false)
   enableRecording        Boolean @default(false)
   sendOutlookAppointment Boolean @default(false)
@@ -968,6 +965,8 @@ model ActionPlan {
   removeOnTriggerExit Boolean           @default(false)
 
   endLogic           ActionEndLogic @default(DO_NOTHING)
+  endLogicValue      String? // For storing repeat day or other values
+  nextPlanId         String?
   assignGroupEnabled Boolean        @default(false)
   assignGroupId      String?
 
