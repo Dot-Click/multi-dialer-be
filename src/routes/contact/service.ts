@@ -289,26 +289,27 @@ export async function deleteContactFromDb(id: string, userId: string) {
 export async function createContactListInDb(payload: {
   name: string;
   contactIds: string[];
-}) {
+}, userId: string) {
   return prisma.contactList.create({
     data: {
       name: payload.name,
       contactIds: payload.contactIds,
+      userId,
     },
   });
 }
 
 export async function updateContactListInDb(id: string, payload: {
-  name: string;
-  contactIds: string[];
+  name?: string;
+  contactIds?: string[];
 }) {
   return prisma.contactList.update({
     where: { id },
     data: {
       name: payload.name,
-      contactIds: {
+      contactIds: payload.contactIds ? {
         push: payload.contactIds,
-      },
+      } : undefined,
     },
   });
 }
@@ -447,26 +448,27 @@ export async function createContactFolderInDb(
     data: {
       name: payload.name,
       listIds: payload.listIds,
+      userId,
     },
   });
 }
 
 export async function updateContactFolderInDb(id: string, payload: {
-  name: string;
-  listIds: string[];
+  name?: string;
+  listIds?: string[];
 }) {
   return prisma.cotactFolder.update({
     where: { id },
     data: {
       name: payload.name,
-      listIds: {
+      listIds: payload.listIds ? {
         push: payload.listIds,
-      },
+      } : undefined,
     },
   });
 }
 
-export async function createContactGroupInDb(payload: {
+export async function createContactGroupInDb(userId: string, payload: {
   name: string;
   contactIds: string[];
 }) {
@@ -474,6 +476,7 @@ export async function createContactGroupInDb(payload: {
     data: {
       name: payload.name,
       contactIds: payload.contactIds,
+      userId,
     },
   });
 }
@@ -506,20 +509,23 @@ export async function deleteContactGroupFromDb(id: string) {
   return prisma.contactGroups.delete({ where: { id } });
 }
 
-export async function getAllContactListsFromDb() {
+export async function getAllContactListsFromDb(userId: string) {
   return prisma.contactList.findMany({
+    where: { userId },
     orderBy: { createdAt: "desc" },
   });
 }
 
-export async function getAllContactFoldersFromDb() {
+export async function getAllContactFoldersFromDb(userId: string) {
   return prisma.cotactFolder.findMany({
+    where: { userId },
     orderBy: { createdAt: "desc" },
   });
 }
 
-export async function getAllContactGroupsFromDb() {
+export async function getAllContactGroupsFromDb(userId: string) {
   return prisma.contactGroups.findMany({
+    where: { userId },
     orderBy: { createdAt: "desc" },
   });
 }
