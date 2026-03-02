@@ -109,7 +109,7 @@ export const createContactList = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const contactList = await createContactListInDb(result.data);
+    const contactList = await createContactListInDb(result.data, (req as any).user.id);
     successResponse(res, 201, "Contact list created", contactList);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -146,7 +146,7 @@ export const createContactFolder = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const contactFolder = await createContactFolderInDb(result.data);
+    const contactFolder = await createContactFolderInDb(result.data, (req as any).user.id);
     successResponse(res, 201, "Contact folder created", contactFolder);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -185,7 +185,9 @@ export const createContactGroup = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const contactGroup = await createContactGroupInDb(result.data);
+    const userId = (req as any).user.id;
+
+    const contactGroup = await createContactGroupInDb(userId, result.data);
     successResponse(res, 201, "Contact group created", contactGroup);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -258,7 +260,7 @@ export const deleteContactGroup = async (req: Request, res: Response): Promise<v
 
 export const getAllContactLists = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contactLists = await getAllContactListsFromDb();
+    const contactLists = await getAllContactListsFromDb((req as any).user.id);
     successResponse(res, 200, "Contact lists fetched", contactLists);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -267,7 +269,7 @@ export const getAllContactLists = async (req: Request, res: Response): Promise<v
 
 export const getAllContactFolders = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contactFolders = await getAllContactFoldersFromDb();
+    const contactFolders = await getAllContactFoldersFromDb((req as any).user.id);
     successResponse(res, 200, "Contact folders fetched", contactFolders);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -276,7 +278,7 @@ export const getAllContactFolders = async (req: Request, res: Response): Promise
 
 export const getAllContactGroups = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contactGroups = await getAllContactGroupsFromDb();
+    const contactGroups = await getAllContactGroupsFromDb((req as any).user.id);
     successResponse(res, 200, "Contact groups fetched", contactGroups);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
