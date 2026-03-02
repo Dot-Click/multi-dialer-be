@@ -7,13 +7,13 @@
 
 */
 -- AlterTable
-ALTER TABLE "folders" ADD COLUMN     "userId" TEXT NOT NULL;
+ALTER TABLE "folders" ADD COLUMN     "userId" TEXT;
 
 -- AlterTable
-ALTER TABLE "groups" ADD COLUMN     "userId" TEXT NOT NULL;
+ALTER TABLE "groups" ADD COLUMN     "userId" TEXT;
 
 -- AlterTable
-ALTER TABLE "lists" ADD COLUMN     "userId" TEXT NOT NULL;
+ALTER TABLE "lists" ADD COLUMN     "userId" TEXT;
 
 -- AddForeignKey
 ALTER TABLE "lists" ADD CONSTRAINT "lists_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
