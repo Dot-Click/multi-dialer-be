@@ -280,6 +280,7 @@ model Contact {
   zip          String?
   source       String?
   tags         String[]       @default([])
+  notes        String?
   dataDialerId String?
   dataDialer   DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
   emails       ContactEmail[]
