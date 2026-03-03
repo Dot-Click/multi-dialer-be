@@ -21,6 +21,7 @@ import {
   deleteContactFolderFromDb,
   deleteContactGroupFromDb,
   getContactsByListFromDb,
+  assignContactToListInDb,
 } from "./service";
 import { createContactListSchema } from "@/schemas/contactlist.schema";
 
@@ -94,6 +95,21 @@ export const deleteContact = async (req: Request, res: Response): Promise<void> 
     }
     await deleteContactFromDb(id);
     successResponse(res, 200, "Contact deleted successfully", null);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const assignContactToList = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { listId } = req.body;
+    if (!id || !listId) {
+      errorResponse(res, "Contact ID and List ID are required", 400);
+      return;
+    }
+    const updated = await assignContactToListInDb(id, listId);
+    successResponse(res, 200, "Contact assigned to list successfully", updated);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

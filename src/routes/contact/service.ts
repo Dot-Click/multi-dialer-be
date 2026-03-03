@@ -142,6 +142,49 @@ export async function updateContactInDb(
   });
 }
 
+export async function assignContactToListInDb(contactId: string, listId: string) {
+  return prisma.$transaction(async (tx) => {
+    const contact = await tx.contact.findUnique({
+      where: { id: contactId },
+      select: { id: true },
+    });
+    if (!contact) throwHttp(404, "Contact not found");
+
+    const newList = await tx.contactList.findUnique({
+      where: { id: listId },
+      select: { id: true, name: true, contactIds: true },
+    });
+    if (!newList) throwHttp(404, "Target List not found");
+
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: contactId } },
+      select: { id: true, contactIds: true },
+    });
+
+    for (const l of lists) {
+      if (l.id !== listId) {
+        await tx.contactList.update({
+          where: { id: l.id },
+          data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
+        });
+      }
+    }
+
+    if (!newList.contactIds.includes(contactId)) {
+      await tx.contactList.update({
+        where: { id: listId },
+        data: { contactIds: { push: contactId } },
+      });
+    }
+
+    return tx.contact.update({
+      where: { id: contactId },
+      data: { source: newList.name },
+      include: { emails: true, phones: true },
+    });
+  });
+}
+
 export async function deleteContactFromDb(id: string) {
   const existing = await prisma.contact.findUnique({
     where: { id },

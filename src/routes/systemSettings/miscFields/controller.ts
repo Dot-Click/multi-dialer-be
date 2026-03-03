@@ -135,11 +135,8 @@ export const createMiscField = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    
-      
     // Ensure req.body exists and is an object
     if (!req.body || typeof req.body !== 'object' || Object.keys(req.body).length === 0) {
-
       errorResponse(res, {
         errors: [
           {
