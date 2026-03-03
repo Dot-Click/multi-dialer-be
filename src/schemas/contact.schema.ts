@@ -20,7 +20,8 @@ export const createContactSchema = z.object({
   dataDialerId: z.string().optional(),
   emails: z.array(contactEmailSchema).default([]),
   phones: z.array(contactPhoneSchema).default([]),
-  contactListId: z.string().optional(), // Adding this because service uses it to add to list
+  notes: z.string().optional(),
+  contactListId: z.string().optional(),
 });
 
 export const updateContactSchema = z.object({
@@ -33,6 +34,7 @@ export const updateContactSchema = z.object({
   dataDialerId: z.string().nullable().optional(),
   emails: z.array(contactEmailSchema).optional(),
   phones: z.array(contactPhoneSchema).optional(),
+  notes: z.string().optional(),
 });
 
 

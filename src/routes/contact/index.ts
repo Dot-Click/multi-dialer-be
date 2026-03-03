@@ -1,23 +1,25 @@
 import { Router } from "express";
-import { 
-  createContact, 
-  deleteContact, 
-  getAllContacts, 
-  getContactById, 
-  updateContact, 
-  createContactList, 
-  createContactFolder, 
-  createContactGroup, 
-  getAllContactLists, 
-  getAllContactFolders, 
-  getAllContactGroups, 
-  updateContactFolder, 
+import {
+  createContact,
+  deleteContact,
+  getAllContacts,
+  getContactById,
+  updateContact,
+  createContactList,
+  createContactFolder,
+  createContactGroup,
+  getAllContactLists,
+  getAllContactFolders,
+  getAllContactGroups,
+  updateContactFolder,
   updateContactList,
   updateContactGroup,
   deleteContactList,
   deleteContactFolder,
   deleteContactGroup,
-  getContactsByList
+  getContactsByList,
+  assignContactToList,
+  assignContactToGroups
 } from "./controller";
 
 const router = Router();
@@ -29,6 +31,8 @@ router.get("/", getAllContacts);
 router.get("/contacts-list/:lid", getContactsByList)
 router.get("/:id", getContactById);
 router.put("/:id", updateContact);
+router.patch("/:id/assign", assignContactToList);
+router.patch("/:id/groups", assignContactToGroups);
 router.delete("/:id", deleteContact);
 router.post("/create", createContact);
 router.post("/list", createContactList);

@@ -21,6 +21,8 @@ import {
   deleteContactFolderFromDb,
   deleteContactGroupFromDb,
   getContactsByListFromDb,
+  assignContactToListInDb,
+  assignContactToGroupsInDb,
 } from "./service";
 import { createContactListSchema } from "@/schemas/contactlist.schema";
 
@@ -99,6 +101,36 @@ export const deleteContact = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+export const assignContactToList = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { listId } = req.body;
+    if (!id || !listId) {
+      errorResponse(res, "Contact ID and List ID are required", 400);
+      return;
+    }
+    const updated = await assignContactToListInDb(id, listId);
+    successResponse(res, 200, "Contact assigned to list successfully", updated);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const assignContactToGroups = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { groupIds } = req.body;
+    const userId = (req as any).user.id;
+    if (!id || !groupIds) {
+      errorResponse(res, "Contact ID and Group IDs are required", 400);
+      return;
+    }
+    const updated = await assignContactToGroupsInDb(id, groupIds, userId);
+    successResponse(res, 200, "Contact groups updated successfully", updated);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
 
 export const createContactList = async (req: Request, res: Response): Promise<void> => {
   try {
