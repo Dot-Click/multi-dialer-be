@@ -1,4 +1,5 @@
 import prisma from "../../lib/prisma";
+import { randomUUID } from "crypto";
 
 function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
@@ -101,7 +102,7 @@ export async function updateContactInDb(
     emails: { email: string; isPrimary: boolean }[];
     phones: { number: string; type: any }[];
     notes: string;
-  }>
+  }>,
 ) {
   const existing = await prisma.contact.findUnique({
     where: { id },
@@ -146,7 +147,10 @@ export async function updateContactInDb(
   });
 }
 
-export async function assignContactToListInDb(contactId: string, listId: string) {
+export async function assignContactToListInDb(
+  contactId: string,
+  listId: string,
+) {
   return prisma.$transaction(async (tx) => {
     const contact = await tx.contact.findUnique({
       where: { id: contactId },
@@ -189,12 +193,16 @@ export async function assignContactToListInDb(contactId: string, listId: string)
   });
 }
 
-export async function assignContactToGroupsInDb(contactId: string, groupIds: string[], userId: string) {
+export async function assignContactToGroupsInDb(
+  contactId: string,
+  groupIds: string[],
+  userId: string,
+) {
   return prisma.$transaction(async (tx) => {
     // 1. Get all groups for this user
     const allGroups = await tx.contactGroups.findMany({
       where: { userId },
-      select: { id: true, contactIds: true }
+      select: { id: true, contactIds: true },
     });
 
     for (const group of allGroups) {
@@ -205,20 +213,22 @@ export async function assignContactToGroupsInDb(contactId: string, groupIds: str
         // Add contact to group
         await tx.contactGroups.update({
           where: { id: group.id },
-          data: { contactIds: { push: contactId } }
+          data: { contactIds: { push: contactId } },
         });
       } else if (!isTarget && currentlyMember) {
         // Remove contact from group
         await tx.contactGroups.update({
           where: { id: group.id },
-          data: { contactIds: group.contactIds.filter(id => id !== contactId) }
+          data: {
+            contactIds: group.contactIds.filter((id) => id !== contactId),
+          },
         });
       }
     }
 
     return tx.contact.findUnique({
       where: { id: contactId },
-      include: { emails: true, phones: true }
+      include: { emails: true, phones: true },
     });
   });
 }
@@ -434,73 +444,99 @@ export async function importContactsFromCsvInDb(args: {
     contacts,
   } = args;
 
-  return prisma.$transaction(async (tx) => {
-    // 1. Create contacts and collect their IDs
-    const createdContactIds: string[] = [];
-    for (const c of contacts) {
-      const created = await tx.contact.create({
+  return prisma.$transaction(
+    async (tx) => {
+      // 1. Generate IDs and prepare data for bulk insertion
+      const contactData = contacts.map((c) => ({
+        id: randomUUID(),
+        fullName: c.fullName || "Unnamed",
+        city: c.city,
+        state: c.state,
+        zip: c.zip,
+        source: c.source,
+        tags: c.tags || [],
+        notes: c.notes,
+      }));
+
+      const createdContactIds = contactData.map((c) => c.id);
+
+      const emailData = contacts.flatMap((c, index) => {
+        const contactId = contactData[index].id;
+        return (c.emails || []).map((e: any) => ({
+          email: e.email,
+          isPrimary: e.isPrimary,
+          contactId,
+        }));
+      });
+
+      const phoneData = contacts.flatMap((c, index) => {
+        const contactId = contactData[index].id;
+        return (c.phones || []).map((p: any) => ({
+          number: p.number,
+          type: p.type,
+          contactId,
+        }));
+      });
+
+      // 2. Bulk Insert Contacts
+      await tx.contact.createMany({
+        data: contactData,
+      });
+
+      // 3. Bulk Insert Emails (if any)
+      if (emailData.length > 0) {
+        await tx.contactEmail.createMany({
+          data: emailData,
+        });
+      }
+
+      // 4. Bulk Insert Phones (if any)
+      if (phoneData.length > 0) {
+        await tx.contactPhone.createMany({
+          data: phoneData,
+        });
+      }
+
+      // 5. Connect to List or Group
+      if (contactListId) {
+        const list = await tx.contactList.findUnique({
+          where: { id: contactListId },
+        });
+        if (!list) throwHttp(404, "Contact list not found");
+
+        await tx.contactList.update({
+          where: { id: contactListId },
+          data: { contactIds: { push: createdContactIds } },
+        });
+      } else if (contactGroupId) {
+        const group = await tx.contactGroups.findUnique({
+          where: { id: contactGroupId },
+        });
+        if (!group) throwHttp(404, "Contact group not found");
+
+        await tx.contactGroups.update({
+          where: { id: contactGroupId },
+          data: { contactIds: { push: createdContactIds } },
+        });
+      }
+
+      // 6. Record the import
+      return tx.importContact.create({
         data: {
-          fullName: c.fullName || "Unnamed",
-          city: c.city,
-          state: c.state,
-          zip: c.zip,
-          source: c.source,
-          tags: c.tags || [],
-          notes: c.notes,
-          emails: {
-            create: c.emails
-              ? c.emails.map((e: any) => ({
-                  email: e.email,
-                  isPrimary: e.isPrimary,
-                }))
-              : [],
-          },
-          phones: {
-            create: c.phones
-              ? c.phones.map((p: any) => ({ number: p.number, type: p.type }))
-              : [],
-          },
+          fileName,
+          type,
+          contactListId,
+          contactGroupId,
+          keepOld,
+          contactsCount: createdContactIds.length,
+          userId,
         },
       });
-      createdContactIds.push(created.id);
-    }
-
-    // 2. Connect to List or Group
-    if (contactListId) {
-      const list = await tx.contactList.findUnique({
-        where: { id: contactListId },
-      });
-      if (!list) throwHttp(404, "Contact list not found");
-
-      await tx.contactList.update({
-        where: { id: contactListId },
-        data: { contactIds: { push: createdContactIds } },
-      });
-    } else if (contactGroupId) {
-      const group = await tx.contactGroups.findUnique({
-        where: { id: contactGroupId },
-      });
-      if (!group) throwHttp(404, "Contact group not found");
-
-      await tx.contactGroups.update({
-        where: { id: contactGroupId },
-        data: { contactIds: { push: createdContactIds } },
-      });
-    }
-
-    // 3. Record the import
-    return tx.importContact.create({
-      data: {
-        fileName,
-        type,
-        contactListId,
-        contactGroupId,
-        keepOld,
-        contactsCount: createdContactIds.length,
-        userId,
-      },
-    });
-  });
+    },
+    {
+      timeout: 60000,
+    },
+  );
 }
 
 export async function getAllImportContactsFromDb(userId: string) {
@@ -520,6 +556,86 @@ export async function getAllImportContactsFromDb(userId: string) {
           email: true,
           role: true,
         },
+      },
+    },
+  });
+}
+
+export async function exportContactsInDb(args: {
+  userId: string;
+  fieldNames: string[];
+  contactListId?: string;
+  contactGroupId?: string;
+}) {
+  const { userId, fieldNames, contactListId, contactGroupId } = args;
+
+  let exportType: "LIST" | "GROUP" | "ALL_CONTACTS" = "ALL_CONTACTS";
+  let contactsCount = 0;
+
+  if (contactListId) {
+    exportType = "LIST";
+    const list = await prisma.contactList.findUnique({
+      where: { id: contactListId },
+      select: { contactIds: true },
+    });
+    if (!list) throwHttp(404, "Contact list not found");
+    contactsCount = list.contactIds.length;
+  } else if (contactGroupId) {
+    exportType = "GROUP";
+    const group = await prisma.contactGroups.findUnique({
+      where: { id: contactGroupId },
+      select: { contactIds: true },
+    });
+    if (!group) throwHttp(404, "Contact group not found");
+    contactsCount = group.contactIds.length;
+  } else {
+    exportType = "ALL_CONTACTS";
+    contactsCount = await prisma.contact.count();
+  }
+
+  return prisma.exportContact.create({
+    data: {
+      userId,
+      fieldNames,
+      contactListId: contactListId || null,
+      contactGroupId: contactGroupId || null,
+      contactsCount : contactsCount-1,
+      exportType,
+    },
+    include: {
+      user: {
+        select: {
+          fullName: true,
+          email: true,
+        },
+      },
+      contactList: {
+        select: { name: true },
+      },
+      contactGroup: {
+        select: { name: true },
+      },
+    },
+  });
+}
+
+export async function getAllExportContactsFromDb(userId: string) {
+  return prisma.exportContact.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      user: {
+        select: {
+          fullName: true,
+          email: true,
+          role: true,
+        },
+      },
+      contactList: {
+        select: { name: true },
+      },
+      contactGroup: {
+        select: { name: true },
       },
     },
   });

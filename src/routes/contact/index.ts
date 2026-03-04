@@ -20,6 +20,8 @@ import {
   getContactsByList,
   importContactCsv,
   getAllImportContacts,
+  exportContactCsv,
+  getAllExportContacts,
 } from "./controller";
 import { singleUpload } from "../../middlewares/multer.middleware";
 
@@ -27,6 +29,8 @@ const router = Router();
 
 router.get("/import-contacts", getAllImportContacts);
 router.post("/import-csv", singleUpload("file"), importContactCsv);
+router.post("/export-csv", exportContactCsv);
+router.get("/export-csv", getAllExportContacts);
 
 router.get("/list", getAllContactLists);
 router.get("/folder", getAllContactFolders);

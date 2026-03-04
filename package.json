@@ -31,6 +31,8 @@
     "better-auth": "^1.1.14",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
+    "csv-parse": "^6.1.0",
+    "csv-stringify": "^6.6.0",
     "express": "^4.21.2",
     "express-session": "^1.18.2",
     "groq-sdk": "^0.37.0",

@@ -28,10 +28,13 @@ import {
   getContactsByListFromDb,
   getAllImportContactsFromDb,
   importContactsFromCsvInDb,
+  exportContactsInDb,
+  getAllExportContactsFromDb,
 } from "./service";
 import { createContactListSchema } from "@/schemas/contactlist.schema";
 import fs from "fs";
 import { parse } from "csv-parse/sync";
+import { stringify } from "csv-stringify/sync";
 
 export const createContact = async (
   req: Request,
@@ -142,7 +145,6 @@ export const deleteContact = async (
     );
   }
 };
-
 
 export const createContactList = async (
   req: Request,
@@ -487,49 +489,58 @@ export const importContactCsv = async (
       console.error("Error deleting temp file:", cleanupErr);
     }
 
-    // Map records to formatted contacts
-    const contacts = records.map((r: any) => {
-      const emails = [];
-      if (r.primary_email) {
-        emails.push({ email: r.primary_email, isPrimary: true });
-      }
-      if (r.other_emails) {
-        const others = r.other_emails.split(",").map((e: string) => ({
-          email: e.trim(),
-          isPrimary: false,
-        }));
-        emails.push(...others);
-      }
+    // Filter and map records to formatted contacts
+    const contacts = records
+      .filter((r: any) => {
+        const name = (r.fullName || "").toLowerCase().trim();
+        return (
+          name !== "fullname" &&
+          name !== "full name" &&
+          name !== "name" &&
+          name !== ""
+        );
+      })
+      .map((r: any) => {
+        const emails = [];
+        if (r.primary_email) {
+          emails.push({ email: r.primary_email, isPrimary: true });
+        }
+        if (r.other_emails) {
+          const others = r.other_emails.split(",").map((e: string) => ({
+            email: e.trim(),
+            isPrimary: false,
+          }));
+          emails.push(...others);
+        }
 
-      const phones = [];
-      if (r.phone_mobile) {
-        phones.push({ number: r.phone_mobile.toString(), type: "MOBILE" });
-      }
-      if (r.phone_telephone) {
-        phones.push({
-          number: r.phone_telephone.toString(),
-          type: "TELEPHONE",
-        });
-      }
-      if (r.phone_home) {
-        phones.push({ number: r.phone_home.toString(), type: "HOME" });
-      }
-      if (r.phone_work) {
-        phones.push({ number: r.phone_work.toString(), type: "WORK" });
-      }
-
-      return {
-        fullName: r.fullName || "Unnamed",
-        city: r.city || "",
-        state: r.state || "",
-        zip: r.zip || "",
-        source: r.source || "CSV Import",
-        tags: r.tags ? r.tags.split(",").map((t: string) => t.trim()) : [],
-        notes: r.notes || "",
-        emails,
-        phones,
-      };
-    });
+        const phones = [];
+        if (r.phone_mobile) {
+          phones.push({ number: r.phone_mobile.toString(), type: "MOBILE" });
+        }
+        if (r.phone_telephone) {
+          phones.push({
+            number: r.phone_telephone.toString(),
+            type: "TELEPHONE",
+          });
+        }
+        if (r.phone_home) {
+          phones.push({ number: r.phone_home.toString(), type: "HOME" });
+        }
+        if (r.phone_work) {
+          phones.push({ number: r.phone_work.toString(), type: "WORK" });
+        }
+        return {
+          fullName: r.fullName || "Unnamed",
+          city: r.city || "",
+          state: r.state || "",
+          zip: r.zip || "",
+          source: r.source || "CSV Import",
+          tags: r.tags ? r.tags.split(",").map((t: string) => t.trim()) : [],
+          notes: r.notes || "",
+          emails,
+          phones,
+        };
+      });
 
     const result = await importContactsFromCsvInDb({
       userId: (req as any).user.id,
@@ -569,6 +580,53 @@ export const getAllImportContacts = async (
     const userId = (req as any).user.id;
     const imports = await getAllImportContactsFromDb(userId);
     successResponse(res, 200, "Import history fetched", imports);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const exportContactCsv = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { fieldNames, listId, groupId } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!fieldNames || !Array.isArray(fieldNames) || fieldNames.length === 0) {
+      errorResponse(res, "Export fields are required", 400);
+      return;
+    }
+
+    const result = await exportContactsInDb({
+      userId,
+      fieldNames,
+      contactListId: listId,
+      contactGroupId: groupId,
+    });
+
+    successResponse(res, 201, "Export record created", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getAllExportContacts = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+    const exports = await getAllExportContactsFromDb(userId);
+    successResponse(res, 200, "Export history fetched", exports);
   } catch (error: any) {
     errorResponse(
       res,
