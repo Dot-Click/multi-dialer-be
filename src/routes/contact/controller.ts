@@ -74,6 +74,8 @@ export const updateContact = async (req: Request, res: Response): Promise<void> 
     }
 
     const payload = { ...req.body };
+
+    console.log(payload);
     const result = (await validateData(updateContactSchema, payload)) as any;
     if (!("data" in result)) {
       errorResponse(res, "Validation error", 400);
