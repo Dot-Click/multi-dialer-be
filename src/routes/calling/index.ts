@@ -15,7 +15,8 @@ import {
   endCall,
   getCallsInsights,
   getHistory,
-  getCallStatus
+  getCallStatus,
+  getCallSummary
 } from "./controller";
 import {
   getAggregateStats,
@@ -34,6 +35,7 @@ router.post("/end-call", protectRoute, endCall);
 router.post("/leads", protectRoute, addLeadsToDialer);
 router.get("/status/:sid", protectRoute, getCallStatus);
 router.get("/getHistory", protectRoute, getHistory);
+router.get("/sentiments/:sid", protectRoute, getCallSummary);
 
 // Analytics & Reports
 router.get("/stats", protectRoute, getAggregateStats);
