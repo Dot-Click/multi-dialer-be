@@ -300,7 +300,7 @@ model Contact {
   miscFields  MiscField[]
   miscFieldId String?
 
-  calendar   Calendar[]
+  calendar Calendar[]
 
   @@index([dataDialerId])
   @@map("contacts")
@@ -568,7 +568,7 @@ model LeadSheetQuestion {
   leadSheet   LeadSheet @relation(fields: [leadSheetId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt   
 
   @@map("lead_sheet_questions")
 }
