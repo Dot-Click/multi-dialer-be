@@ -17,6 +17,7 @@ export async function createContactInDb(payload: {
   phones: { number: string; type: any }[];
   notes?: string;
   contactListId?: string;
+  miscValues?: any;
 }) {
   return prisma.$transaction(async (tx) => {
     if (payload.contactListId) {
@@ -36,6 +37,7 @@ export async function createContactInDb(payload: {
         source: payload.source,
         tags: payload.tags ?? [],
         notes: payload.notes ?? "",
+        miscValues: payload.miscValues ?? {},
         dataDialerId: payload.dataDialerId,
         emails: {
           create: payload.emails.map((e) => ({
@@ -83,6 +85,18 @@ export async function getContactByIdFromDb(id: string) {
     include: {
       emails: true,
       phones: true,
+      callRecords: {
+        include: {
+          user: {
+            select: {
+              fullName: true,
+            },
+          },
+        },
+        orderBy: {
+          startTime: "desc",
+        },
+      },
     },
   });
   if (!contact) throwHttp(404, "Contact not found");
@@ -93,15 +107,21 @@ export async function updateContactInDb(
   id: string,
   payload: Partial<{
     fullName: string;
+    address: string;
     city: string;
     state: string;
     zip: string;
+    mailingAddress: string;
+    mailingCity: string;
+    mailingState: string;
+    mailingZip: string;
     source: string;
     tags: string[];
     dataDialerId: string | null;
     emails: { email: string; isPrimary: boolean }[];
     phones: { number: string; type: any }[];
     notes: string;
+    miscValues: any;
   }>,
 ) {
   const existing = await prisma.contact.findUnique({
@@ -114,12 +134,18 @@ export async function updateContactInDb(
     where: { id },
     data: {
       fullName: payload.fullName,
+      address: payload.address,
       city: payload.city,
       state: payload.state,
       zip: payload.zip,
+      mailingAddress: payload.mailingAddress,
+      mailingCity: payload.mailingCity,
+      mailingState: payload.mailingState,
+      mailingZip: payload.mailingZip,
       source: payload.source,
       tags: payload.tags,
       notes: payload.notes,
+      miscValues: payload.miscValues,
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
@@ -599,7 +625,7 @@ export async function exportContactsInDb(args: {
       fieldNames,
       contactListId: contactListId || null,
       contactGroupId: contactGroupId || null,
-      contactsCount : contactsCount-1,
+      contactsCount: contactsCount - 1,
       exportType,
     },
     include: {

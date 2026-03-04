@@ -34,6 +34,8 @@ export const createCalendarEventSchema = z
     startDate: parseDate,
     endDate: optionalDate,
     assignToId: z.string().optional(),
+    contactId: z.string().optional(),
+    leadId: z.string().optional(),
     status: appointmentStatus.optional(),
   })
   .superRefine((data, ctx) => {
@@ -54,6 +56,8 @@ export const updateCalendarEventSchema = z
     eventType: calendarEventType.optional(),
     startDate: parseDate.optional(),
     endDate: optionalDate,
+    contactId: z.string().optional(),
+    leadId: z.string().optional(),
     status: appointmentStatus.optional(),
   })
   .superRefine((data, ctx) => {
