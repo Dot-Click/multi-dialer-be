@@ -189,11 +189,11 @@ model User {
 
   calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
   calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
-  createdById  String?
-  createdBy    User?   @relation("UserCreator", fields: [createdById], references: [id])
-  createdUsers User[]  @relation("UserCreator")
-  callerIds CallerId[]
-  companies Company[]
+  createdById        String?
+  createdBy          User?      @relation("UserCreator", fields: [createdById], references: [id])
+  createdUsers       User[]     @relation("UserCreator")
+  callerIds          CallerId[]
+  companies          Company[]
 
   signature Signature?
 
@@ -273,22 +273,33 @@ model ContactGroups {
 }
 
 model Contact {
-  id           String         @id @default(cuid())
-  fullName     String
-  city         String?
-  state        String?
-  zip          String?
-  source       String?
-  tags         String[]       @default([])
-  notes        String?
-  dataDialerId String?
-  dataDialer   DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
-  emails       ContactEmail[]
-  phones       ContactPhone[]
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id             String   @id @default(cuid())
+  fullName       String
+  address        String?
+  city           String?
+  state          String?
+  zip            String?
+  mailingAddress String?
+  mailingCity    String?
+  mailingState   String?
+  mailingZip     String?
+  source         String?
+  tags           String[] @default([])
+  notes          String?
+  dataDialerId   String?
+
+  dataDialer DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
+  emails     ContactEmail[]
+  phones     ContactPhone[]
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
 
   callRecords CallRecord[]
+
+  miscValues  Json?
+  miscFields  MiscField[]
+  miscFieldId String?
+  calendars   Calendar[]
 
   @@index([dataDialerId])
   @@map("contacts")
@@ -711,6 +722,7 @@ model Lead {
   updatedAt DateTime       @updatedAt
 
   callRecords CallRecord[]
+  calendars   Calendar[]
 
   @@map("leads")
 }
@@ -767,20 +779,6 @@ model CallerId {
   @@map("caller_id")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CALL SETTINGS
-// The 4 recording slots now reference Recording rows via FK instead of
-// storing raw strings. onDelete: SetNull means if a recording is deleted,
-// the slot just becomes null — CallSettings row is never broken.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CALL SETTINGS
-// The 4 recording slots now reference Recording rows via FK instead of
-// storing raw strings. onDelete: SetNull means if a recording is deleted,
-// the slot just becomes null — CallSettings row is never broken.
-// ─────────────────────────────────────────────────────────────────────────────
-
 model CallSettings {
   id    String @id @default(cuid())
   label String
@@ -796,17 +794,17 @@ model CallSettings {
 
   answeringMachineRecordingId String?
   answeringMachineRecording   Recording? @relation("AnsweringMachineRecording", fields: [answeringMachineRecordingId], references: [id], onDelete: SetNull)
-  enableAutoPause        Boolean @default(false)
-  enableRecording        Boolean @default(false)
-  sendOutlookAppointment Boolean @default(false)
-  allowDncCalls          Boolean @default(false)
-  callerId               String?
-  countryCode            String
-  numberOfLines          Int     @default(1)
-  ringTime               Int     @default(30)
-  callScriptId           String?
-  sendEmail              Boolean @default(false)
-  sendText               Boolean @default(false)
+  enableAutoPause             Boolean    @default(false)
+  enableRecording             Boolean    @default(false)
+  sendOutlookAppointment      Boolean    @default(false)
+  allowDncCalls               Boolean    @default(false)
+  callerId                    String?
+  countryCode                 String
+  numberOfLines               Int        @default(1)
+  ringTime                    Int        @default(30)
+  callScriptId                String?
+  sendEmail                   Boolean    @default(false)
+  sendText                    Boolean    @default(false)
 
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
@@ -833,17 +831,19 @@ model CallAnalysis {
 }
 
 model MiscField {
-  id              String         @id @default(uuid())
-  type            String
-  fieldName       String
-  options         String[]
-  countFrom       Int?
-  countTo         Int?
-  allowPastDates  Boolean?
+  id             String   @id @default(uuid())
+  type           String
+  fieldName      String
+  options        String[]
+  countFrom      Int?
+  countTo        Int?
+  allowPastDates Boolean?
+
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+  contacts        Contact[]
 
   @@map("misc_fields")
 }
@@ -897,6 +897,11 @@ model Calendar {
   assignTo   User   @relation("CalendarAssignTo", fields: [assignToId], references: [id], onDelete: Cascade)
   assignById String
   assignBy   User   @relation("CalendarAssignBy", fields: [assignById], references: [id], onDelete: Cascade)
+
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  leadId    String?
+  lead      Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
