@@ -34,7 +34,6 @@ import {
 import { createContactListSchema } from "@/schemas/contactlist.schema";
 import fs from "fs";
 import { parse } from "csv-parse/sync";
-import { stringify } from "csv-stringify/sync";
 
 export const createContact = async (
   req: Request,
