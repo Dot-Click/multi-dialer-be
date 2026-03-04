@@ -672,3 +672,56 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
   }
 };
 
+export const getCallSummary: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { sid } = req.params;
+    if (!sid) {
+       errorResponse(res, { message: "Call SID is required" }, 400);
+       return;
+    }
+
+    // 1. Check for analysis first
+    const analysis = await prisma.callAnalysis.findUnique({
+      where: { callSid: sid },
+      select: {
+        aiSummary: true,
+        sentiment: true,
+        recordingUrl: true,
+      }
+    });
+
+    if (analysis) {
+       successResponse(res, 200, "Call summary fetched successfully", analysis);
+       return;
+    }
+
+    // 2. If no analysis, check the call record status to see if it's still "cooking"
+    const callRecord = await prisma.callRecord.findUnique({
+      where: { callSid: sid }
+    });
+
+    if (!callRecord) {
+       errorResponse(res, { message: "Call record not found" }, 404);
+       return;
+    }
+
+    // 3. Determine if it's truly missing or just taking time
+    const isCompleted = callRecord.status === "completed";
+    
+    if (isCompleted && callRecord.endTime) {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      if (new Date(callRecord.endTime) < fiveMinutesAgo) {
+        successResponse(res, 200, "Call analysis is unavailable", { status: "unavailable" });
+        return;
+      }
+    }
+
+    // If not completed or completed recently, assume it's still processing
+    successResponse(res, 200, "Call analysis is still processing", { status: "processing" });
+    return;
+  } catch (error: any) {
+    console.error("Get call summary failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};

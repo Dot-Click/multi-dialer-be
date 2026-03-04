@@ -14,6 +14,7 @@ export async function createContactInDb(payload: {
   dataDialerId?: string;
   emails: { email: string; isPrimary: boolean }[];
   phones: { number: string; type: any }[];
+  notes?: string;
   contactListId?: string;
 }) {
   return prisma.$transaction(async (tx) => {
@@ -33,6 +34,7 @@ export async function createContactInDb(payload: {
         zip: payload.zip,
         source: payload.source,
         tags: payload.tags ?? [],
+        notes: payload.notes ?? "",
         dataDialerId: payload.dataDialerId,
         emails: {
           create: payload.emails.map((e) => ({
@@ -98,7 +100,8 @@ export async function updateContactInDb(
     dataDialerId: string | null;
     emails: { email: string; isPrimary: boolean }[];
     phones: { number: string; type: any }[];
-  }>,
+    notes: string;
+  }>
 ) {
   const existing = await prisma.contact.findUnique({
     where: { id },
@@ -115,6 +118,7 @@ export async function updateContactInDb(
       zip: payload.zip,
       source: payload.source,
       tags: payload.tags,
+      notes: payload.notes,
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
@@ -139,6 +143,83 @@ export async function updateContactInDb(
       emails: true,
       phones: true,
     },
+  });
+}
+
+export async function assignContactToListInDb(contactId: string, listId: string) {
+  return prisma.$transaction(async (tx) => {
+    const contact = await tx.contact.findUnique({
+      where: { id: contactId },
+      select: { id: true },
+    });
+    if (!contact) throwHttp(404, "Contact not found");
+
+    const newList = await tx.contactList.findUnique({
+      where: { id: listId },
+      select: { id: true, name: true, contactIds: true },
+    });
+    if (!newList) throwHttp(404, "Target List not found");
+
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: contactId } },
+      select: { id: true, contactIds: true },
+    });
+
+    for (const l of lists) {
+      if (l.id !== listId) {
+        await tx.contactList.update({
+          where: { id: l.id },
+          data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
+        });
+      }
+    }
+
+    if (!newList.contactIds.includes(contactId)) {
+      await tx.contactList.update({
+        where: { id: listId },
+        data: { contactIds: { push: contactId } },
+      });
+    }
+
+    return tx.contact.update({
+      where: { id: contactId },
+      data: { source: newList.name },
+      include: { emails: true, phones: true },
+    });
+  });
+}
+
+export async function assignContactToGroupsInDb(contactId: string, groupIds: string[], userId: string) {
+  return prisma.$transaction(async (tx) => {
+    // 1. Get all groups for this user
+    const allGroups = await tx.contactGroups.findMany({
+      where: { userId },
+      select: { id: true, contactIds: true }
+    });
+
+    for (const group of allGroups) {
+      const isTarget = groupIds.includes(group.id);
+      const currentlyMember = group.contactIds.includes(contactId);
+
+      if (isTarget && !currentlyMember) {
+        // Add contact to group
+        await tx.contactGroups.update({
+          where: { id: group.id },
+          data: { contactIds: { push: contactId } }
+        });
+      } else if (!isTarget && currentlyMember) {
+        // Remove contact from group
+        await tx.contactGroups.update({
+          where: { id: group.id },
+          data: { contactIds: group.contactIds.filter(id => id !== contactId) }
+        });
+      }
+    }
+
+    return tx.contact.findUnique({
+      where: { id: contactId },
+      include: { emails: true, phones: true }
+    });
   });
 }
 
