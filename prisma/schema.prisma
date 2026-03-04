@@ -299,7 +299,8 @@ model Contact {
   miscValues  Json?
   miscFields  MiscField[]
   miscFieldId String?
-  calendars   Calendar[]
+
+  calendar   Calendar[]
 
   @@index([dataDialerId])
   @@map("contacts")
