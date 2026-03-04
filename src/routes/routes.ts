@@ -24,7 +24,7 @@ import contactListRoutes from "./contactlist"
 import userRoutes from "./user"
 import companyRoutes from "./company"
 import reportRoutes from "./reports"
-// import subscriptionRoutes from "./subscription"
+import subscriptionRoutes from "./subscription"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { envConfig } from "@/lib/config";
 
@@ -64,7 +64,7 @@ router.use("/reports", protectRoute, reportRoutes)
 
 router.use("/calling", callingRoutes)
 
-// router.use("/subscriptions", subscriptionRoutes)
+router.use("/subscriptions", subscriptionRoutes)
 
 router.get("/verified", (req, res) => {
   res.send(`<h1 style="text-align: center; flex: 1; justify-content: center; align-items: center; height: 100vh;">Email verified successfully <a href="${envConfig.FRONTEND_URL}/admin/login">Go to app</a></h1>`)

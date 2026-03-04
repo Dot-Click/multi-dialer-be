@@ -199,13 +199,32 @@ export async function getZohoPlans() {
 }
 
 /**
- * Creates a customer in Zoho Subscriptions.
+ * Creates or retrieves a customer in Zoho Subscriptions.
  */
 export async function createZohoCustomer(data: any) {
   const accessToken = await getZohoAccessToken();
   const ZOHO_ORG_ID = envConfig.ZOHOO_ORG_ID;
 
   try {
+    // 1. Search for customer by email first to avoid "already exists" error
+    const searchRes = await axios.get(
+      `https://www.zohoapis.com/billing/v1/customers?email=${encodeURIComponent(data.email)}`,
+      {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${accessToken}`,
+          "X-com-zoho-subscriptions-organizationid": ZOHO_ORG_ID,
+        },
+      }
+    );
+
+    const existingCustomers = (searchRes.data as any).customers || [];
+    if (existingCustomers.length > 0) {
+      console.log("Found existing Zoho customer:", existingCustomers[0].customer_id);
+      return { customer: existingCustomers[0], message: "Existing customer found" };
+    }
+
+    // 2. If not found, create new
+    console.log("No existing customer found, creating new one...");
     const response = await axios.post(
       "https://www.zohoapis.com/billing/v1/customers",
       data,
@@ -219,7 +238,36 @@ export async function createZohoCustomer(data: any) {
     );
     return response.data;
   } catch (error: any) {
-    console.error("Error creating Zoho customer:", error.response?.data || error.message);
+    console.error("Error in createZohoCustomer flow:", error.response?.data || error.message);
+    throw error.response?.data || error;
+  }
+}
+
+/**
+ * Generates a Zoho Hosted Page URL for adding a payment method (card).
+ */
+export async function createZohoUpdateCardPage(customer_id: string) {
+  const accessToken = await getZohoAccessToken();
+  const ZOHO_ORG_ID = envConfig.ZOHOO_ORG_ID;
+
+  try {
+    const response = await axios.post(
+      "https://www.zohoapis.com/billing/v1/hostedpages/addpaymentmethod",
+      {
+        customer_id: customer_id,
+        redirect_url: `${envConfig.FRONTEND_URL}/admin/upgrade`
+      },
+      {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${accessToken}`,
+          "X-com-zoho-subscriptions-organizationid": ZOHO_ORG_ID,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    return response.data;
+  } catch (error: any) {
+    console.error("Error creating Zoho add payment method page:", error.response?.data || error.message);
     throw error.response?.data || error;
   }
 }
