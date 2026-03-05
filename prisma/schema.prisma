@@ -668,7 +668,7 @@ model Billing {
   nextBillingDate DateTime?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
-
+  zohooSubscriptionId String?
   leadStore        LeadStore?
   userSubscription UserSubscription?
 
@@ -756,6 +756,8 @@ model UserSubscription {
 
   startDate    DateTime
   endDate      DateTime?
+  zohooCustomerId String?
+  amount String?
   usersCount   Int          @default(1)
   billingCycle BillingCycle @default(MONTHLY)
   createdAt    DateTime     @default(now())
@@ -763,7 +765,6 @@ model UserSubscription {
   billingId    String?      @unique
   billing      Billing?     @relation(fields: [billingId], references: [id])
 
-  @@unique([userId, plan])
   @@map("user_subscriptions")
 }
 
