@@ -45,7 +45,7 @@ const upload = (req: Request, res: Response, next: NextFunction) => {
  * @module uploadMiddleware
  */
 
-const singleUpload = (fieldName: string, allowedMimeTypes: string[] | null = null, maxFileSize: number = 5 * 1024 * 1024) => (req: Request, res: Response, next: NextFunction) => {
+const singleUpload = (fieldName: string, allowedMimeTypes: string[] | null = null, maxFileSize: number = 10 * 1024 * 1024) => (req: Request, res: Response, next: NextFunction) => {
   multer({
     storage,
     limits: {

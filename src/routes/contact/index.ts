@@ -19,8 +19,14 @@ import {
   deleteContactGroup,
   getContactsByList,
   assignContactToList,
-  assignContactToGroups
+  assignContactToGroups,
+  sendLeadSheetEmail,
+  uploadAttachment,
+  getAttachments,
+  deleteAttachment,
+  assignAgentsToList,
 } from "./controller";
+import { singleUpload } from "@/middlewares/multer.middleware";
 
 const router = Router();
 
@@ -33,6 +39,13 @@ router.get("/:id", getContactById);
 router.put("/:id", updateContact);
 router.patch("/:id/assign", assignContactToList);
 router.patch("/:id/groups", assignContactToGroups);
+router.post("/:id/leadsheet/send-email", sendLeadSheetEmail);
+
+// Attachments
+router.post("/:id/attachment", singleUpload("file"), uploadAttachment);
+router.get("/:id/attachment", getAttachments);
+router.delete("/attachment/:attachmentId", deleteAttachment);
+
 router.delete("/:id", deleteContact);
 router.post("/create", createContact);
 router.post("/list", createContactList);
@@ -44,6 +57,8 @@ router.delete("/folder/:id", deleteContactFolder);
 router.post("/group", createContactGroup);
 router.patch("/group/:id", updateContactGroup);
 router.delete("/group/:id", deleteContactGroup);
+
+router.patch("/list/:id/agents", assignAgentsToList);
 
 
 export default router;

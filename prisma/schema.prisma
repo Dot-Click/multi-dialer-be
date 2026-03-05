@@ -206,6 +206,7 @@ model User {
   contactLists   ContactList[]
   contactFolders CotactFolder[]
   contactGroups  ContactGroups[]
+  contacts       Contact[]
 
   @@map("users")
 }
@@ -287,22 +288,41 @@ model Contact {
   tags           String[] @default([])
   notes          String?
   dataDialerId   String?
+  userId         String?
 
-  dataDialer DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
-  emails     ContactEmail[]
-  phones     ContactPhone[]
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
+  dataDialer  DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
+  user        User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  emails      ContactEmail[]
+  phones      ContactPhone[]
+  attachments Attachment[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   callRecords CallRecord[]
 
-  miscValues  Json?
-  miscFields  MiscField[]
-  miscFieldId String?
-  calendars   Calendar[]
+  miscValues      Json?
+  leadsheetValues Json?
+  miscFields      MiscField[]
+  miscFieldId     String?
+
+  calendar Calendar[]
 
   @@index([dataDialerId])
   @@map("contacts")
+}
+
+model Attachment {
+  id        String   @id @default(cuid())
+  fileName  String
+  fileUrl   String
+  fileSize  Int
+  mimeType  String?
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("attachments")
 }
 
 model ContactEmail {

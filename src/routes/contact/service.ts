@@ -1,22 +1,48 @@
 import prisma from "../../lib/prisma";
+import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
+import path from "path";
+import fs from "fs";
+import { cloudinaryUploader } from "../../utils/handler";
 
 function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
 }
 
+// ---------------------------------------------------------------------------
+// HELPERS
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the pool of userIds that "belong" to a given admin:
+ * the admin themselves + every agent they created.
+ */
+async function getAdminUserPool(adminId: string): Promise<string[]> {
+  const agents = await prisma.user.findMany({
+    where: { createdById: adminId },
+    select: { id: true },
+  });
+  return [adminId, ...agents.map((a) => a.id)];
+}
+
+// ---------------------------------------------------------------------------
+// CONTACTS
+// ---------------------------------------------------------------------------
+
 export async function createContactInDb(payload: {
   fullName: string;
-  city?: string;
-  state?: string;
-  zip?: string;
-  source?: string;
+  city: string;
+  state: string;
+  zip: string;
+  source: string;
   tags: string[];
-  dataDialerId?: string;
+  notes: string;
+  dataDialerId: string;
   emails: { email: string; isPrimary: boolean }[];
   phones: { number: string; type: any }[];
-  notes?: string;
   contactListId?: string;
   miscValues?: any;
+  leadsheetValues?: any;
+  userId: string;
 }) {
   return prisma.$transaction(async (tx) => {
     if (payload.contactListId) {
@@ -37,6 +63,7 @@ export async function createContactInDb(payload: {
         tags: payload.tags ?? [],
         notes: payload.notes ?? "",
         miscValues: payload.miscValues ?? {},
+        leadsheetValues: payload.leadsheetValues ?? {},
         dataDialerId: payload.dataDialerId,
         emails: {
           create: payload.emails.map((e) => ({
@@ -50,6 +77,7 @@ export async function createContactInDb(payload: {
             type: p.type,
           })),
         },
+        userId: payload.userId,
       },
       include: {
         emails: true,
@@ -68,12 +96,68 @@ export async function createContactInDb(payload: {
   });
 }
 
-export async function getAllContactsFromDb() {
+export async function getAllContactsFromDb(userId: string, role: string) {
+  // OWNER — sees everything, no filter needed
+  if (role === "OWNER") {
+    return prisma.contact.findMany({
+      include: { emails: true, phones: true },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  // ADMIN — sees contacts owned by themselves or any of their agents,
+  // plus any contacts that appear in lists they own.
+  if (role === "ADMIN") {
+    const poolUserIds = await getAdminUserPool(userId);
+
+    const myLists = await prisma.contactList.findMany({
+      where: {
+        OR: [{ userId: { in: poolUserIds } }, { userId: null }],
+      },
+      select: { contactIds: true },
+    });
+    const listContactIds = [...new Set(myLists.flatMap((l) => l.contactIds))];
+
+    return prisma.contact.findMany({
+      where: {
+        OR: [
+          { userId: { in: poolUserIds } },
+          { id: { in: listContactIds } },
+        ],
+      },
+      include: { emails: true, phones: true },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  // AGENT — sees:
+  //   1. Contacts that live inside lists their admin assigned them to
+  //   2. Contacts they personally created (userId === agent's id)
+  if (role === "AGENT") {
+    const assignedLists = await prisma.contactList.findMany({
+      where: { agentIds: { has: userId } },
+      select: { contactIds: true },
+    });
+    const assignedContactIds = [
+      ...new Set(assignedLists.flatMap((l) => l.contactIds)),
+    ];
+
+    return prisma.contact.findMany({
+      where: {
+        OR: [
+          { id: { in: assignedContactIds } },
+          { userId: userId },
+        ],
+      },
+      include: { emails: true, phones: true },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  // Fallback — own contacts only
   return prisma.contact.findMany({
-    include: {
-      emails: true,
-      phones: true,
-    },
+    where: { userId },
+    include: { emails: true, phones: true },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -84,17 +168,12 @@ export async function getContactByIdFromDb(id: string) {
     include: {
       emails: true,
       phones: true,
+      attachments: true,
       callRecords: {
         include: {
-          user: {
-            select: {
-              fullName: true,
-            },
-          },
+          user: { select: { fullName: true } },
         },
-        orderBy: {
-          startTime: "desc",
-        },
+        orderBy: { startTime: "desc" },
       },
     },
   });
@@ -121,6 +200,7 @@ export async function updateContactInDb(
     phones: { number: string; type: any }[];
     notes: string;
     miscValues: any;
+    leadsheetValues: any;
   }>
 ) {
   const existing = await prisma.contact.findUnique({
@@ -145,34 +225,228 @@ export async function updateContactInDb(
       tags: payload.tags,
       notes: payload.notes,
       miscValues: payload.miscValues,
+      leadsheetValues: payload.leadsheetValues,
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
-          deleteMany: {},
-          create: payload.emails.map((e) => ({
-            email: e.email,
-            isPrimary: e.isPrimary,
-          })),
-        }
+            deleteMany: {},
+            create: payload.emails.map((e) => ({
+              email: e.email,
+              isPrimary: e.isPrimary,
+            })),
+          }
         : undefined,
       phones: payload.phones
         ? {
-          deleteMany: {},
-          create: payload.phones.map((p) => ({
-            number: p.number,
-            type: p.type,
-          })),
-        }
+            deleteMany: {},
+            create: payload.phones.map((p) => ({
+              number: p.number,
+              type: p.type,
+            })),
+          }
         : undefined,
     },
-    include: {
-      emails: true,
-      phones: true,
+    include: { emails: true, phones: true },
+  });
+}
+
+export async function deleteContactFromDb(id: string) {
+  const existing = await prisma.contact.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!existing) throwHttp(404, "Contact not found");
+
+  await prisma.$transaction(async (tx) => {
+    // Scrub contactId from any ContactList.contactIds arrays
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: id } },
+      select: { id: true, contactIds: true },
+    });
+    for (const l of lists) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter((cid) => cid !== id) },
+      });
+    }
+
+    // Scrub from ContactGroups as well
+    const groups = await tx.contactGroups.findMany({
+      where: { contactIds: { has: id } },
+      select: { id: true, contactIds: true },
+    });
+    for (const g of groups) {
+      await tx.contactGroups.update({
+        where: { id: g.id },
+        data: { contactIds: g.contactIds.filter((cid) => cid !== id) },
+      });
+    }
+
+    await tx.contact.delete({ where: { id } });
+  });
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// ATTACHMENTS
+// ---------------------------------------------------------------------------
+
+export async function uploadAttachmentInDb(
+  contactId: string,
+  file: Express.Multer.File
+) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { id: true },
+  });
+  if (!contact) throwHttp(404, "Contact not found");
+
+  const filePath = path.join("./uploads", file.filename);
+  const cloudinaryResult = await cloudinaryUploader(filePath);
+
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+  if (!cloudinaryResult?.secure_url) {
+    throwHttp(500, "Failed to upload to Cloudinary");
+  }
+
+  return prisma.attachment.create({
+    data: {
+      fileName: file.originalname,
+      fileUrl: cloudinaryResult.secure_url,
+      fileSize: file.size,
+      mimeType: file.mimetype,
+      contactId,
     },
   });
 }
 
-export async function assignContactToListInDb(contactId: string, listId: string) {
+export async function getAttachmentsForContactInDb(contactId: string) {
+  return prisma.attachment.findMany({
+    where: { contactId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function deleteAttachmentFromDb(attachmentId: string) {
+  const attachment = await prisma.attachment.findUnique({
+    where: { id: attachmentId },
+  });
+  if (!attachment) throwHttp(404, "Attachment not found");
+
+  return prisma.attachment.delete({ where: { id: attachmentId } });
+}
+
+// ---------------------------------------------------------------------------
+// CONTACT LISTS
+// ---------------------------------------------------------------------------
+
+export async function createContactListInDb(
+  payload: { name: string; contactIds: string[] },
+  userId: string
+) {
+  return prisma.contactList.create({
+    data: {
+      name: payload.name,
+      contactIds: payload.contactIds,
+      userId,
+    },
+  });
+}
+
+export async function updateContactListInDb(
+  id: string,
+  payload: {
+    name?: string;
+    contactIds?: string[];
+    agentIds?: string[];
+  }
+) {
+  return prisma.contactList.update({
+    where: { id },
+    data: {
+      name: payload.name,
+      // Use `set` so we replace, not append
+      contactIds: payload.contactIds ? { set: payload.contactIds } : undefined,
+      agentIds: payload.agentIds ? { set: payload.agentIds } : undefined,
+    },
+  });
+}
+
+export async function deleteContactListFromDb(id: string) {
+  return prisma.contactList.delete({ where: { id } });
+}
+
+export async function getAllContactListsFromDb(userId: string, role?: string) {
+  if (role === "OWNER") {
+    return prisma.contactList.findMany({ orderBy: { createdAt: "desc" } });
+  }
+
+  if (role === "ADMIN") {
+    const poolUserIds = await getAdminUserPool(userId);
+    return prisma.contactList.findMany({
+      where: {
+        OR: [{ userId: { in: poolUserIds } }, { userId: null }],
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  if (role === "AGENT") {
+    // Agents see lists explicitly assigned to them by their admin
+    return prisma.contactList.findMany({
+      where: { agentIds: { has: userId } },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  return prisma.contactList.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function getContactsByListFromDb(
+  listId: string,
+  userId: string,
+  role: string
+) {
+  const list = await prisma.contactList.findUnique({
+    where: { id: listId },
+    select: { contactIds: true, agentIds: true, userId: true },
+  });
+  if (!list) throwHttp(404, "List not found");
+
+  // AGENT: must be explicitly assigned to this list
+  if (role === "AGENT") {
+    if (!list.agentIds.includes(userId)) {
+      throwHttp(403, "Access denied to this list");
+    }
+  }
+
+  // ADMIN: list must belong to them or one of their agents (or be a system list)
+  if (role === "ADMIN") {
+    if (list.userId !== null) {
+      const poolUserIds = await getAdminUserPool(userId);
+      if (!poolUserIds.includes(list.userId)) {
+        throwHttp(403, "Access denied to this list");
+      }
+    }
+    // null userId = system-owned list, admins can access it
+  }
+
+  return prisma.contact.findMany({
+    where: { id: { in: list.contactIds } },
+    include: { emails: true, phones: true },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function assignContactToListInDb(
+  contactId: string,
+  listId: string
+) {
   return prisma.$transaction(async (tx) => {
     const contact = await tx.contact.findUnique({
       where: { id: contactId },
@@ -186,12 +460,12 @@ export async function assignContactToListInDb(contactId: string, listId: string)
     });
     if (!newList) throwHttp(404, "Target List not found");
 
-    const lists = await tx.contactList.findMany({
+    // Remove contact from every other list it currently belongs to
+    const currentLists = await tx.contactList.findMany({
       where: { contactIds: { has: contactId } },
       select: { id: true, contactIds: true },
     });
-
-    for (const l of lists) {
+    for (const l of currentLists) {
       if (l.id !== listId) {
         await tx.contactList.update({
           where: { id: l.id },
@@ -200,6 +474,7 @@ export async function assignContactToListInDb(contactId: string, listId: string)
       }
     }
 
+    // Add to target list if not already present
     if (!newList.contactIds.includes(contactId)) {
       await tx.contactList.update({
         where: { id: listId },
@@ -215,99 +490,14 @@ export async function assignContactToListInDb(contactId: string, listId: string)
   });
 }
 
-export async function assignContactToGroupsInDb(contactId: string, groupIds: string[], userId: string) {
-  return prisma.$transaction(async (tx) => {
-    // 1. Get all groups for this user
-    const allGroups = await tx.contactGroups.findMany({
-      where: { userId },
-      select: { id: true, contactIds: true }
-    });
+// ---------------------------------------------------------------------------
+// CONTACT FOLDERS
+// ---------------------------------------------------------------------------
 
-    for (const group of allGroups) {
-      const isTarget = groupIds.includes(group.id);
-      const currentlyMember = group.contactIds.includes(contactId);
-
-      if (isTarget && !currentlyMember) {
-        // Add contact to group
-        await tx.contactGroups.update({
-          where: { id: group.id },
-          data: { contactIds: { push: contactId } }
-        });
-      } else if (!isTarget && currentlyMember) {
-        // Remove contact from group
-        await tx.contactGroups.update({
-          where: { id: group.id },
-          data: { contactIds: group.contactIds.filter(id => id !== contactId) }
-        });
-      }
-    }
-
-    return tx.contact.findUnique({
-      where: { id: contactId },
-      include: { emails: true, phones: true }
-    });
-  });
-}
-
-export async function deleteContactFromDb(id: string) {
-  const existing = await prisma.contact.findUnique({
-    where: { id },
-    select: { id: true },
-  });
-  if (!existing) throwHttp(404, "Contact not found");
-
-  await prisma.$transaction(async (tx) => {
-    // Remove the contactId from any ContactList.contactIds arrays
-    const lists = await tx.contactList.findMany({
-      where: { contactIds: { has: id } },
-      select: { id: true, contactIds: true },
-    });
-
-    for (const l of lists) {
-      await tx.contactList.update({
-        where: { id: l.id },
-        data: { contactIds: l.contactIds.filter((cid: string) => cid !== id) },
-      });
-    }
-
-    await tx.contact.delete({ where: { id } });
-  });
-
-  return true;
-}
-
-export async function createContactListInDb(payload: {
-  name: string;
-  contactIds: string[];
-}, userId: string) {
-  return prisma.contactList.create({
-    data: {
-      name: payload.name,
-      contactIds: payload.contactIds,
-      userId,
-    },
-  });
-}
-
-export async function updateContactListInDb(id: string, payload: {
-  name?: string;
-  contactIds?: string[];
-}) {
-  return prisma.contactList.update({
-    where: { id },
-    data: {
-      name: payload.name,
-      contactIds: payload.contactIds ? {
-        push: payload.contactIds,
-      } : undefined,
-    },
-  });
-}
-
-export async function createContactFolderInDb(payload: {
-  name: string;
-  listIds: string[];
-}, userId: string) {
+export async function createContactFolderInDb(
+  payload: { name: string; listIds: string[] },
+  userId: string
+) {
   return prisma.cotactFolder.create({
     data: {
       name: payload.name,
@@ -317,25 +507,67 @@ export async function createContactFolderInDb(payload: {
   });
 }
 
-export async function updateContactFolderInDb(id: string, payload: {
-  name?: string;
-  listIds?: string[];
-}) {
+export async function updateContactFolderInDb(
+  id: string,
+  payload: { name?: string; listIds?: string[] }
+) {
   return prisma.cotactFolder.update({
     where: { id },
     data: {
       name: payload.name,
-      listIds: payload.listIds ? {
-        push: payload.listIds,
-      } : undefined,
+      // FIX: was `push` — should be `set` to replace, not append
+      listIds: payload.listIds ? { set: payload.listIds } : undefined,
     },
   });
 }
 
-export async function createContactGroupInDb(userId: string, payload: {
-  name: string;
-  contactIds: string[];
-}) {
+export async function deleteContactFolderFromDb(id: string) {
+  return prisma.cotactFolder.delete({ where: { id } });
+}
+
+export async function getAllContactFoldersFromDb(userId: string, role?: string) {
+  if (role === "OWNER") {
+    return prisma.cotactFolder.findMany({ orderBy: { createdAt: "desc" } });
+  }
+
+  if (role === "ADMIN") {
+    const poolUserIds = await getAdminUserPool(userId);
+    return prisma.cotactFolder.findMany({
+      where: {
+        OR: [{ userId: { in: poolUserIds } }, { userId: null }],
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  if (role === "AGENT") {
+    // Agents see folders that contain lists they are assigned to
+    const assignedLists = await prisma.contactList.findMany({
+      where: { agentIds: { has: userId } },
+      select: { id: true },
+    });
+    const listIds = assignedLists.map((l) => l.id);
+
+    return prisma.cotactFolder.findMany({
+      where: { listIds: { hasSome: listIds } },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  return prisma.cotactFolder.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CONTACT GROUPS
+// ---------------------------------------------------------------------------
+
+export async function createContactGroupInDb(
+  userId: string,
+  payload: { name: string; contactIds: string[] }
+) {
   return prisma.contactGroups.create({
     data: {
       name: payload.name,
@@ -345,75 +577,166 @@ export async function createContactGroupInDb(userId: string, payload: {
   });
 }
 
-
-export async function updateContactGroupInDb(id: string, payload: {
-  name?: string;
-  contactIds?: string[];
-}) {
+export async function updateContactGroupInDb(
+  id: string,
+  payload: { name?: string; contactIds?: string[] }
+) {
   return prisma.contactGroups.update({
     where: { id },
     data: {
       name: payload.name,
-      contactIds: payload.contactIds ? {
-        push: payload.contactIds,
-      } : undefined,
+      // FIX: was `push` — should be `set` to replace, not append
+      contactIds: payload.contactIds ? { set: payload.contactIds } : undefined,
     },
   });
-}
-
-export async function deleteContactListFromDb(id: string) {
-  return prisma.contactList.delete({ where: { id } });
-}
-
-export async function deleteContactFolderFromDb(id: string) {
-  return prisma.cotactFolder.delete({ where: { id } });
 }
 
 export async function deleteContactGroupFromDb(id: string) {
   return prisma.contactGroups.delete({ where: { id } });
 }
 
-export async function getAllContactListsFromDb(userId: string) {
-  return prisma.contactList.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-  });
-}
+export async function getAllContactGroupsFromDb(userId: string, role?: string) {
+  if (role === "OWNER") {
+    return prisma.contactGroups.findMany({ orderBy: { createdAt: "desc" } });
+  }
 
-export async function getAllContactFoldersFromDb(userId: string) {
-  return prisma.cotactFolder.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-  });
-}
-
-export async function getAllContactGroupsFromDb(userId: string) {
-  return prisma.contactGroups.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-  });
-}
-
-export async function getContactsByListFromDb(listId: string) {
-  return prisma.$transaction(async (tx) => {
-    const list = await tx.contactList.findUnique({
-      where: { id: listId },
-      select: {
-        contactIds: true,
-      },
-    });
-
-    if (!list) throwHttp(404, "Contact list not found");
-
-    const contacts = await tx.contact.findMany({
-      where: { id: { in: list.contactIds } },
-      include: {
-        emails: true,
-        phones: true,
+  if (role === "ADMIN") {
+    const poolUserIds = await getAdminUserPool(userId);
+    return prisma.contactGroups.findMany({
+      where: {
+        OR: [{ userId: { in: poolUserIds } }, { userId: null }],
       },
       orderBy: { createdAt: "desc" },
     });
+  }
 
-    return contacts;
+  if (role === "AGENT") {
+    // Agents see groups created by their admin (identified via createdById)
+    // We look up who this agent's admin is first
+    const agent = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { createdById: true },
+    });
+    const adminId = agent?.createdById;
+
+    return prisma.contactGroups.findMany({
+      where: {
+        OR: [
+          // Groups that include this agent's contacts
+          { contactIds: { hasSome: await getAgentContactIds(userId) } },
+          // Groups owned by their admin
+          ...(adminId ? [{ userId: adminId }] : []),
+          // System groups
+          { userId: null },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  return prisma.contactGroups.findMany({
+    where: {
+      OR: [{ userId: userId }, { userId: null }],
+    },
+    orderBy: { createdAt: "desc" },
   });
+}
+
+/** Small helper to get contact IDs belonging to a specific agent */
+async function getAgentContactIds(agentId: string): Promise<string[]> {
+  const contacts = await prisma.contact.findMany({
+    where: { userId: agentId },
+    select: { id: true },
+  });
+  return contacts.map((c) => c.id);
+}
+
+
+export async function assignAgentsToListInDb(listId: string, agentIds: string[]) {
+  return prisma.contactList.update({
+    where: { id: listId },
+    data: { agentIds: { set: agentIds } },  // only touches agentIds, never contactIds
+  });
+}
+
+export async function assignContactToGroupsInDb(
+  contactId: string,
+  groupIds: string[],
+  userId: string
+) {
+  return prisma.$transaction(async (tx) => {
+    // Fetch ALL groups visible to this user (owned by them, their pool, or system)
+    // so we can correctly add/remove membership
+    const allGroups = await tx.contactGroups.findMany({
+      where: {
+        OR: [{ userId: userId }, { userId: null }],
+      },
+      select: { id: true, contactIds: true },
+    });
+
+    for (const group of allGroups) {
+      const isTarget = groupIds.includes(group.id);
+      const currentlyMember = group.contactIds.includes(contactId);
+
+      if (isTarget && !currentlyMember) {
+        await tx.contactGroups.update({
+          where: { id: group.id },
+          data: { contactIds: { push: contactId } },
+        });
+      } else if (!isTarget && currentlyMember) {
+        await tx.contactGroups.update({
+          where: { id: group.id },
+          data: {
+            contactIds: group.contactIds.filter((id) => id !== contactId),
+          },
+        });
+      }
+    }
+
+    return tx.contact.findUnique({
+      where: { id: contactId },
+      include: { emails: true, phones: true },
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// LEAD SHEET EMAIL
+// ---------------------------------------------------------------------------
+
+export async function sendLeadSheetEmailInDb(
+  contactId: string,
+  leadSheetId: string,
+  recipientEmail: string
+) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { fullName: true, leadsheetValues: true },
+  });
+  if (!contact) throwHttp(404, "Contact not found");
+
+  const leadSheet = await prisma.leadSheet.findUnique({
+    where: { id: leadSheetId },
+    include: { questions: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!leadSheet) throwHttp(404, "Lead Sheet not found");
+
+  const answers = (contact.leadsheetValues || {}) as Record<string, any>;
+  const questionsAndAnswers = leadSheet.questions.map((q) => ({
+    text: q.text,
+    answer: answers[q.id] ?? null,
+  }));
+
+  const html = leadSheetEmailTemp(
+    contact.fullName,
+    leadSheet.title,
+    questionsAndAnswers
+  );
+  await sendEmail(
+    recipientEmail,
+    `Lead Sheet: ${leadSheet.title} - ${contact.fullName}`,
+    html
+  );
+
+  return true;
 }
