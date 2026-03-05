@@ -162,7 +162,7 @@
         <p class="subtitle">Securely add your card details via Zoho Hosted Pages</p>
         
         <div class="info-box">
-            Due to PCI compliance and Zoho security policies, card details cannot be sent directly via API. Click the button below to generate a secure payment link.
+            <strong>Step 1:</strong> Click below to add/update your card details via Zoho. This is required for auto-collecting payments.
         </div>
         
         <button id="generateBtn">
@@ -170,49 +170,115 @@
             <div class="loader" id="loader"></div>
         </button>
 
-        <div id="result"></div>
+        <div id="paymentResult"></div>
+
+        <hr style="margin: 30px 0; border: 0; border-top: 1px solid var(--border);">
+
+        <div class="info-box" style="background-color: rgba(16, 185, 129, 0.05); border-left-color: var(--success);">
+            <strong>Step 2:</strong> Once the card is added, select a plan and create the subscription.
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 14px;">Select Subscription Plan</label>
+            <select id="planSelect" style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-family: inherit; font-size: 14px;">
+                <option value="starter_123">Starter Plan (STARTER)</option>
+                <option value="professional_123" selected>Professional Plan (PROFESSIONAL)</option>
+                <option value="enterprise_123">Enterprise Plan (ENTERPRISE)</option>
+            </select>
+        </div>
+
+        <button id="subscribeBtn" style="background-color: var(--success);">
+            <span id="subBtnText">Create Subscription</span>
+            <div class="loader" id="subLoader"></div>
+        </button>
+
+        <div id="subResult"></div>
     </div>
 
     <script>
         const generateBtn = document.getElementById('generateBtn');
-        const btnText = document.getElementById('btnText');
         const loader = document.getElementById('loader');
-        const resultDiv = document.getElementById('result');
+        const paymentResultDiv = document.getElementById('paymentResult');
 
+        // Step 1: Generate Payment Link
         generateBtn.addEventListener('click', async () => {
-            // UI State
             generateBtn.disabled = true;
             loader.style.display = 'block';
-            resultDiv.style.display = 'none';
+            paymentResultDiv.style.display = 'none';
 
             try {
                 const response = await fetch('/api/subscriptions/update-card-link', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                    headers: { 'Content-Type': 'application/json' }
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
                     const hostedPageUrl = data.data.hostedpage.url;
-                    resultDiv.className = 'success';
-                    resultDiv.innerHTML = `
+                    paymentResultDiv.className = 'success';
+                    paymentResultDiv.style.display = 'block';
+                    paymentResultDiv.innerHTML = `
                         <p>Link generated successfully!</p>
                         <a href="${hostedPageUrl}" class="payment-link" target="_blank">Open Secure Payment Form</a>
-                        <p style="margin-top: 10px; font-size: 12px; color: var(--text-muted)">Once you add the card, you can close the tab and return here.</p>
+                        <p style="margin-top: 10px; font-size: 12px; color: var(--text-muted)">Once finished, proceed to Step 2.</p>
                     `;
                 } else {
-                    resultDiv.className = 'error';
-                    resultDiv.textContent = `Error: ${data.message || 'Failed to generate link'}`;
+                    paymentResultDiv.className = 'error';
+                    paymentResultDiv.style.display = 'block';
+                    paymentResultDiv.textContent = `Error: ${data.message || 'Failed to generate link'}`;
                 }
             } catch (error) {
-                resultDiv.className = 'error';
-                resultDiv.textContent = `Network Error: ${error.message}`;
+                paymentResultDiv.className = 'error';
+                paymentResultDiv.style.display = 'block';
+                paymentResultDiv.textContent = `Network Error: ${error.message}`;
             } finally {
                 generateBtn.disabled = false;
                 loader.style.display = 'none';
+            }
+        });
+
+        // Step 2: Create Subscription
+        const subscribeBtn = document.getElementById('subscribeBtn');
+        const subLoader = document.getElementById('subLoader');
+        const subResultDiv = document.getElementById('subResult');
+        const planSelect = document.getElementById('planSelect');
+
+        subscribeBtn.addEventListener('click', async () => {
+            subscribeBtn.disabled = true;
+            subLoader.style.display = 'block';
+            subResultDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/subscriptions/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plan_code: planSelect.value })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    subResultDiv.className = 'success';
+                    subResultDiv.style.display = 'block';
+                    subResultDiv.innerHTML = `
+                        <p><strong>Success!</strong> Subscription created.</p>
+                        <div style="text-align: left; margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 200px; overflow: auto; background: #fff; padding: 10px; border: 1px solid #ddd;">
+                            ${JSON.stringify(data.data, null, 2)}
+                        </div>
+                    `;
+                } else {
+                    subResultDiv.className = 'error';
+                    subResultDiv.style.display = 'block';
+                    subResultDiv.textContent = `Error: ${data.message || 'Failed to create subscription'}`;
+                }
+            } catch (error) {
+                subResultDiv.className = 'error';
+                subResultDiv.style.display = 'block';
+                subResultDiv.textContent = `Network Error: ${error.message}`;
+            } finally {
+                subscribeBtn.disabled = false;
+                subLoader.style.display = 'none';
             }
         });
     </script>
