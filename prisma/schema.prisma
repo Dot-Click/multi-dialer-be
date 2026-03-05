@@ -206,6 +206,7 @@ model User {
   contactLists   ContactList[]
   contactFolders CotactFolder[]
   contactGroups  ContactGroups[]
+  contacts       Contact[]
 
   @@map("users")
 }
@@ -287,8 +288,10 @@ model Contact {
   tags           String[] @default([])
   notes          String?
   dataDialerId   String?
+  userId         String?
 
   dataDialer  DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
+  user        User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
   emails      ContactEmail[]
   phones      ContactPhone[]
   attachments Attachment[]

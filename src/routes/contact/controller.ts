@@ -27,20 +27,23 @@ import {
   uploadAttachmentInDb,
   getAttachmentsForContactInDb,
   deleteAttachmentFromDb,
+  assignAgentsToListInDb,
 } from "./service";
-import { createContactListSchema } from "@/schemas/contactlist.schema";
+import { createContactListSchema, updateContactListSchema } from "../../schemas/contactlist.schema";
 
 export const createContact = async (req: Request, res: Response): Promise<void> => {
   try {
     const payload = { ...req.body };
+    console.log("payload", payload)
     const result = (await validateData(createContactSchema, payload)) as any;
     if (!("data" in result)) {
       errorResponse(res, "Validation error", 400);
       return;
     }
 
-    const contact = await createContactInDb(result.data);
-    successResponse(res, 201, "Contact created", contact);
+    const userId = (req as any).user.id;
+    const contact = await createContactInDb({ ...result.data, userId });
+    successResponse(res, 200, "Contact created", contact);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
@@ -48,7 +51,9 @@ export const createContact = async (req: Request, res: Response): Promise<void> 
 
 export const getAllContacts = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contacts = await getAllContactsFromDb();
+    const userId = (req as any).user.id;
+    const role = (req as any).user.role;
+    const contacts = await getAllContactsFromDb(userId, role);
     successResponse(res, 200, "Contacts fetched", contacts);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -120,6 +125,13 @@ export const assignContactToList = async (req: Request, res: Response): Promise<
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
+}
+
+export const assignAgentsToList = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { agentIds } = req.body;
+  const updated = await assignAgentsToListInDb(id, agentIds);
+  successResponse(res, 200, "Agents assigned", updated);
 };
 
 export const assignContactToGroups = async (req: Request, res: Response): Promise<void> => {
@@ -162,7 +174,7 @@ export const updateContactList = async (req: Request, res: Response): Promise<vo
       return;
     }
     const payload = { ...req.body };
-    const result = (await validateData(createContactListSchema.partial(), payload)) as any;
+    const result = (await validateData(updateContactListSchema, payload)) as any;
     if (!("data" in result)) {
       errorResponse(res, "Validation error", 400);
       return;
@@ -298,7 +310,7 @@ export const deleteContactGroup = async (req: Request, res: Response): Promise<v
 
 export const getAllContactLists = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contactLists = await getAllContactListsFromDb((req as any).user.id);
+    const contactLists = await getAllContactListsFromDb((req as any).user.id, (req as any).user.role);
     successResponse(res, 200, "Contact lists fetched", contactLists);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -307,7 +319,7 @@ export const getAllContactLists = async (req: Request, res: Response): Promise<v
 
 export const getAllContactFolders = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contactFolders = await getAllContactFoldersFromDb((req as any).user.id);
+    const contactFolders = await getAllContactFoldersFromDb((req as any).user.id, (req as any).user.role);
     successResponse(res, 200, "Contact folders fetched", contactFolders);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -316,7 +328,7 @@ export const getAllContactFolders = async (req: Request, res: Response): Promise
 
 export const getAllContactGroups = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contactGroups = await getAllContactGroupsFromDb((req as any).user.id);
+    const contactGroups = await getAllContactGroupsFromDb((req as any).user.id, (req as any).user.role);
     successResponse(res, 200, "Contact groups fetched", contactGroups);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -331,7 +343,9 @@ export const getContactsByList = async (req: Request, res: Response): Promise<vo
       errorResponse(res, "Contact list id is required", 400);
       return;
     }
-    const contacts = await getContactsByListFromDb(lid);
+    const userId = (req as any).user.id;
+    const role = (req as any).user.role;
+    const contacts = await getContactsByListFromDb(lid, userId, role);
     successResponse(res, 200, "Contacts fetched", contacts);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);

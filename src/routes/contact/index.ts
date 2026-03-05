@@ -24,6 +24,7 @@ import {
   uploadAttachment,
   getAttachments,
   deleteAttachment,
+  assignAgentsToList,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -56,6 +57,8 @@ router.delete("/folder/:id", deleteContactFolder);
 router.post("/group", createContactGroup);
 router.patch("/group/:id", updateContactGroup);
 router.delete("/group/:id", deleteContactGroup);
+
+router.patch("/list/:id/agents", assignAgentsToList);
 
 
 export default router;
