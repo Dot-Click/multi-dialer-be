@@ -24,6 +24,9 @@ import {
   assignContactToListInDb,
   assignContactToGroupsInDb,
   sendLeadSheetEmailInDb,
+  uploadAttachmentInDb,
+  getAttachmentsForContactInDb,
+  deleteAttachmentFromDb,
 } from "./service";
 import { createContactListSchema } from "@/schemas/contactlist.schema";
 
@@ -347,6 +350,51 @@ export const sendLeadSheetEmail = async (req: Request, res: Response): Promise<v
 
     await sendLeadSheetEmailInDb(id, leadSheetId, recipientEmail);
     successResponse(res, 200, "Lead sheet email sent successfully", null);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const uploadAttachment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const file = req.file;
+
+    if (!id || !file) {
+      errorResponse(res, "Contact ID and File are required", 400);
+      return;
+    }
+
+    const attachment = await uploadAttachmentInDb(id, file);
+    successResponse(res, 201, "Attachment uploaded successfully", attachment);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const getAttachments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      errorResponse(res, "Contact ID is required", 400);
+      return;
+    }
+    const attachments = await getAttachmentsForContactInDb(id);
+    successResponse(res, 200, "Attachments fetched successfully", attachments);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const deleteAttachment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { attachmentId } = req.params;
+    if (!attachmentId) {
+      errorResponse(res, "Attachment ID is required", 400);
+      return;
+    }
+    await deleteAttachmentFromDb(attachmentId);
+    successResponse(res, 200, "Attachment deleted successfully", null);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

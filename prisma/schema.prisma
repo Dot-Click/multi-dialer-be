@@ -288,11 +288,12 @@ model Contact {
   notes          String?
   dataDialerId   String?
 
-  dataDialer DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
-  emails     ContactEmail[]
-  phones     ContactPhone[]
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
+  dataDialer  DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
+  emails      ContactEmail[]
+  phones      ContactPhone[]
+  attachments Attachment[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   callRecords CallRecord[]
 
@@ -305,6 +306,20 @@ model Contact {
 
   @@index([dataDialerId])
   @@map("contacts")
+}
+
+model Attachment {
+  id        String   @id @default(cuid())
+  fileName  String
+  fileUrl   String
+  fileSize  Int
+  mimeType  String?
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("attachments")
 }
 
 model ContactEmail {

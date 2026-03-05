@@ -1,5 +1,8 @@
 import prisma from "../../lib/prisma";
 import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
+import path from "path";
+import fs from "fs";
+import { cloudinaryUploader } from "../../utils/handler";
 
 function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
@@ -87,6 +90,7 @@ export async function getContactByIdFromDb(id: string) {
     include: {
       emails: true,
       phones: true,
+      attachments: true,
       callRecords: {
         include: {
           user: {
@@ -103,6 +107,55 @@ export async function getContactByIdFromDb(id: string) {
   });
   if (!contact) throwHttp(404, "Contact not found");
   return contact;
+}
+
+// ... other functions ...
+
+export async function uploadAttachmentInDb(contactId: string, file: Express.Multer.File) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { id: true },
+  });
+  if (!contact) throwHttp(404, "Contact not found");
+
+  const filePath = path.join("./uploads", file.filename);
+  const cloudinaryResult = await cloudinaryUploader(filePath);
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+
+  if (!cloudinaryResult || !cloudinaryResult.secure_url) {
+    throwHttp(500, "Failed to upload to Cloudinary");
+  }
+
+  return prisma.attachment.create({
+    data: {
+      fileName: file.originalname,
+      fileUrl: cloudinaryResult.secure_url,
+      fileSize: file.size,
+      mimeType: file.mimetype,
+      contactId,
+    },
+  });
+}
+
+export async function getAttachmentsForContactInDb(contactId: string) {
+  return prisma.attachment.findMany({
+    where: { contactId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function deleteAttachmentFromDb(attachmentId: string) {
+  const attachment = await prisma.attachment.findUnique({
+    where: { id: attachmentId },
+  });
+  if (!attachment) throwHttp(404, "Attachment not found");
+
+  return prisma.attachment.delete({
+    where: { id: attachmentId },
+  });
 }
 
 export async function updateContactInDb(
