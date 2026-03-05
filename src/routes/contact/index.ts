@@ -19,7 +19,8 @@ import {
   deleteContactGroup,
   getContactsByList,
   assignContactToList,
-  assignContactToGroups
+  assignContactToGroups,
+  sendLeadSheetEmail,
 } from "./controller";
 
 const router = Router();
@@ -33,6 +34,7 @@ router.get("/:id", getContactById);
 router.put("/:id", updateContact);
 router.patch("/:id/assign", assignContactToList);
 router.patch("/:id/groups", assignContactToGroups);
+router.post("/:id/leadsheet/send-email", sendLeadSheetEmail);
 router.delete("/:id", deleteContact);
 router.post("/create", createContact);
 router.post("/list", createContactList);

@@ -28,6 +28,7 @@ export const createContactSchema = z.object({
   notes: z.string().optional(),
   contactListId: z.string().optional(),
   miscValues: z.record(z.string(), z.any()).optional(),
+  leadsheetValues: z.record(z.string(), z.any()).optional(),
 });
 
 export const updateContactSchema = z.object({
@@ -47,6 +48,7 @@ export const updateContactSchema = z.object({
   phones: z.array(contactPhoneSchema).optional(),
   notes: z.string().optional(),
   miscValues: z.record(z.string(), z.any()).optional(),
+  leadsheetValues: z.record(z.string(), z.any()).optional(),
 });
 
 

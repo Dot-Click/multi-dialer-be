@@ -23,6 +23,7 @@ import {
   getContactsByListFromDb,
   assignContactToListInDb,
   assignContactToGroupsInDb,
+  sendLeadSheetEmailInDb,
 } from "./service";
 import { createContactListSchema } from "@/schemas/contactlist.schema";
 
@@ -329,6 +330,23 @@ export const getContactsByList = async (req: Request, res: Response): Promise<vo
     }
     const contacts = await getContactsByListFromDb(lid);
     successResponse(res, 200, "Contacts fetched", contacts);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const sendLeadSheetEmail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { leadSheetId, recipientEmail } = req.body;
+
+    if (!id || !leadSheetId || !recipientEmail) {
+      errorResponse(res, "Contact ID, Lead Sheet ID and Recipient Email are required", 400);
+      return;
+    }
+
+    await sendLeadSheetEmailInDb(id, leadSheetId, recipientEmail);
+    successResponse(res, 200, "Lead sheet email sent successfully", null);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

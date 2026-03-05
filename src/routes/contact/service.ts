@@ -1,4 +1,5 @@
 import prisma from "../../lib/prisma";
+import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
 
 function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
@@ -17,6 +18,7 @@ export async function createContactInDb(payload: {
   notes?: string;
   contactListId?: string;
   miscValues?: any;
+  leadsheetValues?: any;
 }) {
   return prisma.$transaction(async (tx) => {
     if (payload.contactListId) {
@@ -37,6 +39,7 @@ export async function createContactInDb(payload: {
         tags: payload.tags ?? [],
         notes: payload.notes ?? "",
         miscValues: payload.miscValues ?? {},
+        leadsheetValues: payload.leadsheetValues ?? {},
         dataDialerId: payload.dataDialerId,
         emails: {
           create: payload.emails.map((e) => ({
@@ -121,6 +124,7 @@ export async function updateContactInDb(
     phones: { number: string; type: any }[];
     notes: string;
     miscValues: any;
+    leadsheetValues: any;
   }>
 ) {
   const existing = await prisma.contact.findUnique({
@@ -145,6 +149,7 @@ export async function updateContactInDb(
       tags: payload.tags,
       notes: payload.notes,
       miscValues: payload.miscValues,
+      leadsheetValues: payload.leadsheetValues,
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
@@ -416,4 +421,31 @@ export async function getContactsByListFromDb(listId: string) {
 
     return contacts;
   });
+}
+
+export async function sendLeadSheetEmailInDb(contactId: string, leadSheetId: string, recipientEmail: string) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { fullName: true, leadsheetValues: true }
+  });
+
+  if (!contact) throwHttp(404, "Contact not found");
+
+  const leadSheet = await prisma.leadSheet.findUnique({
+    where: { id: leadSheetId },
+    include: { questions: { orderBy: { createdAt: "asc" } } }
+  });
+
+  if (!leadSheet) throwHttp(404, "Lead Sheet not found");
+
+  const answers = (contact.leadsheetValues || {}) as Record<string, any>;
+  const questionsAndAnswers = leadSheet.questions.map(q => ({
+    text: q.text,
+    answer: answers[q.id] || null
+  }));
+
+  const html = leadSheetEmailTemp(contact.fullName, leadSheet.title, questionsAndAnswers);
+  await sendEmail(recipientEmail, `Lead Sheet: ${leadSheet.title} - ${contact.fullName}`, html);
+
+  return true;
 }

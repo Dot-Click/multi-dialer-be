@@ -296,9 +296,10 @@ model Contact {
 
   callRecords CallRecord[]
 
-  miscValues  Json?
-  miscFields  MiscField[]
-  miscFieldId String?
+  miscValues      Json?
+  leadsheetValues Json?
+  miscFields      MiscField[]
+  miscFieldId     String?
 
   calendar Calendar[]
 
@@ -568,7 +569,7 @@ model LeadSheetQuestion {
   leadSheet   LeadSheet @relation(fields: [leadSheetId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt   
+  updatedAt DateTime @updatedAt
 
   @@map("lead_sheet_questions")
 }
