@@ -32,11 +32,16 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
             if (endDate) where.createdAt.lte = new Date(endDate as string);
         }
 
-        // Fetch call records with leads and sessions
+        // Fetch call records with leads, contacts, and sessions
         const calls = await prisma.callRecord.findMany({
             where,
             include: {
                 lead: true,
+                contact: {
+                    include: {
+                        phones: true
+                    }
+                },
                 session: true
             },
             orderBy: { createdAt: "desc" },
@@ -60,13 +65,16 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
         // Assuming groups are linked to lists or contacts.
 
         const reportData = calls.map(call => {
+            const entity = call.contact || call.lead;
+            const phone = call.contact ? call.contact.phones?.[0]?.number : call.lead?.phone;
+
             return {
                 id: call.id,
-                name: call?.lead?.fullName,
-                address: `${call?.lead?.address}, ${call?.lead?.city}, ${call?.lead?.state} ${call?.lead?.zip}`,
+                name: entity?.fullName || "Unknown",
+                address: entity ? `${entity.address || ''}, ${entity.city || ''}, ${entity.state || ''} ${entity.zip || ''}`.replace(/^, | ,|, $/g, '').trim() || "N/A" : "N/A",
                 list: call.session?.listId ? (listMap.get(call.session.listId) || "Unknown List") : "N/A",
                 group: "N/A", // Group relation not explicitly in schema for CallRecord/Lead
-                phoneNumber: call?.lead?.phone,
+                phoneNumber: phone || "N/A",
                 result: call.disposition || call.status,
                 startTime: call.startTime,
                 duration: call.duration
