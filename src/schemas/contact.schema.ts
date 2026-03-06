@@ -12,14 +12,9 @@ export const contactPhoneSchema = z.object({
 
 export const createContactSchema = z.object({
   fullName: z.string().min(1),
-  address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   zip: z.string().optional(),
-  mailingAddress: z.string().optional(),
-  mailingCity: z.string().optional(),
-  mailingState: z.string().optional(),
-  mailingZip: z.string().optional(),
   source: z.string().optional(),
   tags: z.array(z.string().min(1)).default([]),
   dataDialerId: z.string().optional(),
@@ -27,26 +22,19 @@ export const createContactSchema = z.object({
   phones: z.array(contactPhoneSchema).default([]),
   notes: z.string().optional(),
   contactListId: z.string().optional(),
-  miscValues: z.record(z.string(), z.any()).optional(),
 });
 
 export const updateContactSchema = z.object({
   fullName: z.string().min(1).optional(),
-  address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   zip: z.string().optional(),
-  mailingAddress: z.string().optional(),
-  mailingCity: z.string().optional(),
-  mailingState: z.string().optional(),
-  mailingZip: z.string().optional(),
   source: z.string().optional(),
   tags: z.array(z.string().min(1)).optional(),
   dataDialerId: z.string().nullable().optional(),
   emails: z.array(contactEmailSchema).optional(),
   phones: z.array(contactPhoneSchema).optional(),
   notes: z.string().optional(),
-  miscValues: z.record(z.string(), z.any()).optional(),
 });
 
 

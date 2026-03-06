@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { createZohoSubscription, getZohoPlans, exchangeCodeForTokens, createZohoCustomer, createZohoUpdateCardPage } from "./services";
+import { createZohoSubscription, getZohoPlans, exchangeCodeForTokens, createZohoCustomer } from "./services";
 import { successResponse, errorResponse } from "@/utils/handler";
 import { envConfig } from "@/lib/config";
 import prisma from "@/lib/prisma";
@@ -76,73 +76,17 @@ export async function zohoAuthCallback(req: Request, res: Response): Promise<voi
   }
 }
 
-/**
- * Generates a Zoho Hosted Page URL for updating a card.
- */
-export async function getUpdateCardUrl(req: Request, res: Response): Promise<void> {
-  try {
-    const userId = req.user?.id;
-
-    if (!userId) {
-      errorResponse(res, "Unauthorized", 401);
-      return;
-    }
-
-    // 1. Create/Get Zoho Customer (if not already exists)
-    const customerData = {
-      display_name: req.user?.fullName || `Customer_${Date.now()}`,
-      email: req.user?.email || `customer_${Date.now()}@example.com`,
-    };
-
-    console.log("Creating/Getting Zoho customer for card update page:", customerData);
-    const customerRes: any = await createZohoCustomer(customerData);
-    const customer_id = customerRes?.customer?.customer_id;
-
-    if (!customer_id) {
-      throw new Error("Failed to get customer_id from Zoho response");
-    }
-
-    // 2. Generate Hosted Page URL
-    console.log("Generating Zoho update card page for customer:", customer_id);
-    const result = await createZohoUpdateCardPage(customer_id);
-
-    successResponse(res, 201, "Update card URL generated successfully", result);
-  } catch (error: any) {
-    console.error("Controller Error (getUpdateCardUrl):", error);
-    errorResponse(res, error.message || error, 500);
-  }
-}
-
 
 export async function createSubscription(req: Request, res: Response): Promise<void> {
   try {
     const { plan_code } = req.body;
-    const userId = req.user?.id;
 
     if (!plan_code) {
       errorResponse(res, "plan_code is required", 400);
       return;
     }
 
-    if (!userId) {
-      errorResponse(res, "Unauthorized: User ID not found", 401);
-      return;
-    }
-
-    // Map Zoho plan_code to local Plan enum
-    const planMapping: Record<string, "STARTER" | "PROFESSIONAL" | "ENTERPRISE"> = {
-      starter_123: "STARTER",
-      professional_123: "PROFESSIONAL",
-      enterprise_123: "ENTERPRISE",
-    };
-
-    const mappedPlan = planMapping[plan_code];
-    if (!mappedPlan) {
-      errorResponse(res, `Invalid plan_code: ${plan_code}`, 400);
-      return;
-    }
-
-    // 1. Create/Get Zoho Customer
+    // Use req.user if available (from protectRoute), otherwise use placeholders
     const customerData = {
       display_name: req.user?.fullName || `Customer_${Date.now()}`,
       email: req.user?.email || `customer_${Date.now()}@example.com`,
@@ -156,65 +100,20 @@ export async function createSubscription(req: Request, res: Response): Promise<v
       throw new Error("Failed to get customer_id from Zoho response");
     }
 
-    // 2. Create Zoho Subscription
     const subscriptionPayload = {
       customer_id: customer_id,
       auto_collect: true,
       plan: {
-        plan_code: plan_code,
-      },
+        plan_code: plan_code
+      }
     };
 
     console.log("Creating Zoho subscription for customer:", customer_id);
-    const result = await createZohoSubscription(subscriptionPayload) as any;
-    const zohoSub = result?.subscription;
-
-    if (!zohoSub) {
-      throw new Error("Failed to get subscription details from Zoho response");
-    }
-
-    // 3. Store in local database
-    // Map Zoho interval_unit to local BillingCycle enum
-    const billingCycleMapping: Record<string, "MONTHLY" | "YEARLY"> = {
-      months: "MONTHLY",
-      years: "YEARLY",
-    };
-
-    const billingCycle = billingCycleMapping[zohoSub.interval_unit] || "MONTHLY";
-
-    // Upsert the subscription (one plan type per user as per schema@@unique([userId, plan]))
-    const userSubscription = await prisma.userSubscription.upsert({
-      where: {
-        userId_plan: {
-          userId: userId,
-          plan: mappedPlan,
-        },
-      },
-      update: {
-        status: "ACTIVE", // Or map from zohoSub.status if needed
-        startDate: new Date(zohoSub.activated_at || zohoSub.current_term_starts_at),
-        endDate: zohoSub.expires_at ? new Date(zohoSub.expires_at) : (zohoSub.next_billing_at ? new Date(zohoSub.next_billing_at) : null),
-        billingCycle: billingCycle,
-        updatedAt: new Date(),
-      },
-      create: {
-        userId: userId,
-        plan: mappedPlan,
-        status: "ACTIVE",
-        startDate: new Date(zohoSub.activated_at || zohoSub.current_term_starts_at),
-        endDate: zohoSub.expires_at ? new Date(zohoSub.expires_at) : (zohoSub.next_billing_at ? new Date(zohoSub.next_billing_at) : null),
-        billingCycle: billingCycle,
-        usersCount: 1, // Defaulting to 1
-      },
-    });
-
-    successResponse(res, 201, "Subscription created and saved successfully", {
-      zoho: result,
-      local: userSubscription,
-    });
+    const result = await createZohoSubscription(subscriptionPayload);
+    successResponse(res, 201, "Customer and Subscription created successfully", result);
   } catch (error: any) {
     console.error("Controller Error (createSubscription):", error);
-    errorResponse(res, error.message || error, 500);
+    errorResponse(res, error, error.code === 400 ? 400 : 500);
   }
 }
 

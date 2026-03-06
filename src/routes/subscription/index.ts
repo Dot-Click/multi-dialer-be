@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createSubscription, listPlans, zohoAuth, zohoAuthCallback, getUpdateCardUrl } from "./controller";
+import { createSubscription, listPlans, zohoAuth, zohoAuthCallback } from "./controller";
 import { protectRoute, checkRole } from "../../middlewares/auth.middleware";
 
 const router = Router();
@@ -13,8 +13,6 @@ router.get("/plans", listPlans);
  * Route to create a new Zoho subscription.
  */
 router.post("/",protectRoute, createSubscription);
-
-router.post("/update-card-link", protectRoute, getUpdateCardUrl);
 
 router.get("/auth", zohoAuth);
 // Zoho callback route
