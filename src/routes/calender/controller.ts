@@ -110,8 +110,6 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
       endDate: payload.endDate ?? null,
       assignToId,
       assignById: userId,
-      contactId: payload.contactId,
-      leadId: payload.leadId,
       status: payload.status ?? "SET",
     });
 

@@ -214,14 +214,9 @@ export async function updateContactInDb(
   id: string,
   payload: Partial<{
     fullName: string;
-    address: string;
     city: string;
     state: string;
     zip: string;
-    mailingAddress: string;
-    mailingCity: string;
-    mailingState: string;
-    mailingZip: string;
     source: string;
     tags: string[];
     dataDialerId: string | null;
@@ -242,14 +237,9 @@ export async function updateContactInDb(
     where: { id },
     data: {
       fullName: payload.fullName,
-      address: payload.address,
       city: payload.city,
       state: payload.state,
       zip: payload.zip,
-      mailingAddress: payload.mailingAddress,
-      mailingCity: payload.mailingCity,
-      mailingState: payload.mailingState,
-      mailingZip: payload.mailingZip,
       source: payload.source,
       tags: payload.tags,
       notes: payload.notes,

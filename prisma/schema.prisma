@@ -785,7 +785,6 @@ model Lead {
   updatedAt DateTime       @updatedAt
 
   callRecords CallRecord[]
-  calendars   Calendar[]
 
   @@map("leads")
 }
@@ -909,19 +908,17 @@ model CallAnalysis {
 }
 
 model MiscField {
-  id             String   @id @default(uuid())
-  type           String
-  fieldName      String
-  options        String[]
-  countFrom      Int?
-  countTo        Int?
-  allowPastDates Boolean?
-
+  id              String         @id @default(uuid())
+  type            String
+  fieldName       String
+  options         String[]
+  countFrom       Int?
+  countTo         Int?
+  allowPastDates  Boolean?
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
-  contacts        Contact[]
 
   @@map("misc_fields")
 }
@@ -975,11 +972,6 @@ model Calendar {
   assignTo   User   @relation("CalendarAssignTo", fields: [assignToId], references: [id], onDelete: Cascade)
   assignById String
   assignBy   User   @relation("CalendarAssignBy", fields: [assignById], references: [id], onDelete: Cascade)
-
-  contactId String?
-  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  leadId    String?
-  lead      Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

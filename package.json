@@ -8,7 +8,6 @@
     "generate": "prisma generate",
     "seed": "tsx scripts/seeder.ts",
     "migrate": "prisma migrate dev",
-    "dbpush": "prisma db push",
     "studio": "prisma studio",
     "build": "tsc && tsc-alias && npm run copy-assets",
     "copy-assets": "node scripts/copy-assets.js",

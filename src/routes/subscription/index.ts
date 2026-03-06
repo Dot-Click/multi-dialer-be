@@ -14,8 +14,6 @@ router.get("/plans", listPlans);
  */
 router.post("/",protectRoute, createSubscription);
 
-router.post("/update-card-link", protectRoute, getUpdateCardUrl);
-
 router.get("/auth", zohoAuth);
 // Zoho callback route
 router.get("/callback", zohoAuthCallback);  
