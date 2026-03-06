@@ -35,8 +35,8 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             if (endDate) dateFilter.createdAt.lte = new Date(endDate as string);
         }
 
-        // 1. Dialing Time (Total duration of sessions in the period)
-        const sessions = await prisma.agentSession.aggregate({
+        // 1. Dialing Time (Total duration of calls in the period)
+        const calls = await prisma.callRecord.aggregate({
             where: {
                 userId,
                 ...(startDate ? { startTime: { gte: new Date(startDate as string) } } : {}),
@@ -44,7 +44,7 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             },
             _sum: { duration: true }
         });
-        const totalDialingSeconds = sessions._sum.duration || 0;
+        const totalDialingSeconds = calls._sum.duration || 0;
 
         // 2. Calls Made
         const callsMade = await prisma.callRecord.count({
@@ -86,17 +86,27 @@ export const getAgentReport: RequestHandler = async (req, res) => {
         // Appointments Set
         const appointmentsSet = await prisma.calendar.count({
             where: {
-                assignById: userId,
-                ...dateFilter
+                assignToId: userId,
+                ...(startDate || endDate ? {
+                    startDate: {
+                        ...(startDate ? { gte: new Date(startDate as string) } : {}),
+                        ...(endDate ? { lte: new Date(endDate as string) } : {})
+                    }
+                } : {})
             }
         });
 
         // Appointments Met
         const appointmentsMet = await prisma.calendar.count({
             where: {
-                assignById: userId,
+                assignToId: userId,
                 status: "MET",
-                ...dateFilter
+                ...(startDate || endDate ? {
+                    startDate: {
+                        ...(startDate ? { gte: new Date(startDate as string) } : {}),
+                        ...(endDate ? { lte: new Date(endDate as string) } : {})
+                    }
+                } : {})
             }
         });
 
