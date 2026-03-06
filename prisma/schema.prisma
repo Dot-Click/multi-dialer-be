@@ -655,22 +655,22 @@ model DialerSetting {
 }
 
 model Billing {
-  id              String       @id @default(uuid())
-  userId          String
-  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  invoiceNumber   String       @unique
-  plan            Plan
-  amount          Int
-  date            DateTime
-  status          Status
-  billingCycle    BillingCycle @default(MONTHLY)
-  usersCount      Int          @default(1)
-  nextBillingDate DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id                  String            @id @default(uuid())
+  userId              String
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoiceNumber       String            @unique
+  plan                Plan
+  amount              Int
+  date                DateTime
+  status              Status
+  billingCycle        BillingCycle      @default(MONTHLY)
+  usersCount          Int               @default(1)
+  nextBillingDate     DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
   zohooSubscriptionId String?
-  leadStore        LeadStore?
-  userSubscription UserSubscription?
+  leadStore           LeadStore?
+  userSubscription    UserSubscription?
 
   @@map("billings")
 }
@@ -754,16 +754,16 @@ model UserSubscription {
   plan   Plan
   status SubscriptionStatus @default(ACTIVE)
 
-  startDate    DateTime
-  endDate      DateTime?
+  startDate       DateTime
+  endDate         DateTime?
   zohooCustomerId String?
-  amount String?
-  usersCount   Int          @default(1)
-  billingCycle BillingCycle @default(MONTHLY)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  billingId    String?      @unique
-  billing      Billing?     @relation(fields: [billingId], references: [id])
+  amount          String?
+  usersCount      Int          @default(1)
+  billingCycle    BillingCycle @default(MONTHLY)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  billingId       String?      @unique
+  billing         Billing?     @relation(fields: [billingId], references: [id])
 
   @@map("user_subscriptions")
 }
