@@ -106,6 +106,8 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
       endDate: payload.endDate ?? null,
       assignToId,
       assignById: userId,
+      contactId: payload.contactId,
+      leadId: payload.leadId,
       status: payload.status ?? "SET",
     });
 
@@ -188,4 +190,31 @@ export const deleteCalendarEvent = async (req: Request, res: Response): Promise<
     errorResponse(res, error.message || "Internal server error", 500);
   }
 };
+
+export const getCalendarEventsByContact = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { contactId } = req.params;
+
+    const contact = await prisma.contact.findUnique({
+      where: { id: contactId },
+      select: { id: true },
+    });
+
+    if (!contact) {
+      errorResponse(res, "Contact not found", 404);
+      return;
+    }
+
+    const events = await prisma.calendar.findMany({
+      where: { contactId },
+      include: calendarInclude,
+      orderBy: { startDate: "asc" },
+    });
+
+    successResponse(res, 200, "Contact calendar events fetched", events);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 

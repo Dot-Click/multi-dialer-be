@@ -237,7 +237,7 @@ export const getDialerStatus: RequestHandler = async (req, res) => {
 export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const twiml = new VoiceResponse();
   const body = req.body;
-  
+
   // Robust parameter extraction
   const to = body.To || req.query.To;
   const from = body.From || req.query.From;
@@ -256,10 +256,10 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   if (caller.startsWith("client:") && agentId) {
     try {
       // Register with dialerService for status tracking
-      (dialerService as any).activeCalls.set(body.CallSid, { 
-        userId: agentId, 
+      (dialerService as any).activeCalls.set(body.CallSid, {
+        userId: agentId,
         sessionId: null,
-        isBrowserCall: true 
+        isBrowserCall: true
       });
 
       await prisma.callRecord.create({
@@ -299,8 +299,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
       statusCallbackMethod: "POST",
     }, to); // Dial the actual phone number
-  } 
-  
+  }
+
   // CASE B: Bridged Call or Inbound (Server-side startCalling or Direct Inbound)
   // We want to dial the Agent in the browser.
   else {
@@ -311,7 +311,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
-    
+
     // Bridge to the specific agent identity
     dial.client(agentId);
   }
@@ -453,12 +453,12 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
       return;
     }
 
-    
+
     const data = {
       numbers,
       pricing
     }
-    
+
     console.log("numbers", data);
     successResponse(res, 200, "Available numbers fetched successfully", data);
     return;
@@ -528,7 +528,7 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
     );
 
     const grant = new VoiceGrant({
-      outgoingApplicationSid: "AP2dfe20dda942797074ca416be8142b9c", 
+      outgoingApplicationSid: "AP2dfe20dda942797074ca416be8142b9c",
       incomingAllow: true,
     });
     token.addGrant(grant);
@@ -547,11 +547,16 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
 
 export const sendSms: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const { message } = req.body
+    const { to, message } = req.body;
+    if (!to || !message) {
+      errorResponse(res, { message: "Recipient number (to) and message are required" }, 400);
+      return;
+    }
+
     const service = await client.messages.create({
       body: message,
       from: fromNumber,
-      to: "+923413227282",
+      to: to,
     });
 
     console.log(service.sid);
@@ -621,12 +626,12 @@ export const getHistory: RequestHandler = async (req: Request, res: Response) =>
     const calls = await prisma.callRecord.findMany({
       where: {
         userId: agentId,
-        recordingUrl: {not: null}
+        recordingUrl: { not: null }
       },
       include: {
         contact: true,
       },
-      orderBy:{
+      orderBy: {
         createdAt: 'desc'
       },
       take: 10
@@ -650,8 +655,8 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
   try {
     const { sid } = req.params;
     if (!sid) {
-       errorResponse(res, { message: "Call SID is required" }, 400);
-       return;
+      errorResponse(res, { message: "Call SID is required" }, 400);
+      return;
     }
 
     const callRecord = await prisma.callRecord.findUnique({
@@ -659,8 +664,8 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
     });
 
     if (!callRecord) {
-       errorResponse(res, { message: "Call record not found" }, 404);
-       return;
+      errorResponse(res, { message: "Call record not found" }, 404);
+      return;
     }
 
     successResponse(res, 200, "Call status fetched successfully", { status: callRecord.status });
@@ -672,3 +677,56 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
   }
 };
 
+export const getCallSummary: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { sid } = req.params;
+    if (!sid) {
+      errorResponse(res, { message: "Call SID is required" }, 400);
+      return;
+    }
+
+    // 1. Check for analysis first
+    const analysis = await prisma.callAnalysis.findUnique({
+      where: { callSid: sid },
+      select: {
+        aiSummary: true,
+        sentiment: true,
+        recordingUrl: true,
+      }
+    });
+
+    if (analysis) {
+      successResponse(res, 200, "Call summary fetched successfully", analysis);
+      return;
+    }
+
+    // 2. If no analysis, check the call record status to see if it's still "cooking"
+    const callRecord = await prisma.callRecord.findUnique({
+      where: { callSid: sid }
+    });
+
+    if (!callRecord) {
+      errorResponse(res, { message: "Call record not found" }, 404);
+      return;
+    }
+
+    // 3. Determine if it's truly missing or just taking time
+    const isCompleted = callRecord.status === "completed";
+
+    if (isCompleted && callRecord.endTime) {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      if (new Date(callRecord.endTime) < fiveMinutesAgo) {
+        successResponse(res, 200, "Call analysis is unavailable", { status: "unavailable" });
+        return;
+      }
+    }
+
+    // If not completed or completed recently, assume it's still processing
+    successResponse(res, 200, "Call analysis is still processing", { status: "processing" });
+    return;
+  } catch (error: any) {
+    console.error("Get call summary failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};

@@ -93,6 +93,17 @@ export class DialerService {
     const queue = this.userQueues.get(userId);
     if (!queue || queue.isEmpty()) return;
 
+    // 0. Check TCPA hours & Autodialing toggle
+    const { isAllowed, autodialingEnabled } = await this.checkCompliance(userId);
+    if (!autodialingEnabled) {
+      console.log(`[processQueue] Autodialing is DISABLED for user ${userId}.`);
+      return;
+    }
+    if (!isAllowed) {
+      console.log(`[processQueue] User ${userId} is outside calling hours.`);
+      return;
+    }
+
     // 1. Get user capacity (simultaneous lines)
     const capacity = await this.getUserCapacity(userId);
 
@@ -145,6 +156,32 @@ export class DialerService {
     } catch (error) {
       console.error(`Error fetching capacity for user ${userId}:`, error);
       return 1;
+    }
+  }
+
+  private async checkCompliance(userId: string): Promise<{ isAllowed: boolean; autodialingEnabled: boolean }> {
+    try {
+      const settings = await prisma.system_Setting.findFirst({
+        where: { userId },
+        include: { regulatorySetting: true },
+      });
+
+      if (!settings || !settings.regulatorySetting) {
+        return { isAllowed: true, autodialingEnabled: true }; // Default to allowed if no settings
+      }
+
+      const { tcpaFrom, tcpaTo, tcpaAutodialing } = settings.regulatorySetting;
+
+      // Convert current time to string "HH:mm"
+      const now = new Date();
+      const currentStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+      const isAllowed = currentStr >= tcpaFrom && currentStr <= tcpaTo;
+
+      return { isAllowed, autodialingEnabled: tcpaAutodialing };
+    } catch (error) {
+      console.error(`Error checking compliance for user ${userId}:`, error);
+      return { isAllowed: true, autodialingEnabled: true };
     }
   }
 
@@ -284,10 +321,10 @@ export class DialerService {
     // Update CallRecord in DB
     try {
       const callRecord = await (prisma.callRecord as any).findUnique({ where: { callSid: sid } });
-      
+
       if (callRecord) {
         const updateData: any = { status: twilioStatus };
-        
+
         if (isTerminal) {
           const endTime = new Date();
           const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000); // in seconds
@@ -320,8 +357,8 @@ export class DialerService {
 
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
-      
-      
+
+
       const transcription = await groq.audio.transcriptions.create({
         url: cloudinaryUrl,
         model: "whisper-large-v3",
@@ -330,28 +367,28 @@ export class DialerService {
       });
       // AI Sentiments Logic should be implemented here
       const sentimentAnalysis = await this.analyzeSentiment(transcription.text);
-      
+
       // console.log("sentimentAnalysis",sentimentAnalysis)
-      
+
       Promise.allSettled([
         await prisma.callRecord.update({
           where: { callSid: callSid },
           data: { recordingUrl: cloudinaryUrl },
-      }),
+        }),
         await prisma.callAnalysis.upsert({
           where: { callSid: callSid },
-        update: { recordingUrl: cloudinaryUrl },
-        create: {
-          callSid: callSid,
-          leadId: "",
-          recordingUrl: cloudinaryUrl,
-          sentiment: sentimentAnalysis?.sentiment || "", // Placeholder for now
-          confidence: sentimentAnalysis?.confidence || 0,
-          aiSummary: sentimentAnalysis?.summary || "",
-          transcript: transcription.text
-        }
-      })
-    ])  
+          update: { recordingUrl: cloudinaryUrl },
+          create: {
+            callSid: callSid,
+            leadId: "",
+            recordingUrl: cloudinaryUrl,
+            sentiment: sentimentAnalysis?.sentiment || "", // Placeholder for now
+            confidence: sentimentAnalysis?.confidence || 0,
+            aiSummary: sentimentAnalysis?.summary || "",
+            transcript: transcription.text
+          }
+        })
+      ])
       console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
     } catch (error) {
       console.error("Failed to handle recording update:", error);

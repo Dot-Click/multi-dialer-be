@@ -6,7 +6,7 @@ export async function insertMiscFieldInDb(payload: any, userId: string) {
   try {
     // Validate payload with Zod
     const result = await validateData(createMiscFieldSchema, payload) as any;
-
+    console.log(result)
     if (!('data' in result)) {
       throw { errors: result };
     }

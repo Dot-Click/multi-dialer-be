@@ -18,13 +18,15 @@ import IntegrationRoute from "./systemSettings/integration"
 import calendarRoutes from "./calender"
 import actionplansRoutes from "./systemSettings/actionplan"
 import leadSheetRoutes from "./systemSettings/leadSheet"
+import regulatoryRoutes from "./systemSettings/regulatory"
+import auditLogRoutes from "./systemSettings/audit"
 import callingRoutes from "./calling"
 import contactRoutes from "./contact"
 import contactListRoutes from "./contactlist"
 import userRoutes from "./user"
 import companyRoutes from "./company"
 import reportRoutes from "./reports"
-// import subscriptionRoutes from "./subscription"
+import subscriptionRoutes from "./subscription"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { envConfig } from "@/lib/config";
 
@@ -53,6 +55,8 @@ router.use("/system-settings/notification-settings", protectRoute, checkRole(["A
 router.use("/system-settings/action-plans", protectRoute, checkRole(["ADMIN", "OWNER"]), actionplansRoutes)
 router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWNER"]), leadSheetRoutes)
 router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "OWNER"]), IntegrationRoute)
+router.use("/system-settings/regulatory", protectRoute, checkRole(["ADMIN", "OWNER"]), regulatoryRoutes)
+router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER"]), auditLogRoutes)
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)
@@ -64,7 +68,7 @@ router.use("/reports", protectRoute, reportRoutes)
 
 router.use("/calling", callingRoutes)
 
-// router.use("/subscriptions", subscriptionRoutes)
+router.use("/subscriptions", subscriptionRoutes)
 
 router.get("/verified", (req, res) => {
   res.send(`<h1 style="text-align: center; flex: 1; justify-content: center; align-items: center; height: 100vh;">Email verified successfully <a href="${envConfig.FRONTEND_URL}/admin/login">Go to app</a></h1>`)

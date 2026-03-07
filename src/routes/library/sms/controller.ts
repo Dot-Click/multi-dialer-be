@@ -7,22 +7,45 @@ import { updateSmsSchema } from "../../../schemas/sms.schema";
 
 export const getAllSmsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id: userId } = req.user!;
+    const { id: userId, role } = req.user!;
 
-    // Get user's library
-    const library = await prisma.library.findFirst({
-      where: { userId },
+    // Find the user with their creator's info
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, createdById: true }
     });
 
-    if (!library) {
-      errorResponse(res, "Library not found for user", 404);
+    if (!user) {
+      errorResponse(res, "User not found", 404);
       return;
     }
 
-    // Get all SMS templates from user's library
+    // Determine which library IDs to include
+    const libraryIds: string[] = [];
+
+    // Always include user's own library
+    const userLibrary = await prisma.library.findFirst({
+      where: { userId },
+    });
+    if (userLibrary) libraryIds.push(userLibrary.id);
+
+    // If agent, also include their creator's (admin's) library
+    if (user.role === "AGENT" && user.createdById) {
+      const creatorLibrary = await prisma.library.findFirst({
+        where: { userId: user.createdById },
+      });
+      if (creatorLibrary) libraryIds.push(creatorLibrary.id);
+    }
+
+    if (libraryIds.length === 0) {
+      successResponse(res, 200, "No SMS templates available", []);
+      return;
+    }
+
+    // Get all SMS templates from allowed libraries
     const smsTemplates = await prisma.sMSTemplate.findMany({
       where: {
-        libraryId: library.id,
+        libraryId: { in: libraryIds },
       },
       select: {
         id: true,
