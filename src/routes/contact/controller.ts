@@ -28,6 +28,8 @@ import {
   getAttachmentsForContactInDb,
   deleteAttachmentFromDb,
   assignAgentsToListInDb,
+  moveToDncInDb,
+  getDncListFromDb,
 } from "./service";
 import { createContactListSchema, updateContactListSchema } from "../../schemas/contactlist.schema";
 
@@ -105,7 +107,7 @@ export const deleteContact = async (req: Request, res: Response): Promise<void> 
       errorResponse(res, "Contact id is required", 400);
       return;
     }
-    await deleteContactFromDb(id);
+    await deleteContactFromDb(id, (req as any).user.id);
     successResponse(res, 200, "Contact deleted successfully", null);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -413,6 +415,39 @@ export const deleteAttachment = async (req: Request, res: Response): Promise<voi
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
 };
+
+export const moveToDnc = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { phoneIds } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!id) {
+      errorResponse(res, "Contact id is required", 400);
+      return;
+    }
+
+    if (!phoneIds || !Array.isArray(phoneIds) || phoneIds.length === 0) {
+      errorResponse(res, "phoneIds array is required", 400);
+      return;
+    }
+
+    const result = await moveToDncInDb(id, userId, phoneIds);
+    successResponse(res, 200, "Successfully moved to DNC", result);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const getDncList = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const dncList = await getDncListFromDb();
+    successResponse(res, 200, "DNC list fetched", dncList);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
 
 
 
