@@ -9,31 +9,47 @@ import {
 import { validateData } from "../../../middlewares/vald.middleware";
 
 // Create or initialize Appearance
+
 export const createAppearance: RequestHandler = async (req, res): Promise<void> => {
   try {
     const { id: userId } = req.user!;
 
-    const result = await validateData(createAppearanceSchema, req.body) as any;
+    //  Validate request body
+    const result = (await validateData(createAppearanceSchema, req.body)) as any;
     if (!("data" in result)) {
       errorResponse(res, { errors: result }, 400);
       return;
     }
 
+    // Get system setting for user
     const systemSetting = await prisma.system_Setting.findFirst({ where: { userId } });
     if (!systemSetting) {
       errorResponse(res, "SystemSettings not found for user", 404);
       return;
     }
 
+    //  Check if appearance exists
     const existingAppearance = await prisma.appearance.findFirst({
-      where: { systemSettingId: systemSetting.id }
+      where: { systemSettingId: systemSetting.id },
     });
 
     if (existingAppearance) {
-      errorResponse(res, "Appearance already created for this user. You can only update.", 400);
+      // If exists, update it automatically
+      const updatedAppearance = await prisma.appearance.update({
+        where: { id: existingAppearance.id },
+        data: result.data,
+        include: {
+          systemSetting: {
+            include: { user: { select: { id: true, fullName: true, email: true } } },
+          },
+        },
+      });
+
+      successResponse(res, 200, "Appearance updated successfully", updatedAppearance);
       return;
     }
 
+    // If not exists, create new
     const newAppearance = await insertAppearanceInDb(result.data, userId);
 
     const populatedAppearance = await prisma.appearance.findUnique({
@@ -45,7 +61,7 @@ export const createAppearance: RequestHandler = async (req, res): Promise<void> 
       },
     });
 
-    successResponse(res, 201, "Appearance created", populatedAppearance);
+    successResponse(res, 201, "Appearance created successfully", populatedAppearance);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
   }
