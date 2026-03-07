@@ -179,6 +179,7 @@ model User {
   libraries        Library[]
   reportAnalytics  Report_Analytic[]
   complianceDNC    Compliance_DNC[]
+  auditLogs        AuditLog[]
 
   systemSettings    System_Setting[]
   billings          Billing[]
@@ -339,6 +340,7 @@ model ContactPhone {
   id        String    @id @default(cuid())
   number    String
   type      PhoneType
+  isDnc     Boolean   @default(false)
   contactId String
   contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
@@ -532,6 +534,10 @@ model Report_Analytic {
 
 model Compliance_DNC {
   id        String   @id @default(uuid())
+  number    String
+  name      String?
+  email     String?
+  source    String?
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
@@ -554,11 +560,33 @@ model System_Setting {
   leadSheets   LeadSheet[]
 
   dialerSetting       DialerSetting?
+  regulatorySetting   RegulatorySetting?
   appearance          Appearance?
   notificationSetting NotificationSetting?
   integrations        Integration[]
 
   @@map("system_settings")
+}
+
+model RegulatorySetting {
+  id String @id @default(uuid())
+
+  // TCPA Settings
+  tcpaFrom        String  @default("08:00")
+  tcpaTo          String  @default("20:00")
+  tcpaAutodialing Boolean @default(false)
+
+  // GDPR Settings
+  gdprRetentionDays Int     @default(30)
+  gdprDeleteRelated Boolean @default(true)
+
+  systemSettingId String         @unique
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("regulatory_settings")
 }
 
 model LeadSheet {
@@ -1067,4 +1095,15 @@ model Company {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("companies")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  details   String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
 }

@@ -81,7 +81,7 @@ export async function createContactInDb(payload: {
       },
       include: {
         emails: true,
-        phones: true,
+        phones: { where: { isDnc: false } },
       },
     });
 
@@ -100,7 +100,13 @@ export async function getAllContactsFromDb(userId: string, role: string) {
   // OWNER — sees everything, no filter needed
   if (role === "OWNER") {
     return prisma.contact.findMany({
-      include: { emails: true, phones: true },
+      where: {
+        phones: { some: { isDnc: false } },
+      },
+      include: {
+        emails: true,
+        phones: { where: { isDnc: false } },
+      },
       orderBy: { createdAt: "desc" },
     });
   }
@@ -120,12 +126,20 @@ export async function getAllContactsFromDb(userId: string, role: string) {
 
     return prisma.contact.findMany({
       where: {
-        OR: [
-          { userId: { in: poolUserIds } },
-          { id: { in: listContactIds } },
+        AND: [
+          {
+            OR: [
+              { userId: { in: poolUserIds } },
+              { id: { in: listContactIds } },
+            ],
+          },
+          { phones: { some: { isDnc: false } } },
         ],
       },
-      include: { emails: true, phones: true },
+      include: {
+        emails: true,
+        phones: { where: { isDnc: false } },
+      },
       orderBy: { createdAt: "desc" },
     });
   }
@@ -144,20 +158,34 @@ export async function getAllContactsFromDb(userId: string, role: string) {
 
     return prisma.contact.findMany({
       where: {
-        OR: [
-          { id: { in: assignedContactIds } },
-          { userId: userId },
+        AND: [
+          {
+            OR: [
+              { id: { in: assignedContactIds } },
+              { userId: userId },
+            ],
+          },
+          { phones: { some: { isDnc: false } } },
         ],
       },
-      include: { emails: true, phones: true },
+      include: {
+        emails: true,
+        phones: { where: { isDnc: false } },
+      },
       orderBy: { createdAt: "desc" },
     });
   }
 
   // Fallback — own contacts only
   return prisma.contact.findMany({
-    where: { userId },
-    include: { emails: true, phones: true },
+    where: {
+      userId,
+      phones: { some: { isDnc: false } },
+    },
+    include: {
+      emails: true,
+      phones: { where: { isDnc: false } },
+    },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -167,7 +195,7 @@ export async function getContactByIdFromDb(id: string) {
     where: { id },
     include: {
       emails: true,
-      phones: true,
+      phones: { where: { isDnc: false } },
       attachments: true,
       callRecords: {
         include: {
@@ -229,31 +257,34 @@ export async function updateContactInDb(
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
-            deleteMany: {},
-            create: payload.emails.map((e) => ({
-              email: e.email,
-              isPrimary: e.isPrimary,
-            })),
-          }
+          deleteMany: {},
+          create: payload.emails.map((e) => ({
+            email: e.email,
+            isPrimary: e.isPrimary,
+          })),
+        }
         : undefined,
       phones: payload.phones
         ? {
-            deleteMany: {},
-            create: payload.phones.map((p) => ({
-              number: p.number,
-              type: p.type,
-            })),
-          }
+          deleteMany: {},
+          create: payload.phones.map((p) => ({
+            number: p.number,
+            type: p.type,
+          })),
+        }
         : undefined,
     },
-    include: { emails: true, phones: true },
+    include: {
+      emails: true,
+      phones: { where: { isDnc: false } },
+    },
   });
 }
 
-export async function deleteContactFromDb(id: string) {
+export async function deleteContactFromDb(id: string, userId: string) {
   const existing = await prisma.contact.findUnique({
     where: { id },
-    select: { id: true },
+    select: { id: true, fullName: true },
   });
   if (!existing) throwHttp(404, "Contact not found");
 
@@ -281,6 +312,15 @@ export async function deleteContactFromDb(id: string) {
         data: { contactIds: g.contactIds.filter((cid) => cid !== id) },
       });
     }
+
+    // Create Audit Log
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Deleted contact: ${existing.fullName}`,
+        details: `ID: ${id}`,
+      }
+    });
 
     await tx.contact.delete({ where: { id } });
   });
@@ -437,8 +477,14 @@ export async function getContactsByListFromDb(
   }
 
   return prisma.contact.findMany({
-    where: { id: { in: list.contactIds } },
-    include: { emails: true, phones: true },
+    where: {
+      id: { in: list.contactIds },
+      phones: { some: { isDnc: false } },
+    },
+    include: {
+      emails: true,
+      phones: { where: { isDnc: false } },
+    },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -739,4 +785,61 @@ export async function sendLeadSheetEmailInDb(
   );
 
   return true;
+}
+
+export async function moveToDncInDb(
+  contactId: string,
+  userId: string,
+  phoneIds: string[]
+) {
+  return prisma.$transaction(async (tx) => {
+    const contact = await tx.contact.findUnique({
+      where: { id: contactId },
+      include: { phones: true, emails: true },
+    });
+
+    if (!contact) throwHttp(404, "Contact not found");
+    const primaryEmail = contact.emails.find(e => e.isPrimary)?.email || contact.emails[0]?.email || null;
+
+    const phonesToMark = contact.phones.filter((p) => phoneIds.includes(p.id));
+
+    if (phonesToMark.length === 0) throwHttp(400, "No valid phone numbers selected");
+
+    // 1. Mark phone numbers as DNC in contact_phones
+    await tx.contactPhone.updateMany({
+      where: { id: { in: phoneIds } },
+      data: { isDnc: true },
+    });
+
+    // 2. Add to compliance_dnc table
+    const dncEntries = phonesToMark.map((p) => ({
+      number: p.number,
+      name: contact.fullName,
+      email: primaryEmail,
+      source: contact.source,
+      userId: userId,
+    }));
+
+    await tx.compliance_DNC.createMany({
+      data: dncEntries,
+    });
+
+    // 3. Create Audit Log
+    const phoneNumbers = phonesToMark.map(p => p.number).join(", ");
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Added ${phoneNumbers} to DNC`,
+        details: `Contact: ${contact.fullName}`,
+      }
+    });
+
+    return { success: true };
+  });
+}
+
+export async function getDncListFromDb() {
+  return prisma.compliance_DNC.findMany({
+    orderBy: { createdAt: "desc" },
+  });
 }
