@@ -842,6 +842,13 @@ model CallerId {
   @@map("caller_id")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL SETTINGS
+// The 4 recording slots now reference Recording rows via FK instead of
+// storing raw strings. onDelete: SetNull means if a recording is deleted,
+// the slot just becomes null — CallSettings row is never broken.
+// ─────────────────────────────────────────────────────────────────────────────
+
 model CallSettings {
   id    String @id @default(cuid())
   label String
