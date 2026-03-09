@@ -27,6 +27,10 @@ import {
   assignAgentsToList,
   moveToDnc,
   getDncList,
+  getAllImportContacts,
+  importContactCsv,
+  exportContactCsv,
+  getAllExportContacts,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -64,6 +68,10 @@ router.delete("/group/:id", deleteContactGroup);
 
 router.patch("/list/:id/agents", assignAgentsToList);
 
+router.get("/import-contacts", getAllImportContacts);
+router.post("/import-csv", singleUpload("file"), importContactCsv);
+router.post("/export-csv", exportContactCsv);
+router.get("/export-csv", getAllExportContacts);
 
 export default router;
 

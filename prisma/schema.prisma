@@ -150,6 +150,12 @@ enum RecordingSlot {
   GENERAL
 }
 
+enum ExportType {
+  LIST
+  GROUP
+  ALL_CONTACTS
+}
+
 model User {
   id       String   @id @default(uuid())
   fullName String?
@@ -208,6 +214,8 @@ model User {
   contactFolders CotactFolder[]
   contactGroups  ContactGroups[]
   contacts       Contact[]
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
 
   @@map("users")
 }
@@ -245,6 +253,9 @@ model ContactList {
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
+
   @@map("lists")
 }
 
@@ -270,6 +281,9 @@ model ContactGroups {
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
 
   @@map("groups")
 }
@@ -1106,4 +1120,45 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@map("audit_logs")
+}
+
+model ImportContact {
+  id             String         @id @default(uuid())
+  fileName       String
+  type           String
+  contactListId  String?
+  contactList    ContactList?   @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+  keepOld        Boolean        @default(true)
+  contactsCount  Int            @default(0)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("import_contacts")
+}
+
+model ExportContact {
+  id         String   @id @default(uuid())
+  fieldNames String[] @default([])
+
+  contactListId String?
+  contactList   ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+
+  contactsCount Int        @default(0)
+  exportType    ExportType // <- ye naya field, batayega LIST/GROUP/ALL_CONTACTS
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("export_contacts")
 }

@@ -5,7 +5,6 @@ import {
   updateAppearance,
   deleteAppearance
 } from "./controller";
-import { protectRoute } from "../../../middlewares/auth.middleware";
 
 const router = Router();
 
