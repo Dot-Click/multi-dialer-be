@@ -30,8 +30,14 @@ import {
   assignAgentsToListInDb,
   moveToDncInDb,
   getDncListFromDb,
+  getAllExportContactsFromDb,
+  exportContactsInDb,
+  getAllImportContactsFromDb,
+  importContactsFromCsvInDb,
 } from "./service";
 import { createContactListSchema, updateContactListSchema } from "../../schemas/contactlist.schema";
+import { parse } from "csv-parse/sync";
+import fs from "fs";
 
 export const createContact = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -445,6 +451,187 @@ export const getDncList = async (req: Request, res: Response): Promise<void> => 
     successResponse(res, 200, "DNC list fetched", dncList);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+
+
+export const importContactCsv = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { contactListId, contactGroupId, keepOld, type, fileName } = req.body;
+    const file = req.file;
+
+    if (!contactListId && !contactGroupId) {
+      errorResponse(res, "List or Group ID not provided", 400);
+      return;
+    }
+
+    if (!file) {
+      errorResponse(res, "CSV file is required", 400);
+      return;
+    }
+
+    const fileContent = fs.readFileSync(file.path, "utf-8");
+    const records = parse(fileContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    });
+
+    // Cleanup uploaded file
+    try {
+      fs.unlinkSync(file.path);
+    } catch (cleanupErr) {
+      console.error("Error deleting temp file:", cleanupErr);
+    }
+
+    // Filter and map records to formatted contacts
+    const contacts = records
+      .filter((r: any) => {
+        const name = (r.fullName || "").toLowerCase().trim();
+        return (
+          name !== "fullname" &&
+          name !== "full name" &&
+          name !== "name" &&
+          name !== ""
+        );
+      })
+      .map((r: any) => {
+        const emails = [];
+        if (r.primary_email) {
+          emails.push({ email: r.primary_email, isPrimary: true });
+        }
+        if (r.other_emails) {
+          const others = r.other_emails.split(",").map((e: string) => ({
+            email: e.trim(),
+            isPrimary: false,
+          }));
+          emails.push(...others);
+        }
+
+        const phones = [];
+        if (r.phone_mobile) {
+          phones.push({ number: r.phone_mobile.toString(), type: "MOBILE" });
+        }
+        if (r.phone_telephone) {
+          phones.push({
+            number: r.phone_telephone.toString(),
+            type: "TELEPHONE",
+          });
+        }
+        if (r.phone_home) {
+          phones.push({ number: r.phone_home.toString(), type: "HOME" });
+        }
+        if (r.phone_work) {
+          phones.push({ number: r.phone_work.toString(), type: "WORK" });
+        }
+        return {
+          fullName: r.fullName || "Unnamed",
+          city: r.city || "",
+          state: r.state || "",
+          zip: r.zip || "",
+          source: r.source || "CSV Import",
+          tags: r.tags ? r.tags.split(",").map((t: string) => t.trim()) : [],
+          notes: r.notes || "",
+          emails,
+          phones,
+        };
+      });
+
+    const result = await importContactsFromCsvInDb({
+      userId: (req as any).user.id,
+      fileName: fileName || file.originalname,
+      type: type || "CSV",
+      contactListId:
+        contactListId === "null" ||
+          contactListId === "undefined" ||
+          !contactListId
+          ? undefined
+          : contactListId,
+      contactGroupId:
+        contactGroupId === "null" ||
+          contactGroupId === "undefined" ||
+          !contactGroupId
+          ? undefined
+          : contactGroupId,
+      keepOld: keepOld === "true" || keepOld === true,
+      contacts,
+    });
+
+    successResponse(res, 201, "Contacts imported successfully", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getAllImportContacts = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+    const imports = await getAllImportContactsFromDb(userId);
+    successResponse(res, 200, "Import history fetched", imports);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const exportContactCsv = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { fieldNames, listId, groupId } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!fieldNames || !Array.isArray(fieldNames) || fieldNames.length === 0) {
+      errorResponse(res, "Export fields are required", 400);
+      return;
+    }
+
+    const result = await exportContactsInDb({
+      userId,
+      fieldNames,
+      contactListId: listId,
+      contactGroupId: groupId,
+    });
+
+    successResponse(res, 201, "Export record created", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getAllExportContacts = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+    const exports = await getAllExportContactsFromDb(userId);
+    successResponse(res, 200, "Export history fetched", exports);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
   }
 };
 
