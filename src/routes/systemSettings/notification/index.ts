@@ -5,14 +5,14 @@ import {
   getAllNotifications,
   getNotificationById,
   updateNotification,
-  deleteNotification
+  deleteNotification,
 } from "./controller";
-import { protectRoute } from "../../../middlewares/auth.middleware";
+import { protectRoute, checkRole } from "../../../middlewares/auth.middleware";
 
 const router = Router();
 
 // 1. Create (POST /create)
-router.post("/create", protectRoute, createNotification);
+router.post("/create", protectRoute, checkRole(["ADMIN", "OWNER"]), createNotification);
 
 // 2. Get All (GET /all) - Admin/Owner sees everyone's
 router.get("/all", protectRoute, getAllNotifications);
