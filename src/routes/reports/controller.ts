@@ -35,8 +35,8 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             if (endDate) dateFilter.createdAt.lte = new Date(endDate as string);
         }
 
-        // 1. Dialing Time (Total duration of sessions in the period)
-        const sessions = await prisma.agentSession.aggregate({
+        // 1. Dialing Time (Total duration of calls in the period)
+        const calls = await prisma.callRecord.aggregate({
             where: {
                 userId,
                 ...(startDate ? { startTime: { gte: new Date(startDate as string) } } : {}),
@@ -44,7 +44,7 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             },
             _sum: { duration: true }
         });
-        const totalDialingSeconds = sessions._sum.duration || 0;
+        const totalDialingSeconds = calls._sum.duration || 0;
 
         // 2. Calls Made
         const callsMade = await prisma.callRecord.count({
@@ -83,6 +83,33 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             }
         });
 
+        // Appointments Set
+        const appointmentsSet = await prisma.calendar.count({
+            where: {
+                assignToId: userId,
+                ...(startDate || endDate ? {
+                    startDate: {
+                        ...(startDate ? { gte: new Date(startDate as string) } : {}),
+                        ...(endDate ? { lte: new Date(endDate as string) } : {})
+                    }
+                } : {})
+            }
+        });
+
+        // Appointments Met
+        const appointmentsMet = await prisma.calendar.count({
+            where: {
+                assignToId: userId,
+                status: "MET",
+                ...(startDate || endDate ? {
+                    startDate: {
+                        ...(startDate ? { gte: new Date(startDate as string) } : {}),
+                        ...(endDate ? { lte: new Date(endDate as string) } : {})
+                    }
+                } : {})
+            }
+        });
+
         // 5. Calls/hr
         const hours = totalDialingSeconds / 3600;
         const callsPerHour = hours > 0 ? (callsMade / hours).toFixed(2) : "0.00";
@@ -93,6 +120,19 @@ export const getAgentReport: RequestHandler = async (req, res) => {
         // 7. Calls/lead
         const callsPerLead = totalLeads > 0 ? (callsMade / totalLeads).toFixed(2) : "0.00";
 
+        // 8. Contacts/lead
+        const contactsPerLead = totalLeads > 0 ? (contacts / totalLeads).toFixed(2) : "0.00";
+
+        // 9. Time/Appointment
+        const timePerAppointmentSeconds = appointmentsSet > 0 ? Math.floor(totalDialingSeconds / appointmentsSet) : 0;
+        const timePerAppointment = formatDuration(timePerAppointmentSeconds);
+
+        // 10. Calls/Appointment
+        const callsPerAppointment = appointmentsSet > 0 ? (callsMade / appointmentsSet).toFixed(2) : "0.00";
+
+        // 11. Contacts/Appointment
+        const contactsPerAppointment = appointmentsSet > 0 ? (contacts / appointmentsSet).toFixed(2) : "0.00";
+
         const report = {
             dialingTime: formatDuration(totalDialingSeconds),
             dialingSeconds: totalDialingSeconds,
@@ -102,6 +142,12 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             callsPerHour,
             contactsPerHour,
             callsPerLead,
+            contactsPerLead,
+            appointmentsSet,
+            appointmentsMet,
+            timePerAppointment,
+            callsPerAppointment,
+            contactsPerAppointment,
             period: {
                 start: startDate || "All time",
                 end: endDate || "Present"

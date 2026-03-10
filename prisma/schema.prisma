@@ -150,6 +150,12 @@ enum RecordingSlot {
   GENERAL
 }
 
+enum ExportType {
+  LIST
+  GROUP
+  ALL_CONTACTS
+}
+
 model User {
   id       String   @id @default(uuid())
   fullName String?
@@ -179,6 +185,7 @@ model User {
   libraries        Library[]
   reportAnalytics  Report_Analytic[]
   complianceDNC    Compliance_DNC[]
+  auditLogs        AuditLog[]
 
   systemSettings    System_Setting[]
   billings          Billing[]
@@ -207,6 +214,8 @@ model User {
   contactFolders CotactFolder[]
   contactGroups  ContactGroups[]
   contacts       Contact[]
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
 
   @@map("users")
 }
@@ -244,6 +253,9 @@ model ContactList {
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
+
   @@map("lists")
 }
 
@@ -269,6 +281,9 @@ model ContactGroups {
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
 
   @@map("groups")
 }
@@ -339,6 +354,7 @@ model ContactPhone {
   id        String    @id @default(cuid())
   number    String
   type      PhoneType
+  isDnc     Boolean   @default(false)
   contactId String
   contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
@@ -532,6 +548,10 @@ model Report_Analytic {
 
 model Compliance_DNC {
   id        String   @id @default(uuid())
+  number    String
+  name      String?
+  email     String?
+  source    String?
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
@@ -554,11 +574,33 @@ model System_Setting {
   leadSheets   LeadSheet[]
 
   dialerSetting       DialerSetting?
+  regulatorySetting   RegulatorySetting?
   appearance          Appearance?
   notificationSetting NotificationSetting?
   integrations        Integration[]
 
   @@map("system_settings")
+}
+
+model RegulatorySetting {
+  id String @id @default(uuid())
+
+  // TCPA Settings
+  tcpaFrom        String  @default("08:00")
+  tcpaTo          String  @default("20:00")
+  tcpaAutodialing Boolean @default(false)
+
+  // GDPR Settings
+  gdprRetentionDays Int     @default(30)
+  gdprDeleteRelated Boolean @default(true)
+
+  systemSettingId String         @unique
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("regulatory_settings")
 }
 
 model LeadSheet {
@@ -615,17 +657,18 @@ model NotificationSetting {
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  enableAppointmentReminders Boolean @default(false)
+  appointmentReminder Boolean @default(false)
   appointmentReminderEmail   String?
 
-  enableCallActivityReport    Boolean @default(false)
-  enableSessionSummaryReport  Boolean @default(false)
+  callActivityReport    Boolean @default(false)
+  sessionSummaryReport  Boolean @default(false)
   includeAgentsWithNoActivity Boolean @default(false)
   dailyCallReportEmail        String?
 
-  enableAppointmentNotifications Boolean @default(false)
-  enableComplianceAlerts         Boolean @default(false)
-
+ appointmentNotification Boolean @default(false)
+ complianceAlert       Boolean @default(false)
+ 
+ createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("notification_settings")
@@ -655,22 +698,22 @@ model DialerSetting {
 }
 
 model Billing {
-  id              String       @id @default(uuid())
-  userId          String
-  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  invoiceNumber   String       @unique
-  plan            Plan
-  amount          Int
-  date            DateTime
-  status          Status
-  billingCycle    BillingCycle @default(MONTHLY)
-  usersCount      Int          @default(1)
-  nextBillingDate DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id                  String            @id @default(uuid())
+  userId              String
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoiceNumber       String            @unique
+  plan                Plan
+  amount              Int
+  date                DateTime
+  status              Status
+  billingCycle        BillingCycle      @default(MONTHLY)
+  usersCount          Int               @default(1)
+  nextBillingDate     DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
   zohooSubscriptionId String?
-  leadStore        LeadStore?
-  userSubscription UserSubscription?
+  leadStore           LeadStore?
+  userSubscription    UserSubscription?
 
   @@map("billings")
 }
@@ -754,16 +797,16 @@ model UserSubscription {
   plan   Plan
   status SubscriptionStatus @default(ACTIVE)
 
-  startDate    DateTime
-  endDate      DateTime?
+  startDate       DateTime
+  endDate         DateTime?
   zohooCustomerId String?
-  amount String?
-  usersCount   Int          @default(1)
-  billingCycle BillingCycle @default(MONTHLY)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  billingId    String?      @unique
-  billing      Billing?     @relation(fields: [billingId], references: [id])
+  amount          String?
+  usersCount      Int          @default(1)
+  billingCycle    BillingCycle @default(MONTHLY)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  billingId       String?      @unique
+  billing         Billing?     @relation(fields: [billingId], references: [id])
 
   @@map("user_subscriptions")
 }
@@ -799,6 +842,13 @@ model CallerId {
 
   @@map("caller_id")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL SETTINGS
+// The 4 recording slots now reference Recording rows via FK instead of
+// storing raw strings. onDelete: SetNull means if a recording is deleted,
+// the slot just becomes null — CallSettings row is never broken.
+// ─────────────────────────────────────────────────────────────────────────────
 
 model CallSettings {
   id    String @id @default(cuid())
@@ -1067,4 +1117,56 @@ model Company {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("companies")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  details   String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+model ImportContact {
+  id             String         @id @default(uuid())
+  fileName       String
+  type           String
+  contactListId  String?
+  contactList    ContactList?   @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+  keepOld        Boolean        @default(true)
+  contactsCount  Int            @default(0)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("import_contacts")
+}
+
+model ExportContact {
+  id         String   @id @default(uuid())
+  fieldNames String[] @default([])
+
+  contactListId String?
+  contactList   ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+
+  contactsCount Int        @default(0)
+  exportType    ExportType // <- ye naya field, batayega LIST/GROUP/ALL_CONTACTS
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("export_contacts")
 }

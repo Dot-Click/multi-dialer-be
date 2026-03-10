@@ -3,8 +3,8 @@ import { successResponse, errorResponse } from "@/utils/handler";
 import { RequestHandler } from "express";
 
 /**
- * Get session report
- * Includes: sessions with their calls, talk time, dial time, results breakdown
+ * Get virtual session report (aggregated by day from CallRecord)
+ * Includes: date, type, list, calls, appointments, duration
  */
 export const getSessionReport: RequestHandler = async (req, res) => {
     try {
@@ -32,41 +32,71 @@ export const getSessionReport: RequestHandler = async (req, res) => {
             if (endDate) where.startTime.lte = new Date(endDate as string);
         }
 
-        // Fetch sessions with nested relations
-        const sessions = await prisma.agentSession.findMany({
-            where,
-            include: {
-                user: {
-                    select: { fullName: true }
-                },
-                calls: {
-                    include: {
-                        lead: true
-                    }
-                }
-            },
-            orderBy: { startTime: "desc" },
-            skip,
-            take: Number(limit)
+        // Fetch user info
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { fullName: true }
         });
 
-        const total = await prisma.agentSession.count({ where });
+        const agentName = user?.fullName || "Unknown Agent";
+
+        // Fetch all relevant calls for aggregation
+        const calls = await prisma.callRecord.findMany({
+            where,
+            include: {
+                session: true
+            },
+            orderBy: { startTime: "desc" }
+        });
 
         // Optimize list name fetching
-        const listIds = Array.from(new Set(sessions.map(s => s.listId).filter(Boolean))) as string[];
+        const listIds = Array.from(new Set(calls.map(c => c.session?.listId).filter(Boolean))) as string[];
         const lists = await prisma.contactList.findMany({
             where: { id: { in: listIds } },
             select: { id: true, name: true }
         });
         const listMap = new Map(lists.map(l => [l.id, l.name]));
 
-        // Process sessions for the report
-        const reportData = await Promise.all(sessions.map(async (session) => {
+        // Group calls into "Virtual Daily Sessions"
+        // Key: YYYY-MM-DD
+        const sessionMap = new Map<string, any>();
+
+        calls.forEach(call => {
+            if (!call.startTime) return;
+            const dateStr = new Date(call.startTime).toISOString().split('T')[0];
+
+            if (!sessionMap.has(dateStr)) {
+                sessionMap.set(dateStr, {
+                    id: `session-${dateStr}-${userId}`,
+                    date: dateStr,
+                    agent: agentName,
+                    type: "C2C Session", // Standardized to C2C Session as expected
+                    listIds: new Set<string>(),
+                    calls: [],
+                    duration: 0
+                });
+            }
+
+            const session = sessionMap.get(dateStr);
+            if (call.session?.listId) {
+                session.listIds.add(call.session.listId);
+            }
+            session.calls.push(call);
+            session.duration += (call.duration || 0);
+        });
+
+        const allSessionsRaw = Array.from(sessionMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        // Manual Pagination
+        const paginatedSessions = allSessionsRaw.slice(skip, skip + Number(limit));
+
+        // Process sessions for the final report
+        const reportData = await Promise.all(paginatedSessions.map(async (vsession) => {
             // Calculate breakdown by result (disposition)
             const resultBreakdown: Record<string, { totalCalls: number; talkTime: number; dialTime: number }> = {};
 
-            session.calls.forEach(call => {
-                const result = call.disposition || "Other";
+            vsession.calls.forEach((call: any) => {
+                const result = call.disposition || "CALLED";
                 if (!resultBreakdown[result]) {
                     resultBreakdown[result] = { totalCalls: 0, talkTime: 0, dialTime: 0 };
                 }
@@ -79,36 +109,45 @@ export const getSessionReport: RequestHandler = async (req, res) => {
                 result,
                 totalCalls: stats.totalCalls,
                 talkTime: formatHHMMSS(stats.talkTime),
-                dialTime: formatHHMMSS(session.duration || 0) // Dial time in the screenshot seems to be session duration
+                dialTime: formatHHMMSS(0) // Assuming talk time is all we have accurately
             }));
 
-            // Appointments set during this session (rough estimate based on time)
+            // List names
+            const listNames = Array.from(vsession.listIds)
+                .map(id => listMap.get(id as string) || "Unknown")
+                .join(", ") || "N/A";
+
+            // Appointments set during this day
+            const dayStart = new Date(vsession.date);
+            const dayEnd = new Date(vsession.date);
+            dayEnd.setDate(dayEnd.getDate() + 1);
+
             const appointmentsCount = await prisma.calendar.count({
                 where: {
-                    assignToId: session.userId,
+                    assignToId: userId,
                     status: "SET",
                     createdAt: {
-                        gte: session.startTime,
-                        lte: session.endTime || new Date()
+                        gte: dayStart,
+                        lt: dayEnd
                     }
                 }
             });
 
             return {
-                id: session.id,
-                date: session.startTime,
-                agent: session.user.fullName || "Unknown Agent",
-                type: session.type, // e.g., C2C Session
-                list: session.listId ? (listMap.get(session.listId) || "Unknown List") : "N/A",
-                calls: session.calls.length,
+                id: vsession.id,
+                date: vsession.date,
+                agent: vsession.agent,
+                type: vsession.type,
+                list: listNames,
+                calls: vsession.calls.length,
                 appointments: appointmentsCount,
-                duration: formatHHMMSS(session.duration || 0),
+                duration: formatHHMMSS(vsession.duration),
                 breakdown: {
                     results,
                     total: {
-                        calls: session.calls.length,
-                        talkTime: formatHHMMSS(session.calls.reduce((sum, c) => sum + (c.duration || 0), 0)),
-                        dialTime: formatHHMMSS(session.duration || 0)
+                        calls: vsession.calls.length,
+                        talkTime: formatHHMMSS(vsession.duration),
+                        dialTime: formatHHMMSS(vsession.duration) // Same as talk right now
                     }
                 }
             };
@@ -117,7 +156,7 @@ export const getSessionReport: RequestHandler = async (req, res) => {
         successResponse(res, 200, "Session report fetched successfully", {
             data: reportData,
             pagination: {
-                total,
+                total: allSessionsRaw.length,
                 page: Number(page),
                 limit: Number(limit)
             }
