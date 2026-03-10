@@ -31,17 +31,23 @@ import {
   importContactCsv,
   exportContactCsv,
   getAllExportContacts,
+  getAllBackupContacts,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
 const router = Router();
+
+
+router.get("/backup-contacts", getAllBackupContacts);
+
+
 
 router.get("/list", getAllContactLists);
 router.get("/folder", getAllContactFolders);
 router.get("/group", getAllContactGroups);
 router.get("/", getAllContacts);
 router.get("/dnc-list", getDncList);
-router.get("/contacts-list/:lid", getContactsByList)
+router.get("/contacts-list/:lid", getContactsByList);
 router.get("/:id", getContactById);
 router.put("/:id", updateContact);
 router.patch("/:id/assign", assignContactToList);
@@ -53,11 +59,13 @@ router.post("/:id/attachment", singleUpload("file"), uploadAttachment);
 router.get("/:id/attachment", getAttachments);
 router.delete("/attachment/:attachmentId", deleteAttachment);
 
+// router.delete("/:id", deleteContact); // BACKUP ROUTE
 router.delete("/:id", deleteContact);
+
 router.post("/:id/move-to-dnc", moveToDnc);
 router.post("/create", createContact);
 router.post("/list", createContactList);
-router.patch("/list/:id", updateContactList)
+router.patch("/list/:id", updateContactList);
 router.delete("/list/:id", deleteContactList);
 router.post("/folder", createContactFolder);
 router.patch("/folder/:id", updateContactFolder);
@@ -74,5 +82,3 @@ router.post("/export-csv", exportContactCsv);
 router.get("/export-csv", getAllExportContacts);
 
 export default router;
-
-
