@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import prisma from "../../../lib/prisma";
 import { errorResponse, successResponse } from "../../../utils/handler";
 import {
   createLeadSheetInDb,
@@ -39,8 +40,20 @@ export const createLeadSheet = async (req: Request, res: Response): Promise<void
 
 export const getLeadSheets = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id: userId } = req.user!;
-    const leadSheets = await getLeadSheetsForUser(userId);
+    const { id: userId, role } = req.user!;
+
+    let targetUserId = userId;
+    if (role === 'AGENT') {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
+
+    const leadSheets = await getLeadSheetsForUser(targetUserId);
     successResponse(res, 200, "Lead Sheets fetched", leadSheets);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
@@ -50,9 +63,20 @@ export const getLeadSheets = async (req: Request, res: Response): Promise<void> 
 export const getLeadSheetById = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { id: userId } = req.user!;
+    const { id: userId, role } = req.user!;
 
-    const leadSheet = await getLeadSheetByIdForUser(id, userId);
+    let targetUserId = userId;
+    if (role === 'AGENT') {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
+
+    const leadSheet = await getLeadSheetByIdForUser(id, targetUserId);
     if (!leadSheet) {
       errorResponse(res, "Lead Sheet not found", 404);
       return;

@@ -162,6 +162,81 @@ export const getAgentReport: RequestHandler = async (req, res) => {
 };
 
 /**
+ * Get dialer health based on call analysis confidence
+ * Healthy: confidence >= 0.7
+ * Unhealthy: confidence < 0.7
+ */
+export const getDialerHealth: RequestHandler = async (req, res) => {
+    try {
+        const { id: userId, role } = req.user!;
+        let targetUserIds = [userId];
+
+        if (role === 'ADMIN' || role === 'OWNER') {
+            const agents = await prisma.user.findMany({
+                where: { createdById: userId },
+                select: { id: true }
+            });
+            targetUserIds = [userId, ...agents.map(a => a.id)];
+        }
+
+        // Fetch recent analyses
+        const analyses = await prisma.callAnalysis.findMany({
+            where: {
+                createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+        });
+
+        const callSids = analyses.map(a => a.callSid);
+        const callRecords = await prisma.callRecord.findMany({
+            where: {
+                callSid: { in: callSids },
+                userId: { in: targetUserIds }
+            },
+            include: {
+                contact: {
+                    select: {
+                        fullName: true,
+                        phones: { select: { number: true }, take: 1 }
+                    }
+                },
+                lead: {
+                    select: {
+                        fullName: true,
+                        phone: true
+                    }
+                }
+            }
+        });
+
+        const recordMap = new Map(callRecords.map(r => [r.callSid, r]));
+
+        const healthData = analyses
+            .map(a => {
+                const record = recordMap.get(a.callSid);
+                if (!record) return null;
+
+                const name = record.contact?.fullName || record.lead?.fullName || "Unknown";
+                const contact = record.contact?.phones[0]?.number || record.lead?.phone || "N/A";
+
+                return {
+                    id: a.id,
+                    name,
+                    contact,
+                    health: a.confidence >= 0.7 ? "healthy" : "unhealthy"
+                };
+            })
+            .filter(Boolean);
+
+        successResponse(res, 200, "Dialer health fetched successfully", healthData);
+    } catch (error: any) {
+        console.error("Error fetching dialer health:", error);
+        errorResponse(res, { message: error.message });
+    }
+}
+
+/**
  * Helper to format seconds into readable string
  */
 function formatDuration(seconds: number): string {

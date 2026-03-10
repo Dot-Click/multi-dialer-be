@@ -7,10 +7,12 @@ import {
   updateLeadSheet,
 } from "./controller";
 
+import { checkRole } from "../../../middlewares/auth.middleware";
+
 const router = Router();
 
 // Create a Lead Sheet
-router.post("/create", createLeadSheet);
+router.post("/create", checkRole(["ADMIN", "OWNER"]), createLeadSheet);
 
 // Get all Lead Sheets for current user
 router.get("/", getLeadSheets);
@@ -19,10 +21,10 @@ router.get("/", getLeadSheets);
 router.get("/:id", getLeadSheetById);
 
 // Update a Lead Sheet by ID
-router.put("/:id", updateLeadSheet);
+router.put("/:id", checkRole(["ADMIN", "OWNER"]), updateLeadSheet);
 
 // Delete a Lead Sheet by ID
-router.delete("/:id", deleteLeadSheet);
+router.delete("/:id", checkRole(["ADMIN", "OWNER"]), deleteLeadSheet);
 
 export * from "./controller";
 export * from "./service";

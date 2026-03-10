@@ -47,14 +47,14 @@ router.use("/library/callback-prompt", protectRoute, callbackPromptRoutes);
 router.use("/system-settings/caller-id", protectRoute, checkRole(["ADMIN", "OWNER"]), callerIdRoutes)
 router.use("/system-settings/dialer-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), dialerSettingRoute);
 router.use("/system-settings/call-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), callSettingsRoutes)
-router.use("/system-settings/misc-fields", protectRoute, checkRole(["ADMIN", "OWNER"]), miscFieldsRoutes)
+router.use("/system-settings/misc-fields", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), miscFieldsRoutes)
 router.use("/system-settings/appearance", protectRoute, checkRole(["ADMIN", "OWNER"]), appearanceRoutes)
 router.use("/system-settings/notification-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), notificationRoute)
 router.use("/system-settings/action-plans", protectRoute, checkRole(["ADMIN", "OWNER"]), actionplansRoutes)
-router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWNER"]), leadSheetRoutes)
+router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), leadSheetRoutes)
 router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "OWNER"]), IntegrationRoute)
 router.use("/system-settings/regulatory", protectRoute, checkRole(["ADMIN", "OWNER"]), regulatoryRoutes)
-router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER"]), auditLogRoutes)
+router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), auditLogRoutes)
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)

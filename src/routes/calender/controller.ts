@@ -14,12 +14,16 @@ const canManageOthers = (role?: string) => {
 
 export const getCalendarEvents = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id: userId, role } = req.user!;
+    const { id: userId } = req.user!;
 
     const events = await prisma.calendar.findMany({
-      where: canManageOthers(role) ? {} : { assignToId: userId },
+      where: {
+        assignToId: userId,
+        status: "SET"
+      },
       include: calendarInclude,
       orderBy: { startDate: "desc" },
+      take: 10
     });
 
     successResponse(res, 200, "Calendar events fetched", events);
