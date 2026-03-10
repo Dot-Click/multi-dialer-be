@@ -444,6 +444,120 @@ export const getAgentCallMetrics: RequestHandler = async (req, res) => {
 }
 
 /**
+ * Get call statistics for dashboard (Admin/Agent)
+ */
+export const getCallStatistics: RequestHandler = async (req, res) => {
+    try {
+        const { id: requesterId, role: requesterRole } = req.user!;
+        const { period, userId: queryUserId } = req.query;
+
+        let targetUserIds: string[] = [requesterId];
+
+        if (requesterRole === 'ADMIN' || requesterRole === 'OWNER') {
+            if (queryUserId) {
+                targetUserIds = [queryUserId as string];
+            } else {
+                const agents = await prisma.user.findMany({
+                    where: { createdById: requesterId },
+                    select: { id: true }
+                });
+                targetUserIds = [requesterId, ...agents.map(a => a.id)];
+            }
+        }
+
+        let startDate = new Date();
+        if (period === 'Last 7 days') {
+            startDate.setDate(startDate.getDate() - 7);
+        } else if (period === 'Last 30 days') {
+            startDate.setDate(startDate.getDate() - 30);
+        } else {
+            // "Today"
+            startDate.setHours(0, 0, 0, 0);
+        }
+
+        const totalCalls = await prisma.callRecord.count({
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate }
+            }
+        });
+
+        const analyses = await prisma.callAnalysis.findMany({
+            where: { createdAt: { gte: startDate } },
+            select: { callSid: true }
+        });
+        const analyzedCallSids = analyses.map(a => a.callSid);
+
+        const connectedCallsCount = await prisma.callRecord.count({
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate },
+                callSid: { in: analyzedCallSids }
+            }
+        });
+
+        const connectionRate = totalCalls > 0 ? Math.round((connectedCallsCount / totalCalls) * 100) : 0;
+
+        const outcomes = await prisma.callRecord.groupBy({
+            by: ['disposition'],
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate }
+            },
+            _count: { _all: true }
+        });
+
+        const targetCallSids = await prisma.callRecord.findMany({
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate }
+            },
+            select: { callSid: true }
+        });
+        const callSids = targetCallSids.map(c => c.callSid);
+
+        const interestedCount = await prisma.callAnalysis.count({
+            where: {
+                callSid: { in: callSids },
+                confidence: { gte: 0.7 }
+            }
+        });
+
+        const outcomeCounts = {
+            interested: interestedCount,
+            followup: 0,
+            noAnswer: 0,
+            notInterested: 0,
+            dnc: 0
+        };
+
+        outcomes.forEach(o => {
+            const status = o.disposition;
+            const count = o._count._all;
+            if (status === 'CALL_BACK') outcomeCounts.followup += count;
+            else if (status === 'NO_ANSWER') outcomeCounts.noAnswer += count;
+            else if (status === 'NOT_INTERESTED') outcomeCounts.notInterested += count;
+            else if (status === 'DO_NOT_CALL') outcomeCounts.dnc += count;
+        });
+
+        const data = {
+            totalCalls,
+            connectionRate: `${connectionRate}%`,
+            outcomes: outcomeCounts,
+            goals: {
+                followup: { current: outcomeCounts.followup, target: 10 },
+                interested: { current: outcomeCounts.interested, target: 5 }
+            }
+        };
+
+        successResponse(res, 200, "Call statistics fetched successfully", data);
+    } catch (error: any) {
+        console.error("Error fetching call statistics:", error);
+        errorResponse(res, { message: error.message });
+    }
+}
+
+/**
  * Helper to format seconds into readable string
  */
 function formatDuration(seconds: number): string {
