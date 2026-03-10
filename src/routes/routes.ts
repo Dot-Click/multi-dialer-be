@@ -9,7 +9,6 @@ import mediaCenterRoutes from "./library/mediaCenter"
 import callerIdRoutes from "./systemSettings/callerId"
 import callSettingsRoutes from "./systemSettings/callSettings"
 import callbackPromptRoutes from "./library/callBackPrompt";
-<<<<<<< HEAD
 import miscFieldsRoutes from "./systemSettings/miscFields"
 import appearanceRoutes from "./systemSettings/appearance"
 import dialerSettingRoute from "./systemSettings/dialersettings"
@@ -28,26 +27,6 @@ import companyRoutes from "./company"
 import reportRoutes from "./reports"
 // import subscriptionRoutes from "./subscription"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
-=======
-import miscFieldsRoutes from "./systemSettings/miscFields";
-import appearanceRoutes from "./systemSettings/appearance";
-import dialerSettingRoute from "./systemSettings/dialersettings";
-import notificationRoute from "./systemSettings/notification";
-import IntegrationRoute from "./systemSettings/integration";
-import calendarRoutes from "./calender";
-import actionplansRoutes from "./systemSettings/actionplan";
-import leadSheetRoutes from "./systemSettings/leadSheet";
-import regulatoryRoutes from "./systemSettings/regulatory";
-import auditLogRoutes from "./systemSettings/audit";
-import callingRoutes from "./calling";
-import contactRoutes from "./contact";
-import contactListRoutes from "./contactlist";
-import userRoutes from "./user";
-import companyRoutes from "./company";
-import reportRoutes from "./reports";
-import subscriptionRoutes from "./subscription";
-import { checkRole, protectRoute } from "../middlewares/auth.middleware";
->>>>>>> da68dbbe705b34aaf5c477e6cf7a044937007ddb
 import { envConfig } from "@/lib/config";
 
 const router = Router()
@@ -62,7 +41,6 @@ router.use("/library/signatures", protectRoute, signatureRoutes)
 router.use("/library/media-center", protectRoute, mediaCenterRoutes)
 router.use("/library/callback-prompt", protectRoute, callbackPromptRoutes);
 
-<<<<<<< HEAD
 
 
 
@@ -77,74 +55,6 @@ router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWN
 router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "OWNER"]), IntegrationRoute)
 router.use("/system-settings/regulatory", protectRoute, checkRole(["ADMIN", "OWNER"]), regulatoryRoutes)
 router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), auditLogRoutes)
-=======
-router.use(
-  "/system-settings/caller-id",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  callerIdRoutes,
-);
-router.use(
-  "/system-settings/dialer-settings",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  dialerSettingRoute,
-);
-router.use(
-  "/system-settings/call-settings",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  callSettingsRoutes,
-);
-router.use(
-  "/system-settings/misc-fields",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  miscFieldsRoutes,
-);
-router.use(
-  "/system-settings/appearance",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  appearanceRoutes,
-);
-router.use(
-  "/system-settings/notification",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  notificationRoute,
-);
-router.use(
-  "/system-settings/action-plans",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  actionplansRoutes,
-);
-router.use(
-  "/system-settings/lead-sheet",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  leadSheetRoutes,
-);
-router.use(
-  "/system-settings/integrations",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  IntegrationRoute,
-);
-router.use(
-  "/system-settings/regulatory",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  regulatoryRoutes,
-);
-router.use(
-  "/system-settings/audit-logs",
-  protectRoute,
-  checkRole(["ADMIN", "OWNER"]),
-  auditLogRoutes,
-);
->>>>>>> da68dbbe705b34aaf5c477e6cf7a044937007ddb
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)
