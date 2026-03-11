@@ -42,6 +42,7 @@ import {
   getAllBackupContactsFromDb,
   restoreContactFromDb,
   permanentlyDeleteContactFromDb,
+  getHotlistFromDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -126,8 +127,6 @@ export const updateContact = async (
     }
 
     const payload = { ...req.body };
-
-    console.log(payload);
     const result = (await validateData(updateContactSchema, payload)) as any;
     if (!("data" in result)) {
       errorResponse(res, "Validation error", 400);
@@ -895,6 +894,24 @@ export const getAllBackupContacts = async (
     const role = (req as any).user.role;
     const backups = await getAllBackupContactsFromDb(userId, role);
     successResponse(res, 200, "Backup contacts fetched successfully", backups);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getHotlist = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+    const role = (req as any).user.role;
+    const hotlist = await getHotlistFromDb(userId, role);
+    successResponse(res, 200, "Hotlist fetched successfully", hotlist);
   } catch (error: any) {
     errorResponse(
       res,
