@@ -20,4 +20,5 @@ export const updateUserSchema = z.object({
     status: z.enum(["ACTIVE", "DEACTIVATED", "SUSPENDED", "PENDING", "EXPIRING_SOON"]).optional(),
     image: z.string().optional(),
     emailVerified: z.boolean().optional(),
+    defaultCallerId: z.string().optional(),
 })

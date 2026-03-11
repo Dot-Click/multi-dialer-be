@@ -16,7 +16,9 @@ import {
   getCallsInsights,
   getHistory,
   getCallStatus,
-  getCallSummary
+  getCallSummary,
+  setCounter,
+  getCallerIds
 } from "./controller";
 import {
   getAggregateStats,
@@ -62,4 +64,8 @@ router.post("/buy-number", protectRoute, buyNumber);
 
 //calls insights
 router.get("/calls-insights", protectRoute, getCallsInsights);
+
+// call managements}
+router.patch('/set-counter/:sid', protectRoute, setCounter)
+router.get('/callerIds', protectRoute, getCallerIds)
 export default router;

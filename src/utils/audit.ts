@@ -14,8 +14,9 @@ export async function createAuditLog(userId: string, action: string, details?: s
     }
 }
 
-export async function getAuditLogsFromDb(limit: number = 100) {
+export async function getAuditLogsFromDb(userId?: string, limit: number = 100) {
     return await prisma.auditLog.findMany({
+        where: userId ? { userId } : {},
         take: limit,
         orderBy: { createdAt: "desc" },
         include: {

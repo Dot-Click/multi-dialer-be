@@ -26,6 +26,7 @@ interface AuthUser {
   role?: string | null;
   fullName?: string | null;
   status?: string | null;
+  defaultCallerId?: string | null;
 }
 
 const pendingPasswords = new Map<string, string>();
@@ -43,6 +44,7 @@ export const auth = betterAuth({
       fullName: { type: "string", required: false },
       status: { type: "string", required: false },
       createdById: { type: "string", required: false },
+      defaultCallerId: { type: "string", required: false },
     },
   },
   trustedOrigins: [
@@ -244,7 +246,7 @@ export const auth = betterAuth({
         // Fetch additional user data
         const userFromDb = await prisma.user.findUnique({
           where: { email: resp.user.email },
-          select: { role: true, fullName: true, status: true },
+          select: { role: true, fullName: true, status: true, defaultCallerId: true },
         });
 
         if (!userFromDb) return resp;
@@ -256,6 +258,7 @@ export const auth = betterAuth({
             role: userFromDb.role ?? null,
             fullName: userFromDb.fullName ?? null,
             status: userFromDb.status ?? null,
+            defaultCallerId: userFromDb.defaultCallerId ?? null,
           },
           session: {
             ...resp.session,

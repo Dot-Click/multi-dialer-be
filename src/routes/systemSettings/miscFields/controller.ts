@@ -7,11 +7,23 @@ import { updateMiscFieldSchema } from "../../../schemas/miscFields.schema";
 
 export const getAllMiscFieldsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id: userId } = req.user!;
-    
+    const { id: userId, role } = req.user!;
+
+    let targetUserId = userId;
+
+    if (role === 'AGENT') {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
+
     // Get user's systemSettings
     const systemSettings = await prisma.system_Setting.findFirst({
-      where: { userId },
+      where: { userId: targetUserId },
     });
 
     if (!systemSettings) {
@@ -41,7 +53,7 @@ export const getAllMiscFieldsOfSpecificUser = async (req: Request, res: Response
         createdAt: "desc",
       },
     });
-    
+
     successResponse(res, 200, "Misc fields fetched", miscFields);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
@@ -69,7 +81,7 @@ export const getAllMiscFieldsOfAllUsers = async (req: Request, res: Response): P
         createdAt: "desc",
       },
     });
-    
+
     successResponse(res, 200, "All misc fields fetched", miscFields);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
@@ -79,11 +91,23 @@ export const getAllMiscFieldsOfAllUsers = async (req: Request, res: Response): P
 export const getMiscFieldById = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { id: userId } = req.user!;
+    const { id: userId, role } = req.user!;
+
+    let targetUserId = userId;
+
+    if (role === 'AGENT') {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
 
     // Get user's systemSettings
     const systemSettings = await prisma.system_Setting.findFirst({
-      where: { userId },
+      where: { userId: targetUserId },
     });
 
     if (!systemSettings) {
@@ -92,7 +116,7 @@ export const getMiscFieldById = async (req: Request, res: Response): Promise<voi
     }
 
     const miscField = await prisma.miscField.findFirst({
-      where: { 
+      where: {
         id,
         systemSettingId: systemSettings.id, // Ensure misc field belongs to user's systemSettings
       },
@@ -110,7 +134,7 @@ export const getMiscFieldById = async (req: Request, res: Response): Promise<voi
         },
       },
     });
-    
+
     if (!miscField) {
       errorResponse(res, "Misc field not found", 404);
       return;
@@ -149,7 +173,7 @@ export const createMiscField = async (req: Request, res: Response): Promise<void
       }, 400);
       return;
     }
-    
+
 
     const payload = { ...req.body };
     const newMiscField = await insertMiscFieldInDb(payload, userId);
@@ -171,9 +195,9 @@ export const createMiscField = async (req: Request, res: Response): Promise<void
         },
       },
     });
-    
+
     successResponse(res, 201, "Misc field created", populatedMiscField);
-    
+
   } catch (error: any) {
     errorResponse(res, error.message || error, 500);
   }
@@ -235,11 +259,11 @@ export const updateMiscField = async (req: Request, res: Response): Promise<void
 
     // Prepare update data - only include fields that are provided
     const updateData: any = {};
-    
+
     if (data.fieldName !== undefined) {
       updateData.fieldName = data.fieldName;
     }
-    
+
     if (data.type !== undefined) {
       updateData.type = data.type;
     }
@@ -281,7 +305,7 @@ export const updateMiscField = async (req: Request, res: Response): Promise<void
     });
 
     successResponse(res, 200, "Misc field updated", updatedMiscField);
-    
+
   } catch (error: any) {
     // Check if it's a Prisma error related to record not found
     if (error.code === 'P2025') {
@@ -346,7 +370,7 @@ export const deleteMiscField = async (req: Request, res: Response): Promise<void
     });
 
     successResponse(res, 200, "Misc field deleted successfully", null);
-    
+
   } catch (error: any) {
     // Check if it's a Prisma error related to record not found
     if (error.code === 'P2025') {

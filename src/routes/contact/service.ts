@@ -161,10 +161,7 @@ export async function getAllContactsFromDb(userId: string, role: string) {
       where: {
         AND: [
           {
-            OR: [
-              { id: { in: assignedContactIds } },
-              { userId: userId },
-            ],
+            OR: [{ id: { in: assignedContactIds } }, { userId: userId }],
           },
           { phones: { some: { isDnc: false } } },
         ],
@@ -214,14 +211,9 @@ export async function updateContactInDb(
   id: string,
   payload: Partial<{
     fullName: string;
-    address: string;
     city: string;
     state: string;
     zip: string;
-    mailingAddress: string;
-    mailingCity: string;
-    mailingState: string;
-    mailingZip: string;
     source: string;
     tags: string[];
     dataDialerId: string | null;
@@ -230,7 +222,7 @@ export async function updateContactInDb(
     notes: string;
     miscValues: any;
     leadsheetValues: any;
-  }>
+  }>,
 ) {
   const existing = await prisma.contact.findUnique({
     where: { id },
@@ -242,14 +234,9 @@ export async function updateContactInDb(
     where: { id },
     data: {
       fullName: payload.fullName,
-      address: payload.address,
       city: payload.city,
       state: payload.state,
       zip: payload.zip,
-      mailingAddress: payload.mailingAddress,
-      mailingCity: payload.mailingCity,
-      mailingState: payload.mailingState,
-      mailingZip: payload.mailingZip,
       source: payload.source,
       tags: payload.tags,
       notes: payload.notes,
@@ -282,6 +269,7 @@ export async function updateContactInDb(
   });
 }
 
+/* BACKUP:
 export async function deleteContactFromDb(id: string, userId: string) {
   const existing = await prisma.contact.findUnique({
     where: { id },
@@ -328,6 +316,85 @@ export async function deleteContactFromDb(id: string, userId: string) {
 
   return true;
 }
+*/
+
+export async function deleteContactFromDb(id: string, userId: string) {
+  // 1. Fetch the full contact data including emails, phones, attachments
+  const existing = await prisma.contact.findUnique({
+    where: { id },
+    include: {
+      emails: true,
+      phones: true,
+      attachments: true,
+      miscFields: true,
+    },
+  });
+
+  if (!existing) throwHttp(404, "Contact not found");
+
+  await prisma.$transaction(async (tx) => {
+    // Find all lists this contact belongs to
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: id } },
+      select: { id: true, contactIds: true },
+    });
+    const contactListIds = lists.map((l) => l.id);
+
+    // Find all groups this contact belongs to
+    const groups = await tx.contactGroups.findMany({
+      where: { contactIds: { has: id } },
+      select: { id: true, contactIds: true },
+    });
+    const contactGroupIds = groups.map((g) => g.id);
+
+    // 2. Save the complete contact data in the "RestoreContact" table
+    // We store it inside an array since the 'contacts' column expects Json for potentially multiple contacts
+    const restoredContactData = [
+      {
+        ...existing,
+        contactListId: contactListIds,
+        contactGroupId: contactGroupIds,
+      },
+    ];
+
+    await tx.backupContacts.create({
+      data: {
+        userId,
+        contacts: restoredContactData as any,
+      },
+    });
+
+    // 3. Scrub contactId from any ContactList.contactIds arrays
+    for (const l of lists) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter((cid) => cid !== id) },
+      });
+    }
+
+    // 4. Scrub from ContactGroups as well
+    for (const g of groups) {
+      await tx.contactGroups.update({
+        where: { id: g.id },
+        data: { contactIds: g.contactIds.filter((cid) => cid !== id) },
+      });
+    }
+
+    // Create Audit Log
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Deleted contact: ${existing.fullName}`,
+        details: `ID: ${id}`,
+      },
+    });
+
+    // 5. Delete the contact from the Contact table
+    await tx.contact.delete({ where: { id } });
+  });
+
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // ATTACHMENTS
@@ -335,7 +402,7 @@ export async function deleteContactFromDb(id: string, userId: string) {
 
 export async function uploadAttachmentInDb(
   contactId: string,
-  file: Express.Multer.File
+  file: Express.Multer.File,
 ) {
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
@@ -385,7 +452,7 @@ export async function deleteAttachmentFromDb(attachmentId: string) {
 
 export async function createContactListInDb(
   payload: { name: string; contactIds: string[] },
-  userId: string
+  userId: string,
 ) {
   return prisma.contactList.create({
     data: {
@@ -402,7 +469,7 @@ export async function updateContactListInDb(
     name?: string;
     contactIds?: string[];
     agentIds?: string[];
-  }
+  },
 ) {
   return prisma.contactList.update({
     where: { id },
@@ -451,7 +518,7 @@ export async function getAllContactListsFromDb(userId: string, role?: string) {
 export async function getContactsByListFromDb(
   listId: string,
   userId: string,
-  role: string
+  role: string,
 ) {
   const list = await prisma.contactList.findUnique({
     where: { id: listId },
@@ -492,7 +559,7 @@ export async function getContactsByListFromDb(
 
 export async function assignContactToListInDb(
   contactId: string,
-  listId: string
+  listId: string,
 ) {
   return prisma.$transaction(async (tx) => {
     const contact = await tx.contact.findUnique({
@@ -543,7 +610,7 @@ export async function assignContactToListInDb(
 
 export async function createContactFolderInDb(
   payload: { name: string; listIds: string[] },
-  userId: string
+  userId: string,
 ) {
   return prisma.cotactFolder.create({
     data: {
@@ -556,7 +623,7 @@ export async function createContactFolderInDb(
 
 export async function updateContactFolderInDb(
   id: string,
-  payload: { name?: string; listIds?: string[] }
+  payload: { name?: string; listIds?: string[] },
 ) {
   return prisma.cotactFolder.update({
     where: { id },
@@ -572,7 +639,10 @@ export async function deleteContactFolderFromDb(id: string) {
   return prisma.cotactFolder.delete({ where: { id } });
 }
 
-export async function getAllContactFoldersFromDb(userId: string, role?: string) {
+export async function getAllContactFoldersFromDb(
+  userId: string,
+  role?: string,
+) {
   if (role === "OWNER") {
     return prisma.cotactFolder.findMany({ orderBy: { createdAt: "desc" } });
   }
@@ -613,7 +683,7 @@ export async function getAllContactFoldersFromDb(userId: string, role?: string) 
 
 export async function createContactGroupInDb(
   userId: string,
-  payload: { name: string; contactIds: string[] }
+  payload: { name: string; contactIds: string[] },
 ) {
   return prisma.contactGroups.create({
     data: {
@@ -626,7 +696,7 @@ export async function createContactGroupInDb(
 
 export async function updateContactGroupInDb(
   id: string,
-  payload: { name?: string; contactIds?: string[] }
+  payload: { name?: string; contactIds?: string[] },
 ) {
   return prisma.contactGroups.update({
     where: { id },
@@ -698,18 +768,20 @@ async function getAgentContactIds(agentId: string): Promise<string[]> {
   return contacts.map((c) => c.id);
 }
 
-
-export async function assignAgentsToListInDb(listId: string, agentIds: string[]) {
+export async function assignAgentsToListInDb(
+  listId: string,
+  agentIds: string[],
+) {
   return prisma.contactList.update({
     where: { id: listId },
-    data: { agentIds: { set: agentIds } },  // only touches agentIds, never contactIds
+    data: { agentIds: { set: agentIds } }, // only touches agentIds, never contactIds
   });
 }
 
 export async function assignContactToGroupsInDb(
   contactId: string,
   groupIds: string[],
-  userId: string
+  userId: string,
 ) {
   return prisma.$transaction(async (tx) => {
     // Fetch ALL groups visible to this user (owned by them, their pool, or system)
@@ -754,7 +826,7 @@ export async function assignContactToGroupsInDb(
 export async function sendLeadSheetEmailInDb(
   contactId: string,
   leadSheetId: string,
-  recipientEmail: string
+  recipientEmail: string,
 ) {
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
@@ -777,12 +849,12 @@ export async function sendLeadSheetEmailInDb(
   const html = leadSheetEmailTemp(
     contact.fullName,
     leadSheet.title,
-    questionsAndAnswers
+    questionsAndAnswers,
   );
   await sendEmail(
     recipientEmail,
     `Lead Sheet: ${leadSheet.title} - ${contact.fullName}`,
-    html
+    html,
   );
 
   return true;
@@ -791,7 +863,7 @@ export async function sendLeadSheetEmailInDb(
 export async function moveToDncInDb(
   contactId: string,
   userId: string,
-  phoneIds: string[]
+  phoneIds: string[],
 ) {
   return prisma.$transaction(async (tx) => {
     const contact = await tx.contact.findUnique({
@@ -800,11 +872,15 @@ export async function moveToDncInDb(
     });
 
     if (!contact) throwHttp(404, "Contact not found");
-    const primaryEmail = contact.emails.find(e => e.isPrimary)?.email || contact.emails[0]?.email || null;
+    const primaryEmail =
+      contact.emails.find((e) => e.isPrimary)?.email ||
+      contact.emails[0]?.email ||
+      null;
 
     const phonesToMark = contact.phones.filter((p) => phoneIds.includes(p.id));
 
-    if (phonesToMark.length === 0) throwHttp(400, "No valid phone numbers selected");
+    if (phonesToMark.length === 0)
+      throwHttp(400, "No valid phone numbers selected");
 
     // 1. Mark phone numbers as DNC in contact_phones
     await tx.contactPhone.updateMany({
@@ -826,13 +902,13 @@ export async function moveToDncInDb(
     });
 
     // 3. Create Audit Log
-    const phoneNumbers = phonesToMark.map(p => p.number).join(", ");
+    const phoneNumbers = phonesToMark.map((p) => p.number).join(", ");
     await tx.auditLog.create({
       data: {
         userId,
         action: `Added ${phoneNumbers} to DNC`,
         details: `Contact: ${contact.fullName}`,
-      }
+      },
     });
 
     return { success: true };
@@ -844,7 +920,6 @@ export async function getDncListFromDb() {
     orderBy: { createdAt: "desc" },
   });
 }
-
 
 export async function importContactsFromCsvInDb(args: {
   userId: string;
@@ -870,7 +945,7 @@ export async function importContactsFromCsvInDb(args: {
       // 1. Generate IDs and prepare data for bulk insertion
       const contactData = contacts.map((c) => ({
         id: randomUUID(),
-        fullName: c.fullName || "Unnamed", 
+        fullName: c.fullName || "Unnamed",
         city: c.city,
         state: c.state,
         zip: c.zip,
@@ -1020,7 +1095,7 @@ export async function exportContactsInDb(args: {
       fieldNames,
       contactListId: contactListId || null,
       contactGroupId: contactGroupId || null,
-      contactsCount : contactsCount-1,
+      contactsCount: contactsCount - 1,
       exportType,
     },
     include: {
@@ -1060,4 +1135,470 @@ export async function getAllExportContactsFromDb(userId: string) {
       },
     },
   });
+}
+
+export async function getAllBackupContactsFromDb(userId: string, role: string) {
+  let backups;
+
+  if (role === "OWNER" || role === "ADMIN") {
+    backups = await prisma.backupContacts.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { fullName: true, email: true, role: true } },
+      },
+    });
+  } else {
+    backups = await prisma.backupContacts.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { fullName: true, email: true, role: true } },
+      },
+    });
+  }
+
+  // Collect all unique contact list IDs
+  const allListIds = new Set<string>();
+  for (const backup of backups) {
+    if (Array.isArray(backup.contacts)) {
+      for (const contact of backup.contacts as any[]) {
+        if (Array.isArray(contact.contactlist)) {
+          for (const id of contact.contactlist) {
+            allListIds.add(id);
+          }
+        }
+        if (Array.isArray(contact.contactListId)) {
+          for (const id of contact.contactListId) {
+            allListIds.add(id);
+          }
+        }
+      }
+    }
+  }
+
+  // Fetch the lists
+  const lists = await prisma.contactList.findMany({
+    where: { id: { in: Array.from(allListIds) } },
+    select: { id: true, name: true, createdAt: true },
+  });
+
+  const listMap = new Map();
+  for (const list of lists) {
+    listMap.set(list.id, list);
+  }
+
+  // Populate list info
+  const populatedBackups = backups.map((backup) => {
+    let populatedContacts = backup.contacts;
+    if (Array.isArray(backup.contacts)) {
+      populatedContacts = (backup.contacts as any[]).map((contact) => {
+        const listIds = [
+          ...(Array.isArray(contact.contactlist) ? contact.contactlist : []),
+          ...(Array.isArray(contact.contactListId)
+            ? contact.contactListId
+            : []),
+        ];
+
+        // Remove duplicates and find the actual lists
+        const uniqueListIds = Array.from(new Set(listIds));
+        const contactListData = uniqueListIds
+          .map((id: string) => listMap.get(id))
+          .filter(Boolean);
+
+        return {
+          ...contact,
+          contactlist: contactListData,
+          contactList: contactListData,
+        };
+      });
+    }
+    return {
+      ...backup,
+      contacts: populatedContacts,
+    };
+  });
+
+  return populatedBackups;
+}
+
+export async function restoreContactFromDb(
+  originalContactId: string,
+  userId: string,
+) {
+  // Find the backup string that contains this specific contact.
+  const allBackups = await prisma.backupContacts.findMany({
+    where: { userId },
+  });
+
+  let foundBackup = null;
+  let foundContactData = null as any;
+
+  for (const backup of allBackups) {
+    if (Array.isArray(backup.contacts)) {
+      const contact = (backup.contacts as any[]).find(
+        (c) => c.id === originalContactId,
+      );
+      if (contact) {
+        foundBackup = backup;
+        foundContactData = contact;
+        break;
+      }
+    }
+  }
+
+  if (!foundBackup || !foundContactData) {
+    throwHttp(404, "Backup contact not found. Unable to restore.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // 1. Restore the base Contact object
+    await tx.contact.create({
+      data: {
+        id: foundContactData.id,
+        fullName: foundContactData.fullName,
+        address: foundContactData.address,
+        city: foundContactData.city,
+        state: foundContactData.state,
+        zip: foundContactData.zip,
+        mailingAddress: foundContactData.mailingAddress,
+        mailingCity: foundContactData.mailingCity,
+        mailingState: foundContactData.mailingState,
+        mailingZip: foundContactData.mailingZip,
+        source: foundContactData.source,
+        tags: foundContactData.tags || [],
+        notes: foundContactData.notes,
+        dataDialerId: foundContactData.dataDialerId,
+        userId: foundContactData.userId,
+        createdAt: foundContactData.createdAt
+          ? new Date(foundContactData.createdAt)
+          : undefined,
+        updatedAt: foundContactData.updatedAt
+          ? new Date(foundContactData.updatedAt)
+          : undefined,
+      },
+    });
+
+    // 2. Restore Emails
+    if (
+      Array.isArray(foundContactData.emails) &&
+      foundContactData.emails.length > 0
+    ) {
+      const emailsData = foundContactData.emails.map((e: any) => ({
+        id: e.id,
+        email: e.email,
+        isPrimary: e.isPrimary,
+        contactId: foundContactData.id,
+      }));
+      await tx.contactEmail.createMany({ data: emailsData });
+    }
+
+    // 3. Restore Phones
+    if (
+      Array.isArray(foundContactData.phones) &&
+      foundContactData.phones.length > 0
+    ) {
+      const phonesData = foundContactData.phones.map((p: any) => ({
+        id: p.id,
+        number: p.number,
+        type: p.type,
+        isDnc: p.isDnc,
+        contactId: foundContactData.id,
+      }));
+      await tx.contactPhone.createMany({ data: phonesData });
+    }
+
+    // 4. Restore Attachments
+    if (
+      Array.isArray(foundContactData.attachments) &&
+      foundContactData.attachments.length > 0
+    ) {
+      const attachmentsData = foundContactData.attachments.map((a: any) => ({
+        id: a.id,
+        fileName: a.fileName,
+        fileUrl: a.fileUrl,
+        fileSize: a.fileSize,
+        mimeType: a.mimeType,
+        contactId: foundContactData.id,
+        createdAt: a.createdAt ? new Date(a.createdAt) : undefined,
+        updatedAt: a.updatedAt ? new Date(a.updatedAt) : undefined,
+      }));
+      await tx.attachment.createMany({ data: attachmentsData });
+    }
+
+    // 5. Restore MiscFields
+    await tx.contact.update({
+      where: { id: foundContactData.id },
+      data: {
+        miscValues: foundContactData.miscValues
+          ? foundContactData.miscValues
+          : undefined,
+        leadsheetValues: foundContactData.leadsheetValues
+          ? foundContactData.leadsheetValues
+          : undefined,
+        miscFieldId: foundContactData.miscFieldId,
+      },
+    });
+
+    // 6. Restore ContactList relationships
+    const savedListIds = foundContactData.contactListId || [];
+    for (const listId of savedListIds) {
+      const exists = await tx.contactList.findUnique({ where: { id: listId } });
+      if (exists && !exists.contactIds.includes(foundContactData.id)) {
+        await tx.contactList.update({
+          where: { id: listId },
+          data: { contactIds: { push: foundContactData.id } },
+        });
+      }
+    }
+
+    // 7. Restore ContactGroup relationships
+    const savedGroupIds = foundContactData.contactGroupId || [];
+    for (const groupId of savedGroupIds) {
+      const exists = await tx.contactGroups.findUnique({
+        where: { id: groupId },
+      });
+      if (exists && !exists.contactIds.includes(foundContactData.id)) {
+        await tx.contactGroups.update({
+          where: { id: groupId },
+          data: { contactIds: { push: foundContactData.id } },
+        });
+      }
+    }
+
+    // 8. Delete the specific contact from the BackupContacts entry
+    const newContactsArray = (foundBackup.contacts as any[]).filter(
+      (c) => c.id !== originalContactId,
+    );
+
+    if (newContactsArray.length === 0) {
+      await tx.backupContacts.delete({
+        where: { id: foundBackup.id },
+      });
+    } else {
+      await tx.backupContacts.update({
+        where: { id: foundBackup.id },
+        data: { contacts: newContactsArray as any },
+      });
+    }
+
+    // 9. Create Audit Log
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Restored contact: ${foundContactData.fullName}`,
+        details: `ID: ${foundContactData.id}`,
+      },
+    });
+  });
+
+  return true;
+}
+
+export async function permanentlyDeleteContactFromDb(
+  originalContactId: string,
+  userId: string,
+) {
+  // 1. Locate the backup row containing the contact
+  const allBackups = await prisma.backupContacts.findMany({
+    where: { userId },
+  });
+
+  let foundBackup = null;
+  let foundContactData = null as any;
+
+  for (const backup of allBackups) {
+    if (Array.isArray(backup.contacts)) {
+      const contact = (backup.contacts as any[]).find(
+        (c) => c.id === originalContactId,
+      );
+      if (contact) {
+        foundBackup = backup;
+        foundContactData = contact;
+        break;
+      }
+    }
+  }
+
+  if (!foundBackup || !foundContactData) {
+    throwHttp(404, "Backup contact not found. Unable to permanently delete.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // 2. Remove the specific contact from the BackupContacts entry
+    const newContactsArray = (foundBackup.contacts as any[]).filter(
+      (c) => c.id !== originalContactId,
+    );
+
+    if (newContactsArray.length === 0) {
+      await tx.backupContacts.delete({
+        where: { id: foundBackup.id },
+      });
+    } else {
+      await tx.backupContacts.update({
+        where: { id: foundBackup.id },
+        data: { contacts: newContactsArray as any },
+      });
+    }
+
+    // 3. Create Audit Log
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Permanently deleted contact (no restore possible): ${foundContactData.fullName}`,
+        details: `ID: ${foundContactData.id}`,
+      },
+    });
+  });
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// HOTLIST
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the top-10 contacts ranked by total dialing time (desc),
+ * with high confidence and positive sentiment from CallAnalysis.
+ *
+ * - AGENT: only contacts the agent personally called
+ * - ADMIN: contacts called by the admin or any of their agents
+ * - OWNER: all contacts across the system
+ */
+export async function getHotlistFromDb(userId: string, role: string) {
+  let userIds: string[] = [userId];
+
+  if (role === "OWNER") {
+    // All users
+    const allUsers = await prisma.user.findMany({ select: { id: true } });
+    userIds = allUsers.map((u) => u.id);
+  } else if (role === "ADMIN") {
+    userIds = await getAdminUserPool(userId);
+  }
+  // AGENT: just their own userId (default from initialisation)
+
+  // 1. Aggregate total dialing time per contactId from CallRecord
+  const callRecords = await prisma.callRecord.findMany({
+    where: {
+      userId: { in: userIds },
+      contactId: { not: null },
+      duration: { not: null },
+    },
+    select: {
+      contactId: true,
+      duration: true,
+      callSid: true,
+    },
+  });
+
+  // 2. Build a map: contactId -> { totalDuration, callSids[] }
+  const contactMap = new Map<
+    string,
+    { totalDuration: number; callSids: string[] }
+  >();
+
+  for (const record of callRecords) {
+    if (!record.contactId) continue;
+    const existing = contactMap.get(record.contactId);
+    if (existing) {
+      existing.totalDuration += record.duration ?? 0;
+      existing.callSids.push(record.callSid);
+    } else {
+      contactMap.set(record.contactId, {
+        totalDuration: record.duration ?? 0,
+        callSids: [record.callSid],
+      });
+    }
+  }
+
+  if (contactMap.size === 0) return [];
+
+  // 3. Enrich with sentiment/confidence from CallAnalysis
+  const allCallSids = Array.from(contactMap.values()).flatMap(
+    (v) => v.callSids,
+  );
+
+  const analyses = await prisma.callAnalysis.findMany({
+    where: { callSid: { in: allCallSids } },
+    select: { callSid: true, sentiment: true, confidence: true },
+  });
+
+  // Map callSid -> analysis
+  const analysisMap = new Map(
+    analyses.map((a) => [a.callSid, a]),
+  );
+
+  // 4. Compute per-contact: avg confidence, dominant sentiment
+  type EnrichedContact = {
+    contactId: string;
+    totalDuration: number;
+    avgConfidence: number;
+    sentiment: string;
+  };
+
+  const enriched: EnrichedContact[] = [];
+
+  for (const [contactId, { totalDuration, callSids }] of contactMap) {
+    const relatedAnalyses = callSids
+      .map((sid) => analysisMap.get(sid))
+      .filter(Boolean) as { callSid: string; sentiment: string; confidence: number }[];
+
+    const avgConfidence =
+      relatedAnalyses.length > 0
+        ? relatedAnalyses.reduce((acc, a) => acc + a.confidence, 0) /
+        relatedAnalyses.length
+        : 0;
+
+    // Dominant sentiment (most frequent)
+    const sentimentCounts: Record<string, number> = {};
+    for (const a of relatedAnalyses) {
+      sentimentCounts[a.sentiment] = (sentimentCounts[a.sentiment] ?? 0) + 1;
+    }
+    const sentiment =
+      Object.entries(sentimentCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ??
+      "neutral";
+
+    enriched.push({ contactId, totalDuration, avgConfidence, sentiment });
+  }
+
+  // 5. Filter: high confidence (>= 0.6) and positive/neutral sentiment
+  const filtered = enriched.filter(
+    (e) =>
+      e.avgConfidence >= 0.6 &&
+      (e.sentiment === "positive" || e.sentiment === "neutral"),
+  );
+
+  // If not enough filtered results, fall back to all enriched contacts
+  const ranked = (filtered.length >= 3 ? filtered : enriched)
+    .sort((a, b) => b.totalDuration - a.totalDuration)
+    .slice(0, 10);
+
+  // 6. Fetch actual contact details
+  const contactIds = ranked.map((r) => r.contactId);
+
+  const contacts = await prisma.contact.findMany({
+    where: { id: { in: contactIds } },
+    include: {
+      phones: { where: { isDnc: false }, take: 1 },
+      emails: { take: 1 },
+    },
+  });
+
+  // 7. Merge and preserve rank order
+  const contactDetailMap = new Map(contacts.map((c) => [c.id, c]));
+
+  return ranked
+    .map((r) => {
+      const contact = contactDetailMap.get(r.contactId);
+      if (!contact) return null;
+      return {
+        id: contact.id,
+        fullName: contact.fullName,
+        phone: contact.phones[0]?.number ?? null,
+        totalDialingTime: r.totalDuration,
+        avgConfidence: r.avgConfidence,
+        sentiment: r.sentiment,
+      };
+    })
+    .filter(Boolean);
 }
