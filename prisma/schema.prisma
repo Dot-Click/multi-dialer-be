@@ -200,6 +200,8 @@ model User {
   createdBy          User?      @relation("UserCreator", fields: [createdById], references: [id])
   createdUsers       User[]     @relation("UserCreator")
   callerIds          CallerId[]
+  defaultCallerId    String?
+  defaultCaller      CallerId?  @relation("DefaultCaller", fields: [defaultCallerId], references: [id])
   companies          Company[]
 
   signature Signature?
@@ -839,6 +841,7 @@ model CallerId {
   updatedAt       DateTime       @updatedAt
   dialerType      DialerType?    @default(PREDICTIVE)
   aiPacing        Boolean?       @default(false)
+  defaultForUsers User[]         @relation("DefaultCaller")
 
   @@map("caller_id")
 }
@@ -920,6 +923,8 @@ model MiscField {
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+  contact         Contact?       @relation(fields: [contactId], references: [id])
+  contactId       String?
 
   @@map("misc_fields")
 }
@@ -977,7 +982,9 @@ model Calendar {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  status AppointmentStatus @default(SET)
+  status    AppointmentStatus @default(SET)
+  contact   Contact?          @relation(fields: [contactId], references: [id])
+  contactId String?
 
   @@map("calendar")
 }

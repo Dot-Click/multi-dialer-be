@@ -44,7 +44,7 @@ router.use("/library/callback-prompt", protectRoute, callbackPromptRoutes);
 
 
 
-router.use("/system-settings/caller-id", protectRoute, checkRole(["ADMIN", "OWNER"]), callerIdRoutes)
+router.use("/system-settings/caller-id", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), callerIdRoutes)
 router.use("/system-settings/dialer-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), dialerSettingRoute);
 router.use("/system-settings/call-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), callSettingsRoutes)
 router.use("/system-settings/misc-fields", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), miscFieldsRoutes)

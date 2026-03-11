@@ -245,21 +245,21 @@ export async function updateContactInDb(
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
-            deleteMany: {},
-            create: payload.emails.map((e) => ({
-              email: e.email,
-              isPrimary: e.isPrimary,
-            })),
-          }
+          deleteMany: {},
+          create: payload.emails.map((e) => ({
+            email: e.email,
+            isPrimary: e.isPrimary,
+          })),
+        }
         : undefined,
       phones: payload.phones
         ? {
-            deleteMany: {},
-            create: payload.phones.map((p) => ({
-              number: p.number,
-              type: p.type,
-            })),
-          }
+          deleteMany: {},
+          create: payload.phones.map((p) => ({
+            number: p.number,
+            type: p.type,
+          })),
+        }
         : undefined,
     },
     include: {
@@ -1451,4 +1451,154 @@ export async function permanentlyDeleteContactFromDb(
   });
 
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// HOTLIST
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the top-10 contacts ranked by total dialing time (desc),
+ * with high confidence and positive sentiment from CallAnalysis.
+ *
+ * - AGENT: only contacts the agent personally called
+ * - ADMIN: contacts called by the admin or any of their agents
+ * - OWNER: all contacts across the system
+ */
+export async function getHotlistFromDb(userId: string, role: string) {
+  let userIds: string[] = [userId];
+
+  if (role === "OWNER") {
+    // All users
+    const allUsers = await prisma.user.findMany({ select: { id: true } });
+    userIds = allUsers.map((u) => u.id);
+  } else if (role === "ADMIN") {
+    userIds = await getAdminUserPool(userId);
+  }
+  // AGENT: just their own userId (default from initialisation)
+
+  // 1. Aggregate total dialing time per contactId from CallRecord
+  const callRecords = await prisma.callRecord.findMany({
+    where: {
+      userId: { in: userIds },
+      contactId: { not: null },
+      duration: { not: null },
+    },
+    select: {
+      contactId: true,
+      duration: true,
+      callSid: true,
+    },
+  });
+
+  // 2. Build a map: contactId -> { totalDuration, callSids[] }
+  const contactMap = new Map<
+    string,
+    { totalDuration: number; callSids: string[] }
+  >();
+
+  for (const record of callRecords) {
+    if (!record.contactId) continue;
+    const existing = contactMap.get(record.contactId);
+    if (existing) {
+      existing.totalDuration += record.duration ?? 0;
+      existing.callSids.push(record.callSid);
+    } else {
+      contactMap.set(record.contactId, {
+        totalDuration: record.duration ?? 0,
+        callSids: [record.callSid],
+      });
+    }
+  }
+
+  if (contactMap.size === 0) return [];
+
+  // 3. Enrich with sentiment/confidence from CallAnalysis
+  const allCallSids = Array.from(contactMap.values()).flatMap(
+    (v) => v.callSids,
+  );
+
+  const analyses = await prisma.callAnalysis.findMany({
+    where: { callSid: { in: allCallSids } },
+    select: { callSid: true, sentiment: true, confidence: true },
+  });
+
+  // Map callSid -> analysis
+  const analysisMap = new Map(
+    analyses.map((a) => [a.callSid, a]),
+  );
+
+  // 4. Compute per-contact: avg confidence, dominant sentiment
+  type EnrichedContact = {
+    contactId: string;
+    totalDuration: number;
+    avgConfidence: number;
+    sentiment: string;
+  };
+
+  const enriched: EnrichedContact[] = [];
+
+  for (const [contactId, { totalDuration, callSids }] of contactMap) {
+    const relatedAnalyses = callSids
+      .map((sid) => analysisMap.get(sid))
+      .filter(Boolean) as { callSid: string; sentiment: string; confidence: number }[];
+
+    const avgConfidence =
+      relatedAnalyses.length > 0
+        ? relatedAnalyses.reduce((acc, a) => acc + a.confidence, 0) /
+        relatedAnalyses.length
+        : 0;
+
+    // Dominant sentiment (most frequent)
+    const sentimentCounts: Record<string, number> = {};
+    for (const a of relatedAnalyses) {
+      sentimentCounts[a.sentiment] = (sentimentCounts[a.sentiment] ?? 0) + 1;
+    }
+    const sentiment =
+      Object.entries(sentimentCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ??
+      "neutral";
+
+    enriched.push({ contactId, totalDuration, avgConfidence, sentiment });
+  }
+
+  // 5. Filter: high confidence (>= 0.6) and positive/neutral sentiment
+  const filtered = enriched.filter(
+    (e) =>
+      e.avgConfidence >= 0.6 &&
+      (e.sentiment === "positive" || e.sentiment === "neutral"),
+  );
+
+  // If not enough filtered results, fall back to all enriched contacts
+  const ranked = (filtered.length >= 3 ? filtered : enriched)
+    .sort((a, b) => b.totalDuration - a.totalDuration)
+    .slice(0, 10);
+
+  // 6. Fetch actual contact details
+  const contactIds = ranked.map((r) => r.contactId);
+
+  const contacts = await prisma.contact.findMany({
+    where: { id: { in: contactIds } },
+    include: {
+      phones: { where: { isDnc: false }, take: 1 },
+      emails: { take: 1 },
+    },
+  });
+
+  // 7. Merge and preserve rank order
+  const contactDetailMap = new Map(contacts.map((c) => [c.id, c]));
+
+  return ranked
+    .map((r) => {
+      const contact = contactDetailMap.get(r.contactId);
+      if (!contact) return null;
+      return {
+        id: contact.id,
+        fullName: contact.fullName,
+        phone: contact.phones[0]?.number ?? null,
+        totalDialingTime: r.totalDuration,
+        avgConfidence: r.avgConfidence,
+        sentiment: r.sentiment,
+      };
+    })
+    .filter(Boolean);
 }

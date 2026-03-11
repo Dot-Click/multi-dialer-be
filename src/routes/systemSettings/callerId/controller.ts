@@ -20,11 +20,11 @@ export const getAllCallerIdsOfSpecificUser = async (req: Request, res: Response)
       });
     }
 
-    // Get all CallerIds from user's systemSettings
+    // Get all CallerIds
     const callerIds = await prisma.callerId.findMany({
-      where: {
-        systemSettingId: systemSettings.id,
-      },
+      where: req.user?.role === "AGENT" 
+        ? { agents: { some: { id: userId } } }
+        : { systemSettingId: systemSettings.id },
       include: {
         agents: {
           select: {

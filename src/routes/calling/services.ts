@@ -190,10 +190,18 @@ export class DialerService {
       // 1. Update status to CALLING in DB
       await this.updateLeadStatusInDB(lead.id, "CALLING");
 
-      // 2. Initiate Twilio Call
+      // 2. Fetch User's default caller ID if exists
+      const user = await prisma.user.findUnique({
+        where: { id: lead.userId },
+        include: { defaultCaller: true }
+      });
+
+      const fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+
+      // 3. Initiate Twilio Call
       const call = await client.calls.create({
         to: lead.phone,
-        from: envConfig.TWILIO_PHONE_NUMBER as string,
+        from: fromNumber as string,
         url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${lead.userId}`,
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
