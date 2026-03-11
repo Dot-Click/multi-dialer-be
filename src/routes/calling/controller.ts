@@ -764,7 +764,7 @@ export const setCounter: RequestHandler = async (req: Request, res: Response) =>
 
 export const getCallerIds: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const callerIds = await prisma.callerId.findMany();
+    const callerIds = await prisma.callerId.findMany({where: {counter: {lt: 5}}});
     successResponse(res, 200, "Caller IDs fetched successfully", callerIds);
     return;
   } catch (error: any) {
