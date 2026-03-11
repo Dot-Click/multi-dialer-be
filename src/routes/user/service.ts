@@ -45,6 +45,7 @@ export async function getAllUsersFromDb() {
             lastLogin: true,
             createdAt: true,
             updatedAt: true,
+            defaultCallerId: true,
             createdBy: {
                 select: {
                     id: true,
@@ -68,6 +69,7 @@ export async function updateUserInDb(
         role: "AGENT" | "ADMIN" | "OWNER";
         status: "ACTIVE" | "DEACTIVATED" | "SUSPENDED" | "PENDING" | "EXPIRING_SOON";
         emailVerified: boolean;
+        defaultCallerId: string;
     }>
 ) {
     const existing = await prisma.user.findUnique({ where: { id } });
@@ -81,6 +83,7 @@ export async function updateUserInDb(
             fullName: true,
             role: true,
             status: true,
+            defaultCallerId: true,
         }
     });
 }

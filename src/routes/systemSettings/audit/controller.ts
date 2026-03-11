@@ -4,7 +4,10 @@ import { getAuditLogsFromDb } from "../../../utils/audit";
 
 export const getAuditLogs = async (req: Request, res: Response) => {
     try {
-        const logs = await getAuditLogsFromDb();
+        const { id: userId, role } = req.user!;
+
+        console.log(role)
+        const logs = await getAuditLogsFromDb(role === 'AGENT' ? userId : undefined);
         successResponse(res, 200, "Audit logs fetched", logs);
     } catch (error: any) {
         errorResponse(res, error.message || "Internal server error", 500);

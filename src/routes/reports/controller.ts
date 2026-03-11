@@ -162,6 +162,402 @@ export const getAgentReport: RequestHandler = async (req, res) => {
 };
 
 /**
+ * Get dialer health based on call analysis confidence
+ * Healthy: confidence >= 0.7
+ * Unhealthy: confidence < 0.7
+ */
+export const getDialerHealth: RequestHandler = async (req, res) => {
+    try {
+        const { id: userId, role } = req.user!;
+        let targetUserIds = [userId];
+
+        if (role === 'ADMIN' || role === 'OWNER') {
+            const agents = await prisma.user.findMany({
+                where: { createdById: userId },
+                select: { id: true }
+            });
+            targetUserIds = [userId, ...agents.map(a => a.id)];
+        }
+
+        // Fetch recent analyses
+        const analyses = await prisma.callAnalysis.findMany({
+            where: {
+                createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+        });
+
+        const callSids = analyses.map(a => a.callSid);
+        const callRecords = await prisma.callRecord.findMany({
+            where: {
+                callSid: { in: callSids },
+                userId: { in: targetUserIds }
+            },
+            include: {
+                contact: {
+                    select: {
+                        fullName: true,
+                        phones: { select: { number: true }, take: 1 }
+                    }
+                },
+                lead: {
+                    select: {
+                        fullName: true,
+                        phone: true
+                    }
+                }
+            }
+        });
+
+        const recordMap = new Map(callRecords.map(r => [r.callSid, r]));
+
+        const healthData = analyses
+            .map(a => {
+                const record = recordMap.get(a.callSid);
+                if (!record) return null;
+
+                const name = record.contact?.fullName || record.lead?.fullName || "Unknown";
+                const contact = record.contact?.phones[0]?.number || record.lead?.phone || "N/A";
+
+                return {
+                    id: a.id,
+                    name,
+                    contact,
+                    health: a.confidence >= 0.7 ? "healthy" : "unhealthy"
+                };
+            })
+            .filter(Boolean);
+
+        successResponse(res, 200, "Dialer health fetched successfully", healthData);
+    } catch (error: any) {
+        console.error("Error fetching dialer health:", error);
+        errorResponse(res, { message: error.message });
+    }
+}
+
+/**
+ * Get sales agents performance for admin dashboard
+ */
+export const getSalesAgentsPerformance: RequestHandler = async (req, res) => {
+    try {
+        const { id: requesterId, role: requesterRole } = req.user!;
+
+        if (requesterRole !== 'ADMIN' && requesterRole !== 'OWNER') {
+            errorResponse(res, { message: "Only admins or owners can access this report" }, 403);
+            return;
+        }
+
+        const agents = await prisma.user.findMany({
+            where: { createdById: requesterId },
+            select: { id: true, fullName: true }
+        });
+
+        const agentIds = agents.map(a => a.id);
+        const last30Days = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+        const totalCallsGrouped = await prisma.callRecord.groupBy({
+            by: ['userId'],
+            where: {
+                userId: { in: agentIds },
+                startTime: { gte: last30Days }
+            },
+            _count: { _all: true }
+        });
+
+        const analyses = await prisma.callAnalysis.findMany({
+            where: { createdAt: { gte: last30Days } },
+            select: { callSid: true }
+        });
+        const analyzedCallSids = analyses.map(a => a.callSid);
+
+        const connectedCallsGrouped = await prisma.callRecord.groupBy({
+            by: ['userId'],
+            where: {
+                userId: { in: agentIds },
+                startTime: { gte: last30Days },
+                callSid: { in: analyzedCallSids }
+            },
+            _count: { _all: true }
+        });
+
+        const performanceMap = new Map();
+        totalCallsGrouped.forEach(item => {
+            performanceMap.set(item.userId, {
+                totalCalls: item._count._all,
+                connectedCalls: 0
+            });
+        });
+
+        connectedCallsGrouped.forEach(item => {
+            const current = performanceMap.get(item.userId) || { totalCalls: 0, connectedCalls: 0 };
+            performanceMap.set(item.userId, {
+                ...current,
+                connectedCalls: item._count._all
+            });
+        });
+
+        const performanceData = agents.map(agent => {
+            const stats = performanceMap.get(agent.id) || { totalCalls: 0, connectedCalls: 0 };
+            const conversionRate = stats.totalCalls > 0
+                ? Math.round((stats.connectedCalls / stats.totalCalls) * 100)
+                : 0;
+
+            return {
+                name: agent.fullName || "Unknown",
+                totalCalls: stats.totalCalls,
+                connectedCalls: stats.connectedCalls,
+                conversionRate: `${conversionRate}%`
+            };
+        }).sort((a, b) => b.totalCalls - a.totalCalls);
+
+        successResponse(res, 200, "Sales agents performance fetched", performanceData);
+    } catch (error: any) {
+        console.error("Error fetching sales agents performance:", error);
+        errorResponse(res, { message: error.message });
+    }
+}
+
+/**
+ * Get agent call metrics for admin dashboard
+ */
+export const getAgentCallMetrics: RequestHandler = async (req, res) => {
+    try {
+        const { id: requesterId, role: requesterRole } = req.user!;
+
+        if (requesterRole !== 'ADMIN' && requesterRole !== 'OWNER') {
+            errorResponse(res, { message: "Only admins or owners can access this report" }, 403);
+            return;
+        }
+
+        const agents = await prisma.user.findMany({
+            where: { createdById: requesterId },
+            select: { id: true, fullName: true }
+        });
+
+        const agentIds = agents.map(a => a.id);
+        const last30Days = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+        const avgDurationGrouped = await prisma.callRecord.groupBy({
+            by: ['userId'],
+            where: {
+                userId: { in: agentIds },
+                startTime: { gte: last30Days },
+                duration: { not: null }
+            },
+            _avg: { duration: true }
+        });
+
+        const callsByStatus = await prisma.callRecord.groupBy({
+            by: ['userId', 'status'],
+            where: {
+                userId: { in: agentIds },
+                startTime: { gte: last30Days },
+                status: { in: ['completed', 'no-answer', 'busy'] }
+            },
+            _count: { _all: true }
+        });
+
+        const analyses = await prisma.callAnalysis.findMany({
+            where: { createdAt: { gte: last30Days } },
+            select: { callSid: true, sentiment: true }
+        });
+
+        const positiveSids = analyses.filter(a => a.sentiment === 'POSITIVE').map(a => a.callSid);
+        const analysedSids = analyses.map(a => a.callSid);
+
+        const positiveGrouped = await prisma.callRecord.groupBy({
+            by: ['userId'],
+            where: {
+                userId: { in: agentIds },
+                startTime: { gte: last30Days },
+                callSid: { in: positiveSids }
+            },
+            _count: { _all: true }
+        });
+
+        const analysedTotalGrouped = await prisma.callRecord.groupBy({
+            by: ['userId'],
+            where: {
+                userId: { in: agentIds },
+                startTime: { gte: last30Days },
+                callSid: { in: analysedSids }
+            },
+            _count: { _all: true }
+        });
+
+        const metricsMap = new Map();
+
+        avgDurationGrouped.forEach(item => {
+            metricsMap.set(item.userId, {
+                avgTime: Math.round(item._avg.duration || 0),
+                completed: 0,
+                nosy: 0,
+                positive: 0,
+                analysed: 0
+            });
+        });
+
+        callsByStatus.forEach(item => {
+            const current = metricsMap.get(item.userId) || { avgTime: 0, completed: 0, nosy: 0, positive: 0, analysed: 0 };
+            if (item.status === 'completed') {
+                current.completed = item._count._all;
+            } else {
+                current.nosy += item._count._all;
+            }
+            metricsMap.set(item.userId, current);
+        });
+
+        positiveGrouped.forEach(item => {
+            const current = metricsMap.get(item.userId) || { avgTime: 0, completed: 0, nosy: 0, positive: 0, analysed: 0 };
+            current.positive = item._count._all;
+            metricsMap.set(item.userId, current);
+        });
+
+        analysedTotalGrouped.forEach(item => {
+            const current = metricsMap.get(item.userId) || { avgTime: 0, completed: 0, nosy: 0, positive: 0, analysed: 0 };
+            current.analysed = item._count._all;
+            metricsMap.set(item.userId, current);
+        });
+
+        const metricsData = agents.map(agent => {
+            const stats = metricsMap.get(agent.id) || { avgTime: 0, completed: 0, nosy: 0, positive: 0, analysed: 0 };
+
+            const totalStatus = stats.completed + stats.nosy;
+            const objHandling = totalStatus > 0 ? Math.round((stats.completed / totalStatus) * 100) : 0;
+            const interestRate = stats.analysed > 0 ? Math.round((stats.positive / stats.analysed) * 100) : 0;
+
+            return {
+                name: agent.fullName || "Unknown",
+                avgcalltime: formatDuration(stats.avgTime),
+                objhandling: `${objHandling}%`,
+                interest: `${interestRate}%`,
+                avgSeconds: stats.avgTime
+            };
+        }).sort((a, b) => b.avgSeconds - a.avgSeconds);
+
+        successResponse(res, 200, "Agent call metrics fetched successfully", metricsData);
+    } catch (error: any) {
+        console.error("Error fetching agent call metrics:", error);
+        errorResponse(res, { message: error.message });
+    }
+}
+
+/**
+ * Get call statistics for dashboard (Admin/Agent)
+ */
+export const getCallStatistics: RequestHandler = async (req, res) => {
+    try {
+        const { id: requesterId, role: requesterRole } = req.user!;
+        const { period, userId: queryUserId } = req.query;
+
+        let targetUserIds: string[] = [requesterId];
+
+        if (requesterRole === 'ADMIN' || requesterRole === 'OWNER') {
+            if (queryUserId) {
+                targetUserIds = [queryUserId as string];
+            } else {
+                const agents = await prisma.user.findMany({
+                    where: { createdById: requesterId },
+                    select: { id: true }
+                });
+                targetUserIds = [requesterId, ...agents.map(a => a.id)];
+            }
+        }
+
+        let startDate = new Date();
+        if (period === 'Last 7 days') {
+            startDate.setDate(startDate.getDate() - 7);
+        } else if (period === 'Last 30 days') {
+            startDate.setDate(startDate.getDate() - 30);
+        } else {
+            // "Today"
+            startDate.setHours(0, 0, 0, 0);
+        }
+
+        const totalCalls = await prisma.callRecord.count({
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate }
+            }
+        });
+
+        const analyses = await prisma.callAnalysis.findMany({
+            where: { createdAt: { gte: startDate } },
+            select: { callSid: true }
+        });
+        const analyzedCallSids = analyses.map(a => a.callSid);
+
+        const connectedCallsCount = await prisma.callRecord.count({
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate },
+                callSid: { in: analyzedCallSids }
+            }
+        });
+
+        const connectionRate = totalCalls > 0 ? Math.round((connectedCallsCount / totalCalls) * 100) : 0;
+
+        const outcomes = await prisma.callRecord.groupBy({
+            by: ['disposition'],
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate }
+            },
+            _count: { _all: true }
+        });
+
+        const targetCallSids = await prisma.callRecord.findMany({
+            where: {
+                userId: { in: targetUserIds },
+                startTime: { gte: startDate }
+            },
+            select: { callSid: true }
+        });
+        const callSids = targetCallSids.map(c => c.callSid);
+
+        const interestedCount = await prisma.callAnalysis.count({
+            where: {
+                callSid: { in: callSids },
+                confidence: { gte: 0.7 }
+            }
+        });
+
+        const outcomeCounts = {
+            interested: interestedCount,
+            followup: 0,
+            noAnswer: 0,
+            notInterested: 0,
+            dnc: 0
+        };
+
+        outcomes.forEach(o => {
+            const status = o.disposition;
+            const count = o._count._all;
+            if (status === 'CALL_BACK') outcomeCounts.followup += count;
+            else if (status === 'NO_ANSWER') outcomeCounts.noAnswer += count;
+            else if (status === 'NOT_INTERESTED') outcomeCounts.notInterested += count;
+            else if (status === 'DO_NOT_CALL') outcomeCounts.dnc += count;
+        });
+
+        const data = {
+            totalCalls,
+            connectionRate: `${connectionRate}%`,
+            outcomes: outcomeCounts,
+            goals: {
+                followup: { current: outcomeCounts.followup, target: 10 },
+                interested: { current: outcomeCounts.interested, target: 5 }
+            }
+        };
+
+        successResponse(res, 200, "Call statistics fetched successfully", data);
+    } catch (error: any) {
+        console.error("Error fetching call statistics:", error);
+        errorResponse(res, { message: error.message });
+    }
+}
+
+/**
  * Helper to format seconds into readable string
  */
 function formatDuration(seconds: number): string {
