@@ -216,6 +216,7 @@ model User {
   contacts       Contact[]
   importContacts ImportContact[]
   exportContacts ExportContact[]
+  backupContacts BackupContacts[]
 
   @@map("users")
 }
@@ -657,18 +658,18 @@ model NotificationSetting {
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  appointmentReminder Boolean @default(false)
-  appointmentReminderEmail   String?
+  appointmentReminder      Boolean @default(false)
+  appointmentReminderEmail String?
 
-  callActivityReport    Boolean @default(false)
-  sessionSummaryReport  Boolean @default(false)
+  callActivityReport          Boolean @default(false)
+  sessionSummaryReport        Boolean @default(false)
   includeAgentsWithNoActivity Boolean @default(false)
   dailyCallReportEmail        String?
 
- appointmentNotification Boolean @default(false)
- complianceAlert       Boolean @default(false)
- 
- createdAt DateTime @default(now())
+  appointmentNotification Boolean @default(false)
+  complianceAlert         Boolean @default(false)
+
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("notification_settings")
@@ -1168,4 +1169,18 @@ model ExportContact {
   updatedAt DateTime @updatedAt
 
   @@map("export_contacts")
+}
+
+model BackupContacts {
+  id        String   @id @default(cuid())
+  contacts  Json // multiple contacts store honge
+  userId    String
+  deletedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("backup_contacts")
 }
