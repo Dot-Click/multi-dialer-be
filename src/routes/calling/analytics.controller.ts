@@ -222,6 +222,76 @@ export const endSession: RequestHandler = async (req, res) => {
     }
 };
 
+/**
+ * Get AI Sidekick insights for today
+ */
+export const getSidekickInsights: RequestHandler = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            errorResponse(res, { message: "Unauthorized" }, 401);
+            return;
+        }
+
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        // 1. Fetch analyzed call SIDs for today
+        const analyses = await prisma.callAnalysis.findMany({
+            where: {
+                createdAt: { gte: todayStart }
+            },
+            select: {
+                callSid: true,
+                sentiment: true
+            }
+        });
+
+        const analyzedCallSids = analyses.map(a => a.callSid);
+        const positiveCallSids = analyses.filter(a => a.sentiment === "positive").map(a => a.callSid);
+
+        // 2. Calls Analyzed today for this user
+        const callsAnalyzed = await prisma.callRecord.count({
+            where: {
+                userId,
+                startTime: { gte: todayStart },
+                callSid: { in: analyzedCallSids }
+            }
+        });
+
+        // 3. Positive calls today for this user
+        const positiveCalls = await prisma.callRecord.count({
+            where: {
+                userId,
+                startTime: { gte: todayStart },
+                callSid: { in: positiveCallSids }
+            }
+        });
+
+        const successPrediction = callsAnalyzed > 0
+            ? Math.round((positiveCalls / callsAnalyzed) * 100)
+            : 0;
+
+        // 4. Urgent follow-ups detected (CALL_BACK status today)
+        const urgentFollowUps = await prisma.callRecord.count({
+            where: {
+                userId,
+                startTime: { gte: todayStart },
+                disposition: "CALL_BACK"
+            }
+        });
+
+        successResponse(res, 200, "Sidekick insights fetched", {
+            callsAnalyzed,
+            successPrediction: `${successPrediction}%`,
+            urgentFollowUps
+        });
+    } catch (error: any) {
+        console.error("Error fetching sidekick insights:", error);
+        errorResponse(res, { message: error.message });
+    }
+};
+
 // Helper to format duration
 function formatDuration(seconds: number): string {
     const h = Math.floor(seconds / 3600);

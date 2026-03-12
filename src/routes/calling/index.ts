@@ -23,7 +23,8 @@ import {
   getCallDetails,
   getSessions,
   startSession,
-  endSession
+  endSession,
+  getSidekickInsights
 } from "./analytics.controller";
 import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 
@@ -43,6 +44,7 @@ router.get("/report/calls", protectRoute, getCallDetails);
 router.get("/report/sessions", protectRoute, getSessions);
 router.post("/session/start", protectRoute, startSession);
 router.post("/session/:sessionId/end", protectRoute, endSession);
+router.get("/sidekick-insights", protectRoute, getSidekickInsights);
 
 // Twilio Webhooks
 router.post("/webhooks/voice",  handleVoiceWebhook);
