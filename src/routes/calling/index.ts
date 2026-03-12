@@ -24,7 +24,15 @@ import {
   getSessions,
   startSession,
   endSession,
-  getSidekickInsights
+  getSidekickInsights,
+  getBestTimeToCall,
+  getLeadIntelligence,
+  getAiCoaching,
+  getCallOutcome,
+  getEfficiency,
+  getCompliance,
+  getCallGroup,
+  getImprovement
 } from "./analytics.controller";
 import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
 
@@ -45,6 +53,14 @@ router.get("/report/sessions", protectRoute, getSessions);
 router.post("/session/start", protectRoute, startSession);
 router.post("/session/:sessionId/end", protectRoute, endSession);
 router.get("/sidekick-insights", protectRoute, getSidekickInsights);
+router.get("/best-time-to-call", protectRoute, getBestTimeToCall);
+router.get("/lead-intelligence", protectRoute, getLeadIntelligence);
+router.get("/ai-coaching", protectRoute, getAiCoaching);
+router.get("/call-outcome", protectRoute, getCallOutcome);
+router.get("/efficiency", protectRoute, getEfficiency);
+router.get("/compliance", protectRoute, getCompliance);
+router.get("/call-group", protectRoute, getCallGroup);
+router.get("/improvement", protectRoute, getImprovement);
 
 // Twilio Webhooks
 router.post("/webhooks/voice",  handleVoiceWebhook);
