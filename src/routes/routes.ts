@@ -53,6 +53,7 @@ router.use("/system-settings/notification-settings", protectRoute, checkRole(["A
 router.use("/system-settings/action-plans", protectRoute, checkRole(["ADMIN", "OWNER"]), actionplansRoutes)
 router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), leadSheetRoutes)
 router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "OWNER"]), IntegrationRoute)
+router.use("/system-settings/integration", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), IntegrationRoute)
 router.use("/system-settings/regulatory", protectRoute, checkRole(["ADMIN", "OWNER"]), regulatoryRoutes)
 router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), auditLogRoutes)
 

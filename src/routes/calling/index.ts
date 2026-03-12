@@ -16,7 +16,10 @@ import {
   getCallsInsights,
   getHistory,
   getCallStatus,
-  getCallSummary
+  getCallSummary,
+  setCounter,
+  getCallerIds,
+  toggleHold
 } from "./controller";
 import {
   getAggregateStats,
@@ -41,6 +44,7 @@ const router = Router();
 // Calling Control
 router.post("/test-call/:agentId", protectRoute, startCalling);
 router.post("/end-call", protectRoute, endCall);
+router.post("/toggle-hold", protectRoute, toggleHold);
 router.post("/leads", protectRoute, addLeadsToDialer);
 router.get("/status/:sid", protectRoute, getCallStatus);
 router.get("/getHistory", protectRoute, getHistory);
@@ -63,13 +67,13 @@ router.get("/call-group", protectRoute, getCallGroup);
 router.get("/improvement", protectRoute, getImprovement);
 
 // Twilio Webhooks
-router.post("/webhooks/voice",  handleVoiceWebhook);
-router.post("/webhooks/call-status",  handleCallStatus);
+router.post("/webhooks/voice", handleVoiceWebhook);
+router.post("/webhooks/call-status", handleCallStatus);
 router.post("/webhooks/recording-status", handleRecordingStatus);
 router.post("/webhooks/transcription", handleTranscriptionWebhook);
 
 router.get("/transcription-logs", getTranscriptionLogs);
-router.get("/token",protectRoute, getTwilioToken);
+router.get("/token", protectRoute, getTwilioToken);
 
 // messagings
 router.post("/send-sms", protectRoute, sendSms);
@@ -77,6 +81,10 @@ router.post("/send-sms", protectRoute, sendSms);
 // Number Management
 router.post("/available-numbers", protectRoute, getAvailableUsNumbers);
 router.post("/buy-number", protectRoute, buyNumber);
+
+// call managements}
+router.patch('/set-counter/:sid', protectRoute, setCounter)
+router.get('/callerIds', protectRoute, getCallerIds)
 
 //calls insights
 router.get("/calls-insights", protectRoute, getCallsInsights);
