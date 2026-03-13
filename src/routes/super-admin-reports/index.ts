@@ -1,0 +1,27 @@
+import { Router } from "express";
+import {
+  alerts,
+  billingReportDetail,
+  getUserOverview,
+  newAccountsOverTime,
+  revenueGrowth,
+  userReportsBilling,
+  userSubscriptionDetails,
+  userSubscriptionStatus,
+} from "./controller";
+
+const router = Router();
+
+// Home APIs
+router.get("/user-overview", getUserOverview);
+router.get("/new-accounts", newAccountsOverTime);
+router.get("/alerts", alerts);
+router.get("/user-subscriptions", userSubscriptionDetails);
+router.get("/user-subscription-status", userSubscriptionStatus);
+
+// Reports of user and billing
+router.get("/revenue-growth", revenueGrowth);
+router.get("/billing-report-detail", billingReportDetail);
+router.get("/user-reports-billing", userReportsBilling);
+
+export default router;
