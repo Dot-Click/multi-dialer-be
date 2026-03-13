@@ -7,19 +7,28 @@ import { updateEmailSchema } from "../../../schemas/email.schema";
 
 export const getAllEmailTemplatesOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id: userId } = req.user!;
+    const { id: userId, role, createdById } = req.user!;
 
-    // Get user's library
+    // Case 1: If Agent, fetch from their Admin/Owner (creator)
+    // Case 2: If Admin/Owner, fetch from their own
+    let targetLibraryUserId = userId;
+    if (role === 'AGENT' && createdById) {
+      targetLibraryUserId = createdById;
+    }
+
+    // Get target user's library
     const library = await prisma.library.findFirst({
-      where: { userId },
+      where: { userId: targetLibraryUserId },
     });
 
     if (!library) {
-      errorResponse(res, "Library not found for user", 404);
+      // If agent has no library linked to admin, they might have their own or none
+      // Fallback to their own just in case, or return empty
+      successResponse(res, 200, "No email templates found (Library missing)", []);
       return;
     }
 
-    // Get all email templates from user's library
+    // Get all email templates from library
     const emailTemplates = await prisma.emailTemplate.findMany({
       where: {
         libraryId: library.id,

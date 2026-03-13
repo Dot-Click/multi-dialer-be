@@ -730,3 +730,79 @@ export const getCallSummary: RequestHandler = async (req: Request, res: Response
     return;
   }
 };
+
+
+export const setCounter: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { sid } = req.params;
+    const { from } = req.body;
+    if (!sid) {
+      errorResponse(res, { message: "Call SID is required" }, 400);
+      return;
+    }
+
+    const callRecord = await prisma.callerId.update({
+      where: { id: sid, twillioNumber: from },
+      data: {
+        counter: { increment: 1 },
+      }
+    });
+
+    if (!callRecord) {
+      errorResponse(res, { message: "Call record not found" }, 404);
+      return;
+    }
+
+    successResponse(res, 200, "Call status fetched successfully", callRecord);
+    return;
+  } catch (error: any) {
+    console.error("Get call status failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
+export const getCallerIds: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const callerIds = await prisma.callerId.findMany({ where: { counter: { lt: 5 } } });
+    successResponse(res, 200, "Caller IDs fetched successfully", callerIds);
+    return;
+  } catch (error: any) {
+    console.error("Get caller IDs failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
+export const toggleHold: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { callSid, hold } = req.body;
+    if (!callSid) {
+      errorResponse(res, { message: "Call SID is required" }, 400);
+      return;
+    }
+
+    // List all recordings for this active call
+    const recordings = await client.calls(callSid).recordings.list();
+
+    const targetStatus = hold ? 'paused' : 'in-progress';
+    
+    for (const recording of recordings) {
+      // Pause if currently in-progress
+      if (hold && recording.status === 'in-progress') {
+        await client.calls(callSid).recordings(recording.sid).update({ status: targetStatus });
+      } 
+      // Resume if currently paused
+      else if (!hold && recording.status === 'paused') {
+        await client.calls(callSid).recordings(recording.sid).update({ status: targetStatus });
+      }
+    }
+
+    successResponse(res, 200, hold ? "Call recording paused" : "Call recording resumed", {});
+    return;
+  } catch (error: any) {
+    console.error("Toggle hold failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
