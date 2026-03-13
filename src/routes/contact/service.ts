@@ -245,21 +245,21 @@ export async function updateContactInDb(
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
-          deleteMany: {},
-          create: payload.emails.map((e) => ({
-            email: e.email,
-            isPrimary: e.isPrimary,
-          })),
-        }
+            deleteMany: {},
+            create: payload.emails.map((e) => ({
+              email: e.email,
+              isPrimary: e.isPrimary,
+            })),
+          }
         : undefined,
       phones: payload.phones
         ? {
-          deleteMany: {},
-          create: payload.phones.map((p) => ({
-            number: p.number,
-            type: p.type,
-          })),
-        }
+            deleteMany: {},
+            create: payload.phones.map((p) => ({
+              number: p.number,
+              type: p.type,
+            })),
+          }
         : undefined,
     },
     include: {
