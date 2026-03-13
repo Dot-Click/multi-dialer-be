@@ -233,6 +233,15 @@ export const getSidekickInsights: RequestHandler = async (req, res) => {
             return;
         }
 
+        let userIds = [userId];
+        if (req.user?.role === 'ADMIN') {
+            const agents = await prisma.user.findMany({
+                where: { createdById: userId },
+                select: { id: true }
+            });
+            userIds = [userId, ...agents.map(a => a.id)];
+        }
+
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
@@ -250,19 +259,19 @@ export const getSidekickInsights: RequestHandler = async (req, res) => {
         const analyzedCallSids = analyses.map(a => a.callSid);
         const positiveCallSids = analyses.filter(a => a.sentiment === "positive").map(a => a.callSid);
 
-        // 2. Calls Analyzed today for this user
+        // 2. Calls Analyzed today for these users
         const callsAnalyzed = await prisma.callRecord.count({
             where: {
-                userId,
+                userId: { in: userIds },
                 startTime: { gte: todayStart },
                 callSid: { in: analyzedCallSids }
             }
         });
 
-        // 3. Positive calls today for this user
+        // 3. Positive calls today for these users
         const positiveCalls = await prisma.callRecord.count({
             where: {
-                userId,
+                userId: { in: userIds },
                 startTime: { gte: todayStart },
                 callSid: { in: positiveCallSids }
             }
@@ -275,16 +284,25 @@ export const getSidekickInsights: RequestHandler = async (req, res) => {
         // 4. Urgent follow-ups detected (CALL_BACK status today)
         const urgentFollowUps = await prisma.callRecord.count({
             where: {
-                userId,
+                userId: { in: userIds },
                 startTime: { gte: todayStart },
                 disposition: "CALL_BACK"
+            }
+        });
+
+        // 5. New leads identified today
+        const newLeadsIdentified = await prisma.lead.count({
+            where: {
+                userId: { in: userIds },
+                createdAt: { gte: todayStart }
             }
         });
 
         successResponse(res, 200, "Sidekick insights fetched", {
             callsAnalyzed,
             successPrediction: `${successPrediction}%`,
-            urgentFollowUps
+            urgentFollowUps,
+            newLeadsIdentified
         });
     } catch (error: any) {
         console.error("Error fetching sidekick insights:", error);
@@ -340,7 +358,7 @@ export const getBestTimeToCall: RequestHandler = async (req, res) => {
 
         // Hours to return (9 AM to 9 PM as per UI)
         const hoursToReturn = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
-        
+
         const dialedVsTalked = hoursToReturn.map(h => {
             const hourStat = stats.find(s => Number(s.hour) === h);
             return {
@@ -412,7 +430,7 @@ export const getLeadIntelligence: RequestHandler = async (req, res) => {
         const analyses = await prisma.callAnalysis.findMany({
             select: { confidence: true }
         });
-        
+
         const high = analyses.filter(a => a.confidence >= 0.7).length;
         const medium = analyses.filter(a => a.confidence >= 0.4 && a.confidence < 0.7).length;
         const low = analyses.filter(a => a.confidence < 0.4).length;
@@ -496,7 +514,7 @@ export const getAiCoaching: RequestHandler = async (req, res) => {
         const analyses = await prisma.callAnalysis.findMany();
         const handledSuccessfully = analyses.filter(a => a.sentiment === "positive" && a.confidence >= 0.6).length;
         const missed = analyses.length - handledSuccessfully;
-        
+
         const total = analyses.length || 1;
         const objectionRate = Math.round((handledSuccessfully / total) * 100);
 
@@ -707,7 +725,7 @@ export const getCallGroup: RequestHandler = async (req, res) => {
             name: l.name,
             score: `${Math.round(Number(l.score) * 100)}%`,
             tag: l.status.replace('_', ' ').toLowerCase()
-                    .replace(/\b\w/g, (c: string) => c.toUpperCase())
+                .replace(/\b\w/g, (c: string) => c.toUpperCase())
         }));
 
         successResponse(res, 200, "Calling groups/leads fetched", result);
