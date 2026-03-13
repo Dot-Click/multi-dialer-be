@@ -9,7 +9,7 @@ export const integrationController = {
       const systemSettingId = await integrationService.findSettingsId(req.user.id);
       if (!systemSettingId) {
         res.status(404).json({ error: "System settings not found" });
-        return; // Fixed: Standalone return
+        return;
       }
 
       const { provider, credentials } = req.body;
@@ -32,13 +32,13 @@ export const integrationController = {
     }
   },
 
-  // GET / (Get My)
+  // GET /my
   getMy: async (req: any, res: Response) => {
     try {
       const systemSettingId = await integrationService.findSettingsId(req.user.id);
       if (!systemSettingId) {
         res.status(404).json({ error: "System settings not found" });
-        return; // Fixed: Standalone return
+        return;
       }
 
       const data = await integrationService.getMy(systemSettingId);
@@ -54,7 +54,7 @@ export const integrationController = {
       const data = await integrationService.getById(req.params.id);
       if (!data) {
         res.status(404).json({ error: "Integration not found" });
-        return; // Fixed: Standalone return
+        return;
       }
       res.status(200).json(data);
     } catch (error) {
@@ -80,5 +80,69 @@ export const integrationController = {
     } catch (error) {
       res.status(500).json({ error: "Failed to delete integration" });
     }
-  }
+  },
+
+  // POST /send-direct-mail — uses Stannp API
+  sendDirectMail: async (req: any, res: Response) => {
+    try {
+      const userId = req.user.id;
+      const role = req.user.role;
+      const createdById = req.user.createdById;
+
+      // For agents, use their admin's integration. For admins/owners, use their own.
+      const targetUserId = role === "AGENT" && createdById ? createdById : userId;
+      const systemSettingId = await integrationService.findSettingsId(targetUserId);
+
+      if (!systemSettingId) {
+        res.status(404).json({ error: "System settings not found. Please ask your admin to configure Stannp." });
+        return;
+      }
+
+      const stannpIntegration = await integrationService.getProviderIntegration(systemSettingId, "STANPP_DOT_COM" as IntegrationProvider);
+      if (!stannpIntegration) {
+        res.status(404).json({ error: "Stannp integration not configured. Please connect Stannp from System Settings > Integrations." });
+        return;
+      }
+
+      const credentials = stannpIntegration.credentials as any;
+      const apiKey = credentials?.apiKey;
+      if (!apiKey) {
+        res.status(400).json({ error: "Stannp API key not found in integration settings." });
+        return;
+      }
+
+      const { recipientName, address1, address2, city, postcode, country, message, template } = req.body;
+
+      if (!recipientName || !address1 || !city || !postcode || !country) {
+        res.status(400).json({ error: "Recipient name, address, city, postcode and country are required." });
+        return;
+      }
+
+      // Build form-data for Stannp API
+      const FormData = (await import("form-data")).default;
+      const axios = (await import("axios")).default;
+
+      const form = new FormData();
+      form.append("test", "1"); // Change to "0" for live send
+      form.append("recipient[firstname]", recipientName.split(" ")[0] || recipientName);
+      form.append("recipient[lastname]", recipientName.split(" ").slice(1).join(" ") || "");
+      form.append("recipient[address1]", address1);
+      if (address2) form.append("recipient[address2]", address2);
+      form.append("recipient[city]", city);
+      form.append("recipient[postcode]", postcode);
+      form.append("recipient[country]", country);
+      form.append("message", message || "Hello from CallScout!");
+      if (template) form.append("template", template);
+
+      const stannpRes = await axios.post("https://dash.stannp.com/api/v1/letters/create", form, {
+        auth: { username: apiKey, password: "" },
+        headers: form.getHeaders(),
+      });
+
+      res.status(200).json({ success: true, data: stannpRes.data });
+    } catch (error: any) {
+      console.error("Stannp send error:", error?.response?.data || error);
+      res.status(500).json({ error: error?.response?.data?.error || "Failed to send direct mail via Stannp" });
+    }
+  },
 };

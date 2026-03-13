@@ -33,6 +33,8 @@ import {
   getAllExportContacts,
   getAllBackupContacts,
   getHotlist,
+  sendTemplateEmail,
+  scheduleTemplateEmail,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -58,6 +60,8 @@ router.put("/:id", updateContact);
 router.patch("/:id/assign", assignContactToList);
 router.patch("/:id/groups", assignContactToGroups);
 router.post("/:id/leadsheet/send-email", sendLeadSheetEmail);
+router.post("/:id/send-template-email", sendTemplateEmail);
+router.post("/:id/schedule-template-email", scheduleTemplateEmail);
 
 // Attachments
 router.post("/:id/attachment", singleUpload("file"), uploadAttachment);

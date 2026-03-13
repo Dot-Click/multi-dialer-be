@@ -841,8 +841,8 @@ model CallerId {
   updatedAt       DateTime       @updatedAt
   dialerType      DialerType?    @default(PREDICTIVE)
   aiPacing        Boolean?       @default(false)
-  defaultForUsers User[]         @relation("DefaultCaller")
   counter         Int            @default(0)
+  defaultForUsers User[]         @relation("DefaultCaller")
 
   @@map("caller_id")
 }
