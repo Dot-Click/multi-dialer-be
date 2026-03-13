@@ -13,6 +13,7 @@ router.get("/plans", listPlans);
  * Route to create a new Zoho subscription.
  */
 router.post("/",protectRoute, createSubscription);
+router.post("/update-card-link", protectRoute, getUpdateCardUrl);
 
 router.get("/auth", zohoAuth);
 // Zoho callback route

@@ -30,4 +30,3 @@ export * from "./controller";
 export * from "./service";
 export default router;
 
-
