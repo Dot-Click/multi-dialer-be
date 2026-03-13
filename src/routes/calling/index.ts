@@ -88,4 +88,8 @@ router.get('/callerIds', protectRoute, getCallerIds)
 
 //calls insights
 router.get("/calls-insights", protectRoute, getCallsInsights);
+
+// call managements}
+router.patch('/set-counter/:sid', protectRoute, setCounter)
+router.get('/callerIds', protectRoute, getCallerIds)
 export default router;

@@ -32,4 +32,3 @@ router.put("/:id", checkRole(["ADMIN", "OWNER"]), updateMiscField);
 router.delete("/:id", checkRole(["ADMIN", "OWNER"]), deleteMiscField);
 
 export default router;
-
