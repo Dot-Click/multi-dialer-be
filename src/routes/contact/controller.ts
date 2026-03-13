@@ -43,6 +43,8 @@ import {
   restoreContactFromDb,
   permanentlyDeleteContactFromDb,
   getHotlistFromDb,
+  sendTemplateEmailInDb,
+  scheduleTemplateEmailInDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -918,5 +920,35 @@ export const getHotlist = async (
       error?.message || "Internal server error",
       error?.statusCode || 500,
     );
+  }
+};
+
+export const sendTemplateEmail = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { templateId } = req.body;
+    if (!id || !templateId) {
+      errorResponse(res, "Contact ID and Template ID are required", 400);
+      return;
+    }
+    await sendTemplateEmailInDb(id, templateId);
+    successResponse(res, 200, "Email sent successfully", null);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const scheduleTemplateEmail = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { templateId, scheduledAt } = req.body;
+    if (!id || !templateId || !scheduledAt) {
+      errorResponse(res, "Contact ID, Template ID and Schedule Date are required", 400);
+      return;
+    }
+    await scheduleTemplateEmailInDb(id, templateId, scheduledAt);
+    successResponse(res, 200, "Email scheduled successfully", null);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
 };

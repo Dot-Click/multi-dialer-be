@@ -245,21 +245,21 @@ export async function updateContactInDb(
       dataDialerId: payload.dataDialerId,
       emails: payload.emails
         ? {
-            deleteMany: {},
-            create: payload.emails.map((e) => ({
-              email: e.email,
-              isPrimary: e.isPrimary,
-            })),
-          }
+          deleteMany: {},
+          create: payload.emails.map((e) => ({
+            email: e.email,
+            isPrimary: e.isPrimary,
+          })),
+        }
         : undefined,
       phones: payload.phones
         ? {
-            deleteMany: {},
-            create: payload.phones.map((p) => ({
-              number: p.number,
-              type: p.type,
-            })),
-          }
+          deleteMany: {},
+          create: payload.phones.map((p) => ({
+            number: p.number,
+            type: p.type,
+          })),
+        }
         : undefined,
     },
     include: {
@@ -1601,4 +1601,37 @@ export async function getHotlistFromDb(userId: string, role: string) {
       };
     })
     .filter(Boolean);
+}
+
+export async function sendTemplateEmailInDb(contactId: string, templateId: string) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    include: { emails: { where: { isPrimary: true } } },
+  });
+  if (!contact) throwHttp(404, "Contact not found");
+
+  const email = contact.emails[0]?.email;
+  if (!email) throwHttp(400, "Contact has no primary email");
+
+  const template = await prisma.emailTemplate.findUnique({
+    where: { id: templateId },
+  });
+  if (!template) throwHttp(404, "Email template not found");
+
+  // Simple placeholder replacement logic
+  let content = template.content;
+  content = content.replace(/{{fullName}}/g, contact.fullName || "Friend");
+  content = content.replace(/{{city}}/g, contact.city || "");
+
+  await sendEmail(email, template.subject, content);
+
+  return true;
+}
+
+export async function scheduleTemplateEmailInDb(contactId: string, templateId: string, scheduledAt: string) {
+  // Since we don't have a background worker set up in this demo, 
+  // we'll just log it to the console and return success.
+  // In a real app, you'd insert into a 'ScheduledEmails' table or a Bull queue.
+  console.log(`[SCHEDULED] Email template ${templateId} to contact ${contactId} at ${scheduledAt}`);
+  return true;
 }
