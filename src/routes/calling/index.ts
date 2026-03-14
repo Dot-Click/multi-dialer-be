@@ -19,7 +19,8 @@ import {
   getCallSummary,
   setCounter,
   getCallerIds,
-  toggleHold
+  toggleHold,
+  resumeCall
 } from "./controller";
 import {
   getAggregateStats,
@@ -71,6 +72,7 @@ router.post("/webhooks/voice", handleVoiceWebhook);
 router.post("/webhooks/call-status", handleCallStatus);
 router.post("/webhooks/recording-status", handleRecordingStatus);
 router.post("/webhooks/transcription", handleTranscriptionWebhook);
+router.get('/webhooks/resume-call', resumeCall);
 
 router.get("/transcription-logs", getTranscriptionLogs);
 router.get("/token", protectRoute, getTwilioToken);
