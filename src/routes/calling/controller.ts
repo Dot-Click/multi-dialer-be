@@ -791,42 +791,44 @@ export const getCallerIds: RequestHandler = async (req: Request, res: Response) 
 
 export const toggleHold: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const { callSid, hold, agentIdentity } = req.body;
+    const { callSid, hold, agentIdentity, customerCallSid } = req.body;
     if (!callSid) {
       errorResponse(res, { message: "Call SID is required" }, 400);
       return;
     }
 
-    // Find customer leg
-    let childCalls = await client.calls.list({ parentCallSid: callSid });
-    let customerLeg = childCalls.find(c =>
-      c.status === 'in-progress' || c.status === 'ringing'
-    );
-    console.log("Child calls:", childCalls.map(c => ({ sid: c.sid, status: c.status })));
+    let customerLeg: any = null;
 
+    // 1. First, try to use the explicitly provided customer call SID from the frontend
+    if (customerCallSid) {
+      try {
+        const potentialLeg = await client.calls(customerCallSid).fetch();
+        if (potentialLeg && (potentialLeg.status === 'in-progress' || potentialLeg.status === 'ringing')) {
+          customerLeg = potentialLeg;
+        }
+      } catch (err) {
+        console.warn("Provided customerCallSid not found or invalid:", err);
+      }
+    }
 
-
+    // 2. If we don't have it, deduce the customer leg from the active callSid
     if (!customerLeg) {
-      console.log("No child leg via parentCallSid, trying fallback...");
+      const currentCall = await client.calls(callSid).fetch();
 
-      // Get the original parent call to find the customer number
-      const parentCall = await client.calls(callSid).fetch();
-      console.log("Parent call To:", parentCall.to, "From:", parentCall.from);
+      // Case A: The agent's call is a child of the customer's call (Happens after resuming from hold)
+      if (currentCall.parentCallSid) {
+        customerLeg = await client.calls(currentCall.parentCallSid).fetch();
+      } 
+      // Case B: The agent's call is the parent of the customer's call (Happens on initial outbound calls)
+      else {
+        const childCalls = await client.calls.list({ parentCallSid: callSid });
+        customerLeg = childCalls.find(c => c.status === 'in-progress' || c.status === 'ringing');
+      }
 
-      // Find active calls to that number (the customer's number)
-      const activeCalls = await client.calls.list({
-        to: parentCall.to,
-        status: 'in-progress'
-      });
-
-      console.log("Active calls to customer number:", activeCalls.map(c => ({
-        sid: c.sid,
-        status: c.status,
-        from: c.from,
-        to: c.to
-      })));
-
-      customerLeg = activeCalls[0]; // most recent active call to that number
+      // Case C: Fallback, the callSid itself IS the customer leg
+      if (!customerLeg && !currentCall.to?.startsWith('client:') && !currentCall.from?.startsWith('client:')) {
+        customerLeg = currentCall;
+      }
     }
 
     if (!customerLeg) {
@@ -847,21 +849,24 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
       });
     }
 
-    // Pause/resume recording
+    // Pause/resume recording safely
     try {
-      const recordings = await client.calls(callSid).recordings.list();
+      // Use the parent call sid for recordings if possible, as Twilio attaches the recording to the Parent leg
+      const recordingCallSid = customerLeg.parentCallSid ? customerLeg.parentCallSid : customerLeg.sid;
+      
+      const recordings = await client.calls(recordingCallSid).recordings.list();
       for (const recording of recordings) {
         if (hold && recording.status === 'in-progress') {
-          await client.calls(callSid).recordings(recording.sid).update({ status: 'paused' });
+          await client.calls(recordingCallSid).recordings(recording.sid).update({ status: 'paused' });
         } else if (!hold && recording.status === 'paused') {
-          await client.calls(callSid).recordings(recording.sid).update({ status: 'in-progress' });
+          await client.calls(recordingCallSid).recordings(recording.sid).update({ status: 'in-progress' });
         }
       }
     } catch (recErr) {
       console.warn("Recording toggle failed (non-fatal):", recErr);
     }
 
-    successResponse(res, 200, hold ? "Customer on hold" : "Customer resumed", {});
+    successResponse(res, 200, hold ? "Customer on hold" : "Customer resumed", { customerLegSid: customerLeg.sid });
   } catch (error: any) {
     console.error("Toggle hold failed:", error);
     errorResponse(res, { message: error.message });
