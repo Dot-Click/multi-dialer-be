@@ -10,7 +10,10 @@ router.post("/create", (req: Request, res: Response) => integrationController.cr
 // 2. All - GET /api/system-settings/integrations/all
 router.get("/all", (req: Request, res: Response) => integrationController.getAll(req, res));
 
-// 3. My - GET /api/system-settings/integrations
+// 3. My - GET /api/system-settings/integrations/my
+router.get("/my", (req: Request, res: Response) => integrationController.getMy(req, res));
+
+// 3b. Also serve on root
 router.get("/", (req: Request, res: Response) => integrationController.getMy(req, res));
 
 // 4. By ID - GET /api/system-settings/integrations/{id}
@@ -21,5 +24,8 @@ router.put("/:id", (req: Request, res: Response) => integrationController.update
 
 // 6. Delete - DELETE /api/system-settings/integrations/{id}
 router.delete("/:id", (req: Request, res: Response) => integrationController.delete(req, res));
+
+// 7. Send Direct Mail via Stannp - POST /api/system-settings/integrations/send-direct-mail
+router.post("/send-direct-mail", (req: Request, res: Response) => integrationController.sendDirectMail(req, res));
 
 export default router;

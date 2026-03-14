@@ -12,6 +12,7 @@ type User = {
   role: string;
   image: string | null;
   emailVerified: boolean;
+  createdById: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -69,6 +70,7 @@ export const protectRoute = async (
           role: true,
           image: true,
           emailVerified: true,
+          createdById: true,
           createdAt: true,
           updatedAt: true,
         },

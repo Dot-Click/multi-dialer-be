@@ -56,4 +56,11 @@ export const integrationService = {
       where: { id },
     });
   },
+
+  // GET a specific provider's integration record for a given systemSettingId
+  getProviderIntegration: async (systemSettingId: string, provider: IntegrationProvider) => {
+    return await prisma.integration.findUnique({
+      where: { systemSettingId_provider: { systemSettingId, provider } },
+    });
+  },
 };

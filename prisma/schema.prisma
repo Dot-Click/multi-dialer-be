@@ -150,6 +150,12 @@ enum RecordingSlot {
   GENERAL
 }
 
+enum ExportType {
+  LIST
+  GROUP
+  ALL_CONTACTS
+}
+
 model User {
   id       String   @id @default(uuid())
   fullName String?
@@ -194,6 +200,8 @@ model User {
   createdBy          User?      @relation("UserCreator", fields: [createdById], references: [id])
   createdUsers       User[]     @relation("UserCreator")
   callerIds          CallerId[]
+  defaultCallerId    String?
+  defaultCaller      CallerId?  @relation("DefaultCaller", fields: [defaultCallerId], references: [id])
   companies          Company[]
 
   signature Signature?
@@ -208,6 +216,9 @@ model User {
   contactFolders CotactFolder[]
   contactGroups  ContactGroups[]
   contacts       Contact[]
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
+  backupContacts BackupContacts[]
 
   @@map("users")
 }
@@ -245,6 +256,9 @@ model ContactList {
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
+
   @@map("lists")
 }
 
@@ -270,6 +284,9 @@ model ContactGroups {
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
 
   @@map("groups")
 }
@@ -643,17 +660,18 @@ model NotificationSetting {
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  enableAppointmentReminders Boolean @default(false)
-  appointmentReminderEmail   String?
+  appointmentReminder      Boolean @default(false)
+  appointmentReminderEmail String?
 
-  enableCallActivityReport    Boolean @default(false)
-  enableSessionSummaryReport  Boolean @default(false)
+  callActivityReport          Boolean @default(false)
+  sessionSummaryReport        Boolean @default(false)
   includeAgentsWithNoActivity Boolean @default(false)
   dailyCallReportEmail        String?
 
-  enableAppointmentNotifications Boolean @default(false)
-  enableComplianceAlerts         Boolean @default(false)
+  appointmentNotification Boolean @default(false)
+  complianceAlert         Boolean @default(false)
 
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("notification_settings")
@@ -770,7 +788,6 @@ model Lead {
   updatedAt DateTime       @updatedAt
 
   callRecords CallRecord[]
-  calendars   Calendar[]
 
   @@map("leads")
 }
@@ -824,9 +841,18 @@ model CallerId {
   updatedAt       DateTime       @updatedAt
   dialerType      DialerType?    @default(PREDICTIVE)
   aiPacing        Boolean?       @default(false)
+  counter         Int            @default(0)
+  defaultForUsers User[]         @relation("DefaultCaller")
 
   @@map("caller_id")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL SETTINGS
+// The 4 recording slots now reference Recording rows via FK instead of
+// storing raw strings. onDelete: SetNull means if a recording is deleted,
+// the slot just becomes null — CallSettings row is never broken.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CALL SETTINGS
@@ -887,19 +913,19 @@ model CallAnalysis {
 }
 
 model MiscField {
-  id             String   @id @default(uuid())
-  type           String
-  fieldName      String
-  options        String[]
-  countFrom      Int?
-  countTo        Int?
-  allowPastDates Boolean?
-
+  id              String         @id @default(uuid())
+  type            String
+  fieldName       String
+  options         String[]
+  countFrom       Int?
+  countTo         Int?
+  allowPastDates  Boolean?
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
-  contacts        Contact[]
+  contact         Contact?       @relation(fields: [contactId], references: [id])
+  contactId       String?
 
   @@map("misc_fields")
 }
@@ -954,15 +980,12 @@ model Calendar {
   assignById String
   assignBy   User   @relation("CalendarAssignBy", fields: [assignById], references: [id], onDelete: Cascade)
 
-  contactId String?
-  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  leadId    String?
-  lead      Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  status AppointmentStatus @default(SET)
+  status    AppointmentStatus @default(SET)
+  contact   Contact?          @relation(fields: [contactId], references: [id])
+  contactId String?
 
   @@map("calendar")
 }
@@ -1113,4 +1136,59 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@map("audit_logs")
+}
+
+model ImportContact {
+  id             String         @id @default(uuid())
+  fileName       String
+  type           String
+  contactListId  String?
+  contactList    ContactList?   @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+  keepOld        Boolean        @default(true)
+  contactsCount  Int            @default(0)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("import_contacts")
+}
+
+model ExportContact {
+  id         String   @id @default(uuid())
+  fieldNames String[] @default([])
+
+  contactListId String?
+  contactList   ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+
+  contactsCount Int        @default(0)
+  exportType    ExportType // <- ye naya field, batayega LIST/GROUP/ALL_CONTACTS
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("export_contacts")
+}
+
+model BackupContacts {
+  id        String   @id @default(cuid())
+  contacts  Json // multiple contacts store honge
+  userId    String
+  deletedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("backup_contacts")
 }

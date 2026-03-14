@@ -36,6 +36,10 @@ export const getAllCallSettingsOfSpecificUser = async (req: Request, res: Respon
             },
           },
         },
+        onHoldRecording1: true,
+        onHoldRecording2: true,
+        ivrRecording: true,
+        answeringMachineRecording: true,
       },
     });
     successResponse(res, 200, "CallSettings fetched", callSettings);

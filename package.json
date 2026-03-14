@@ -8,11 +8,11 @@
     "generate": "prisma generate",
     "seed": "tsx scripts/seeder.ts",
     "migrate": "prisma migrate dev",
-    "dbpush": "prisma db push",
     "studio": "prisma studio",
     "build": "tsc && tsc-alias && npm run copy-assets",
     "copy-assets": "node scripts/copy-assets.js",
-    "start": "npx prisma migrate deploy && node dist/index.js"
+    "start": "node dist/index.js",
+    "dbpush": "prisma db push"
   },
   "engines": {
     "node": "20.x"
@@ -27,13 +27,15 @@
     "@twilio/voice-sdk": "^2.18.0",
     "@types/axios": "^0.9.36",
     "@types/cors": "^2.8.17",
-    "axios": "^1.12.2",
+    "axios": "^1.13.6",
     "bcryptjs": "^3.0.2",
     "better-auth": "^1.1.14",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
+    "csv-parse": "^6.1.0",
     "express": "^4.21.2",
     "express-session": "^1.18.2",
+    "form-data": "^4.0.5",
     "groq-sdk": "^0.37.0",
     "js-yaml": "^4.1.0",
     "juice": "^11.1.1",

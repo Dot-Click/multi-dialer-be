@@ -12,14 +12,9 @@ export const contactPhoneSchema = z.object({
 
 export const createContactSchema = z.object({
   fullName: z.string().min(1),
-  address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   zip: z.string().optional(),
-  mailingAddress: z.string().optional(),
-  mailingCity: z.string().optional(),
-  mailingState: z.string().optional(),
-  mailingZip: z.string().optional(),
   source: z.string().optional(),
   tags: z.array(z.string().min(1)).default([]),
   dataDialerId: z.string().optional(),
@@ -33,14 +28,9 @@ export const createContactSchema = z.object({
 
 export const updateContactSchema = z.object({
   fullName: z.string().min(1).optional(),
-  address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   zip: z.string().optional(),
-  mailingAddress: z.string().optional(),
-  mailingCity: z.string().optional(),
-  mailingState: z.string().optional(),
-  mailingZip: z.string().optional(),
   source: z.string().optional(),
   tags: z.array(z.string().min(1)).optional(),
   dataDialerId: z.string().nullable().optional(),

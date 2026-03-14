@@ -121,6 +121,20 @@ export const endCall: RequestHandler = async (req, res) => {
   }
 }
 
+export const resumeCall: RequestHandler = async (req, res) => {
+  const twiml = new VoiceResponse();
+  const agentIdentity = req.query.agentId as string;
+
+  console.log("[resumeCall] Reconnecting customer to agent:", agentIdentity);
+
+  twiml.say("Reconnecting you now.");
+  const dial = twiml.dial();
+  dial.client(agentIdentity);
+
+  res.type("text/xml");
+  res.send(twiml.toString());
+};
+
 /**
  * Bulk add leads to the database and priority queue
  */
@@ -244,6 +258,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const caller = body.Caller || req.query.Caller || "";
   const agentId = body.agentId || req.query.agentId || req.params.agentId;
   const contactId = body.contactId || req.query.contactId || req.params.contactId;
+
 
   console.log("================= Voice Webhook Dispatcher ================");
   console.log("Caller:", caller);
@@ -728,5 +743,127 @@ export const getCallSummary: RequestHandler = async (req: Request, res: Response
     console.error("Get call summary failed:", error);
     errorResponse(res, { message: error.message });
     return;
+  }
+};
+
+
+export const setCounter: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { sid } = req.params;
+    const { from } = req.body;
+    if (!sid) {
+      errorResponse(res, { message: "Call SID is required" }, 400);
+      return;
+    }
+
+    const callRecord = await prisma.callerId.update({
+      where: { id: sid, twillioNumber: from },
+      data: {
+        counter: { increment: 1 },
+      }
+    });
+
+    if (!callRecord) {
+      errorResponse(res, { message: "Call record not found" }, 404);
+      return;
+    }
+
+    successResponse(res, 200, "Call status fetched successfully", callRecord);
+    return;
+  } catch (error: any) {
+    console.error("Get call status failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
+export const getCallerIds: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const callerIds = await prisma.callerId.findMany({ where: { counter: { lt: 5 } } });
+    successResponse(res, 200, "Caller IDs fetched successfully", callerIds);
+    return;
+  } catch (error: any) {
+    console.error("Get caller IDs failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
+export const toggleHold: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { callSid, hold, agentIdentity } = req.body;
+    if (!callSid) {
+      errorResponse(res, { message: "Call SID is required" }, 400);
+      return;
+    }
+
+    // Find customer leg
+    let childCalls = await client.calls.list({ parentCallSid: callSid });
+    let customerLeg = childCalls.find(c =>
+      c.status === 'in-progress' || c.status === 'ringing'
+    );
+    console.log("Child calls:", childCalls.map(c => ({ sid: c.sid, status: c.status })));
+
+
+
+    if (!customerLeg) {
+      console.log("No child leg via parentCallSid, trying fallback...");
+
+      // Get the original parent call to find the customer number
+      const parentCall = await client.calls(callSid).fetch();
+      console.log("Parent call To:", parentCall.to, "From:", parentCall.from);
+
+      // Find active calls to that number (the customer's number)
+      const activeCalls = await client.calls.list({
+        to: parentCall.to,
+        status: 'in-progress'
+      });
+
+      console.log("Active calls to customer number:", activeCalls.map(c => ({
+        sid: c.sid,
+        status: c.status,
+        from: c.from,
+        to: c.to
+      })));
+
+      customerLeg = activeCalls[0]; // most recent active call to that number
+    }
+
+    if (!customerLeg) {
+      errorResponse(res, { message: "Customer leg not found" }, 404);
+      return;
+    }
+
+    if (hold) {
+      // Play hold music to customer only
+      await client.calls(customerLeg.sid).update({
+        twiml: `<Response><Play loop="0">https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3</Play></Response>`
+      });
+    } else {
+      // Reconnect customer back to agent
+      await client.calls(customerLeg.sid).update({
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentIdentity}`,
+        method: 'POST'
+      });
+    }
+
+    // Pause/resume recording
+    try {
+      const recordings = await client.calls(callSid).recordings.list();
+      for (const recording of recordings) {
+        if (hold && recording.status === 'in-progress') {
+          await client.calls(callSid).recordings(recording.sid).update({ status: 'paused' });
+        } else if (!hold && recording.status === 'paused') {
+          await client.calls(callSid).recordings(recording.sid).update({ status: 'in-progress' });
+        }
+      }
+    } catch (recErr) {
+      console.warn("Recording toggle failed (non-fatal):", recErr);
+    }
+
+    successResponse(res, 200, hold ? "Customer on hold" : "Customer resumed", {});
+  } catch (error: any) {
+    console.error("Toggle hold failed:", error);
+    errorResponse(res, { message: error.message });
   }
 };

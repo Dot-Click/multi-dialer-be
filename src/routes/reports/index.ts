@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getAgentReport } from "./controller";
+import { getAgentReport, getDialerHealth, getSalesAgentsPerformance, getAgentCallMetrics, getCallStatistics } from "./controller";
 import { getCallDetailsReport } from "./call-details";
 import { getSessionReport } from "./sessions";
 import { getCallRecordingsReport } from "./call-recordings";
@@ -22,5 +22,17 @@ router.get("/call-recordings", protectRoute, getCallRecordingsReport);
 
 // Get agent timesheet report
 router.get("/agent-timesheet", protectRoute, getAgentTimesheetReport);
+
+// Get dialer health
+router.get("/dialer-health", protectRoute, getDialerHealth);
+
+// Get sales agents performance
+router.get("/sales-performance", protectRoute, getSalesAgentsPerformance);
+
+// Get agent call metrics
+router.get("/agent-metrics", protectRoute, getAgentCallMetrics);
+
+// Get call statistics
+router.get("/call-statistics", protectRoute, getCallStatistics);
 
 export default router;
