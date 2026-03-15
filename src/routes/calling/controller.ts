@@ -791,7 +791,7 @@ export const getCallerIds: RequestHandler = async (req: Request, res: Response) 
 
 export const toggleHold: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const { callSid, hold, agentIdentity, customerCallSid } = req.body;
+    const { callSid, hold, agentIdentity, customerCallSid, holdUrl } = req.body;
     if (!callSid) {
       errorResponse(res, { message: "Call SID is required" }, 400);
       return;
@@ -799,11 +799,13 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
 
     let customerLeg: any = null;
 
-    // 1. First, try to use the explicitly provided customer call SID from the frontend
+    // 1. Try explicitly provided customer call SID
     if (customerCallSid) {
       try {
         const potentialLeg = await client.calls(customerCallSid).fetch();
-        if (potentialLeg && (potentialLeg.status === 'in-progress' || potentialLeg.status === 'ringing')) {
+        // 🚨 Relaxed status check: Included 'answered' and 'queued'
+        const validStatuses =['in-progress', 'ringing', 'answered', 'queued'];
+        if (potentialLeg && validStatuses.includes(potentialLeg.status)) {
           customerLeg = potentialLeg;
         }
       } catch (err) {
@@ -811,49 +813,59 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
       }
     }
 
-    // 2. If we don't have it, deduce the customer leg from the active callSid
+    // 2. Fallback: Deduce customer leg from active callSid
     if (!customerLeg) {
-      const currentCall = await client.calls(callSid).fetch();
+      try {
+        const currentCall = await client.calls(callSid).fetch();
 
-      // Case A: The agent's call is a child of the customer's call (Happens after resuming from hold)
-      if (currentCall.parentCallSid) {
-        customerLeg = await client.calls(currentCall.parentCallSid).fetch();
-      } 
-      // Case B: The agent's call is the parent of the customer's call (Happens on initial outbound calls)
-      else {
-        const childCalls = await client.calls.list({ parentCallSid: callSid });
-        customerLeg = childCalls.find(c => c.status === 'in-progress' || c.status === 'ringing');
-      }
+        // Case A: The agent's call is a child of the customer's call (After Resume)
+        if (currentCall.parentCallSid) {
+          customerLeg = await client.calls(currentCall.parentCallSid).fetch();
+        }
+        // Case B: The agent's call is the parent of the customer's call (Outbound initial)
+        else {
+          const childCalls = await client.calls.list({ parentCallSid: callSid });
+          customerLeg = childCalls.find(c => ['in-progress', 'ringing', 'answered'].includes(c.status));
+        }
 
-      // Case C: Fallback, the callSid itself IS the customer leg
-      if (!customerLeg && !currentCall.to?.startsWith('client:') && !currentCall.from?.startsWith('client:')) {
-        customerLeg = currentCall;
+        // Case C: Fallback, the callSid itself IS the customer leg
+        if (!customerLeg && !currentCall.to?.startsWith('client:') && !currentCall.from?.startsWith('client:')) {
+          customerLeg = currentCall;
+        }
+      } catch (fallbackErr) {
+        console.warn("Fallback tree lookup failed (Call might be fully dropped):", fallbackErr);
       }
     }
 
     if (!customerLeg) {
-      errorResponse(res, { message: "Customer leg not found" }, 404);
+      errorResponse(res, { message: "Customer leg not found. Call may have disconnected." }, 404);
       return;
     }
 
+    const defaultHoldMusic = "https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
+    const musicUrl = holdUrl || defaultHoldMusic;
+
     if (hold) {
-      // Play hold music to customer only
+      // Play hold music to customer
       await client.calls(customerLeg.sid).update({
-        twiml: `<Response><Play loop="0">https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3</Play></Response>`
+        twiml: `<Response><Play loop="0">${musicUrl}</Play></Response>`
       });
     } else {
-      // Reconnect customer back to agent
-      await client.calls(customerLeg.sid).update({
-        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentIdentity}`,
-        method: 'POST'
-      });
+      // Reconnect customer to agent
+      const twiml = `<Response>
+        <Say>Reconnecting you now.</Say>
+        <Dial record="record-from-answer-dual" recordingStatusCallback="${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status">
+          <Client>${agentIdentity}</Client>
+        </Dial>
+        <Play loop="0">${musicUrl}</Play>
+      </Response>`;
+
+      await client.calls(customerLeg.sid).update({ twiml });
     }
 
     // Pause/resume recording safely
     try {
-      // Use the parent call sid for recordings if possible, as Twilio attaches the recording to the Parent leg
       const recordingCallSid = customerLeg.parentCallSid ? customerLeg.parentCallSid : customerLeg.sid;
-      
       const recordings = await client.calls(recordingCallSid).recordings.list();
       for (const recording of recordings) {
         if (hold && recording.status === 'in-progress') {
