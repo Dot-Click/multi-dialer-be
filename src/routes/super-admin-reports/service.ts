@@ -113,7 +113,7 @@ export async function getAlertsInDb() {
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
   const [
-    expiringSubscriptions,
+    expiringSubscriptions,   
     newCustomers,
     activeSubscriptions,
     inactiveSubscriptions,
