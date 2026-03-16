@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
 import {
@@ -18,8 +19,22 @@ export const createCompany = async (
   res: Response,
 ): Promise<void> => {
   try {
+    const userId = req.user!.id;
     const payload = { ...req.body };
-    const result = (await validateData(createCompanySchema, payload)) as any;
+
+    // Check if company already exists
+    const existing = await prisma.company.findFirst({
+      where: { userId },
+    });
+
+    // If updating, use partial schema. If new, use full schema but default the name.
+    const schema = existing ? updateCompanySchema : createCompanySchema;
+    
+    if (!existing && !payload.companyName) {
+      payload.companyName = "My Business";
+    }
+
+    const result = (await validateData(schema, payload)) as any;
     if (!("data" in result)) {
       errorResponse(res, "Validation error", 400);
       return;
@@ -27,7 +42,7 @@ export const createCompany = async (
 
     const company = await createCompanyInDb({
       ...result.data,
-      userId: req.user!.id,
+      userId: userId,
     });
     successResponse(res, 201, "Company processed successfully", company);
   } catch (error: any) {
@@ -117,6 +132,25 @@ export const deleteCompany = async (
     }
     await deleteCompanyFromDb(id);
     successResponse(res, 200, "Company deleted successfully", null);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getMyCompany = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const company = await prisma.company.findFirst({
+      where: { userId },
+    });
+    successResponse(res, 200, "My company fetched successfully", company);
   } catch (error: any) {
     errorResponse(
       res,

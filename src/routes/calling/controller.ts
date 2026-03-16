@@ -121,6 +121,20 @@ export const endCall: RequestHandler = async (req, res) => {
   }
 }
 
+export const resumeCall: RequestHandler = async (req, res) => {
+  const twiml = new VoiceResponse();
+  const agentIdentity = req.query.agentId as string;
+
+  console.log("[resumeCall] Reconnecting customer to agent:", agentIdentity);
+
+  twiml.say("Reconnecting you now.");
+  const dial = twiml.dial();
+  dial.client(agentIdentity);
+
+  res.type("text/xml");
+  res.send(twiml.toString());
+};
+
 /**
  * Bulk add leads to the database and priority queue
  */
@@ -244,6 +258,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const caller = body.Caller || req.query.Caller || "";
   const agentId = body.agentId || req.query.agentId || req.params.agentId;
   const contactId = body.contactId || req.query.contactId || req.params.contactId;
+
 
   console.log("================= Voice Webhook Dispatcher ================");
   console.log("Caller:", caller);
@@ -776,33 +791,96 @@ export const getCallerIds: RequestHandler = async (req: Request, res: Response) 
 
 export const toggleHold: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const { callSid, hold } = req.body;
+    const { callSid, hold, agentIdentity, customerCallSid, holdUrl } = req.body;
     if (!callSid) {
       errorResponse(res, { message: "Call SID is required" }, 400);
       return;
     }
 
-    // List all recordings for this active call
-    const recordings = await client.calls(callSid).recordings.list();
+    let customerLeg: any = null;
 
-    const targetStatus = hold ? 'paused' : 'in-progress';
-    
-    for (const recording of recordings) {
-      // Pause if currently in-progress
-      if (hold && recording.status === 'in-progress') {
-        await client.calls(callSid).recordings(recording.sid).update({ status: targetStatus });
-      } 
-      // Resume if currently paused
-      else if (!hold && recording.status === 'paused') {
-        await client.calls(callSid).recordings(recording.sid).update({ status: targetStatus });
+    // 1. Try explicitly provided customer call SID
+    if (customerCallSid) {
+      try {
+        const potentialLeg = await client.calls(customerCallSid).fetch();
+        // 🚨 Relaxed status check: Included 'answered' and 'queued'
+        const validStatuses =['in-progress', 'ringing', 'answered', 'queued'];
+        if (potentialLeg && validStatuses.includes(potentialLeg.status)) {
+          customerLeg = potentialLeg;
+        }
+      } catch (err) {
+        console.warn("Provided customerCallSid not found or invalid:", err);
       }
     }
 
-    successResponse(res, 200, hold ? "Call recording paused" : "Call recording resumed", {});
-    return;
+    // 2. Fallback: Deduce customer leg from active callSid
+    if (!customerLeg) {
+      try {
+        const currentCall = await client.calls(callSid).fetch();
+
+        // Case A: The agent's call is a child of the customer's call (After Resume)
+        if (currentCall.parentCallSid) {
+          customerLeg = await client.calls(currentCall.parentCallSid).fetch();
+        }
+        // Case B: The agent's call is the parent of the customer's call (Outbound initial)
+        else {
+          const childCalls = await client.calls.list({ parentCallSid: callSid });
+          customerLeg = childCalls.find(c => ['in-progress', 'ringing', 'answered'].includes(c.status));
+        }
+
+        // Case C: Fallback, the callSid itself IS the customer leg
+        if (!customerLeg && !currentCall.to?.startsWith('client:') && !currentCall.from?.startsWith('client:')) {
+          customerLeg = currentCall;
+        }
+      } catch (fallbackErr) {
+        console.warn("Fallback tree lookup failed (Call might be fully dropped):", fallbackErr);
+      }
+    }
+
+    if (!customerLeg) {
+      errorResponse(res, { message: "Customer leg not found. Call may have disconnected." }, 404);
+      return;
+    }
+
+    const defaultHoldMusic = "https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
+    const musicUrl = holdUrl || defaultHoldMusic;
+
+    if (hold) {
+      // Play hold music to customer
+      await client.calls(customerLeg.sid).update({
+        twiml: `<Response><Play loop="0">${musicUrl}</Play></Response>`
+      });
+    } else {
+      // Reconnect customer to agent
+      const twiml = `<Response>
+        <Say>Reconnecting you now.</Say>
+        <Dial record="record-from-answer-dual" recordingStatusCallback="${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status">
+          <Client>${agentIdentity}</Client>
+        </Dial>
+        <Play loop="0">${musicUrl}</Play>
+      </Response>`;
+
+      await client.calls(customerLeg.sid).update({ twiml });
+    }
+
+    // Pause/resume recording safely
+    try {
+      const recordingCallSid = customerLeg.parentCallSid ? customerLeg.parentCallSid : customerLeg.sid;
+      const recordings = await client.calls(recordingCallSid).recordings.list();
+      for (const recording of recordings) {
+        if (hold && recording.status === 'in-progress') {
+          await client.calls(recordingCallSid).recordings(recording.sid).update({ status: 'paused' });
+        } else if (!hold && recording.status === 'paused') {
+          await client.calls(recordingCallSid).recordings(recording.sid).update({ status: 'in-progress' });
+        }
+      }
+    } catch (recErr) {
+      console.warn("Recording toggle failed (non-fatal):", recErr);
+    }
+
+    successResponse(res, 200, hold ? "Customer on hold" : "Customer resumed", { customerLegSid: customerLeg.sid });
   } catch (error: any) {
     console.error("Toggle hold failed:", error);
     errorResponse(res, { message: error.message });
-    return;
   }
 };
