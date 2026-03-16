@@ -28,6 +28,7 @@ import companyRoutes from "./company"
 import reportRoutes from "./reports"
 import SuperAdminReportsRoutes from "./super-admin-reports"
 import subscriptionRoutes from "./subscription"
+import pushRoutes from "./push"
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { envConfig } from "@/lib/config";
 
@@ -72,6 +73,7 @@ router.use("/calling", callingRoutes)
 router.use("/report", protectRoute, checkRole(["OWNER"]), SuperAdminReportsRoutes)
 
 router.use("/subscriptions", subscriptionRoutes)
+router.use("/push", protectRoute, pushRoutes)
 
 router.get("/verified", (req, res) => {
   res.send(`<h1 style="text-align: center; flex: 1; justify-content: center; align-items: center; height: 100vh;">Email verified successfully <a href="${envConfig.FRONTEND_URL}/admin/login">Go to app</a></h1>`)
