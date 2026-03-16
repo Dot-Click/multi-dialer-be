@@ -10,7 +10,7 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { sendEmail } from "../utils/email";
+import { sendEmail, newUserSignupTemp, loginAlertTemp } from "../utils/email";
 import { errorResponse } from "@/utils/handler";
 import { Console } from "console";
 
@@ -231,6 +231,29 @@ export const auth = betterAuth({
             },
           });
         }
+
+        // Trigger New User Signup notification for companies that have it enabled
+        try {
+          const companiesToNotify = await prisma.company.findMany({
+            where: { newUserSignup: true, email: { not: null } },
+            select: { email: true },
+          });
+
+          if (companiesToNotify.length > 0) {
+            const signupTime = new Date().toLocaleString("en-US", { timeZone: "UTC" }) + " UTC";
+            const emailHtml = newUserSignupTemp(body.email, signupTime);
+            
+            // Send emails asynchronously (fire and forget)
+            companiesToNotify.forEach((company) => {
+              if (company.email) {
+                sendEmail(company.email, "New User Signed Up on CallScout", emailHtml)
+                  .catch(err => console.error("Failed to send signup notification:", err));
+              }
+            });
+          }
+        } catch (error) {
+          console.error("Signup notification error:", error);
+        }
       }
 
       if (ctx.path.startsWith("/sign-in") || ctx.path.startsWith("/callback")) {
@@ -251,7 +274,7 @@ export const auth = betterAuth({
 
         if (!userFromDb) return resp;
 
-        return {
+        const combinedResp = {
           ...resp,
           user: {
             ...resp.user,
@@ -265,6 +288,31 @@ export const auth = betterAuth({
             role: userFromDb.role ?? null,
           },
         };
+
+        // Trigger Login Alert notification for companies that have it enabled
+        try {
+          const companiesToNotify = await prisma.company.findMany({
+            where: { loginAlerts: true, email: { not: null } },
+            select: { email: true },
+          });
+
+          if (companiesToNotify.length > 0) {
+            const loginTime = new Date().toLocaleString("en-US", { timeZone: "UTC" }) + " UTC";
+            const emailHtml = loginAlertTemp(resp.user.email, loginTime);
+
+            // Send emails asynchronously (fire and forget)
+            companiesToNotify.forEach((company) => {
+              if (company.email) {
+                sendEmail(company.email, "User Logged into CallScout", emailHtml)
+                  .catch(err => console.error("Failed to send login alert:", err));
+              }
+            });
+          }
+        } catch (error) {
+          console.error("Login notification error:", error);
+        }
+
+        return combinedResp;
       }
 
       if (ctx.path.startsWith("/sign-up")) {

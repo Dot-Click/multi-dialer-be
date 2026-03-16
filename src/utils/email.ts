@@ -188,6 +188,76 @@ export const leadSheetEmailTemp = (contactName: string, leadSheetTitle: string, 
 </html>
 `
 
+export const newUserSignupTemp = (userEmail: string, signupTime: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New User Signup on CallScout</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f6f8; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; border-bottom: 2px solid #28a745; margin-bottom: 20px; padding-bottom: 10px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .content { margin: 20px 0; font-size: 16px; }
+        .highlight { font-weight: bold; color: #28a745; }
+        .footer { text-align: center; margin-top: 30px; color: #999; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">CallScout</div></div>
+        <div class="content">
+            <h2 style="color: #2c3e50;">New User Signup Notification</h2>
+            <p>Hello,</p>
+            <p>A new user has signed up on <span class="highlight">CallScout</span>.</p>
+            <p><strong>User Email:</strong> ${userEmail}</p>
+            <p><strong>Signup Time:</strong> ${signupTime}</p>
+        </div>
+        <div class="footer">
+            <p>© 2026 CallScout. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+`
+
+export const loginAlertTemp = (userEmail: string, loginTime: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Login Alert - CallScout</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f6f8; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; border-bottom: 20px solid #007bff; margin-bottom: 20px; padding-bottom: 10px; border-width: 2px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .content { margin: 20px 0; font-size: 16px; }
+        .highlight { font-weight: bold; color: #007bff; }
+        .footer { text-align: center; margin-top: 30px; color: #999; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">CallScout</div></div>
+        <div class="content">
+            <h2 style="color: #2c3e50;">User Login Alert</h2>
+            <p>Hello,</p>
+            <p>A user has logged in to <span class="highlight">CallScout</span>.</p>
+            <p><strong>Account:</strong> ${userEmail}</p>
+            <p><strong>Login Time:</strong> ${loginTime}</p>
+        </div>
+        <div class="footer">
+            <p>© 2026 CallScout. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+`
+
 export const sendEmail = async (to: string, subject: string, html: string) => {
     try {
         const msg = {

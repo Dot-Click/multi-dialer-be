@@ -20,7 +20,12 @@ export const createCompany = async (
 ): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const payload = { ...req.body };
+    let payload = { ...req.body };
+
+    // Map frontend keys to database fields
+    if (payload["New User Signups"] !== undefined) payload.newUserSignup = payload["New User Signups"];
+    if (payload["Login Alerts"] !== undefined) payload.loginAlerts = payload["Login Alerts"];
+    if (payload["Send To"] !== undefined) payload.email = payload["Send To"];
 
     // Check if company already exists
     const existing = await prisma.company.findFirst({
@@ -102,7 +107,12 @@ export const updateCompany = async (
       return;
     }
 
-    const payload = { ...req.body };
+    let payload = { ...req.body };
+
+    // Map frontend keys to database fields
+    if (payload["New User Signups"] !== undefined) payload.newUserSignup = payload["New User Signups"];
+    if (payload["Login Alerts"] !== undefined) payload.loginAlerts = payload["Login Alerts"];
+    if (payload["Send To"] !== undefined) payload.email = payload["Send To"];
     const result = (await validateData(updateCompanySchema, payload)) as any;
     if (!("data" in result)) {
       errorResponse(res, "Validation error", 400);

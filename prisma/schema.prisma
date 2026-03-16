@@ -1081,7 +1081,7 @@ model ActionStep {
 
 model Company {
   id              String @id @default(cuid())
-  companyName     String
+  companyName     String?
   defaultTimeZone String @default("UTC")
   defaultCurrency String @default("USD")
   dateTimeFormat  String @default("MM/DD/YYYY - hh:mm A")
@@ -1096,11 +1096,9 @@ model Company {
   notifyMaintenanceNotice Boolean @default(true)
   notifyCriticalError     Boolean @default(true)
 
-  emailDailySummary        Boolean @default(true)
-  emailWeeklyReport        Boolean @default(true)
-  emailNewUserSignups      Boolean @default(false)
-  emailSubscriptionChanges Boolean @default(true)
-  emailSecurityAlerts      Boolean @default(true)
+  email         String?  // The email address where notifications will be sent
+  newUserSignup Boolean  @default(false)
+  loginAlerts   Boolean  @default(false)
 
   minPasswordLength   Int     @default(8)
   passwordExpiryDays  Int?    @default(90)
@@ -1127,6 +1125,14 @@ model Company {
 
   @@map("companies")
 }
+
+
+
+
+
+
+
+
 
 model AuditLog {
   id        String   @id @default(uuid())
@@ -1206,4 +1212,5 @@ model PushSubscription {
 
   @@map("push_subscriptions")
 }
+  
   

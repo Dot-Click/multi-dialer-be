@@ -18,11 +18,9 @@ export const createCompanySchema = z.object({
     notifyMaintenanceNotice: z.boolean().default(true),
     notifyCriticalError: z.boolean().default(true),
 
-    emailDailySummary: z.boolean().default(true),
-    emailWeeklyReport: z.boolean().default(true),
-    emailNewUserSignups: z.boolean().default(false),
-    emailSubscriptionChanges: z.boolean().default(true),
-    emailSecurityAlerts: z.boolean().default(true),
+    email: z.string().optional().nullable(),
+    newUserSignup: z.boolean().default(false),
+    loginAlerts: z.boolean().default(false),
 
     // Security & Access Settings
     minPasswordLength: z.number().int().min(1).default(8),
