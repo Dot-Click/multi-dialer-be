@@ -13,8 +13,20 @@ export const getAllRecordingsOfSpecificUser = async (
 ): Promise<void> => {
   try {
     const userId = req.user!.id;
+    let targetUserId = userId;
+
+    if (req.user?.role === "AGENT") {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
+
     const recordings = await prisma.recording.findMany({
-      where: { userId },
+      where: { userId: targetUserId },
       orderBy: { createdAt: "desc" },
     });
     successResponse(res, 200, "Recordings fetched", recordings);
@@ -49,9 +61,20 @@ export const getRecordingById = async (
   try {
     const { id } = req.params;
     const userId = req.user!.id;
+    let targetUserId = userId;
+
+    if (req.user?.role === "AGENT") {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
 
     const recording = await prisma.recording.findFirst({
-      where: { id, userId },
+      where: { id, userId: targetUserId },
     });
 
     if (!recording) {

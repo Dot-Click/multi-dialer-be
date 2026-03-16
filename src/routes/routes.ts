@@ -54,7 +54,7 @@ router.use("/system-settings/call-settings", protectRoute, checkRole(["ADMIN", "
 router.use("/system-settings/misc-fields", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), miscFieldsRoutes)
 router.use("/system-settings/appearance", protectRoute, checkRole(["ADMIN", "OWNER"]), appearanceRoutes)
 router.use("/system-settings/notification-settings", protectRoute, checkRole(["ADMIN", "OWNER"]), notificationRoute)
-router.use("/system-settings/action-plans", protectRoute, checkRole(["ADMIN", "OWNER"]), actionplansRoutes)
+router.use("/system-settings/action-plans", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), actionplansRoutes)
 router.use("/system-settings/lead-sheet", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), leadSheetRoutes)
 router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "OWNER"]), IntegrationRoute)
 router.use("/system-settings/integration", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), IntegrationRoute)
