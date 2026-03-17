@@ -722,6 +722,7 @@ model DialerSetting {
   deleteFaxNumbers          Boolean @default(false)
 
   useCallSessionTimer Boolean @default(false)
+  voicemailMode      String  @default("auto")
 
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
