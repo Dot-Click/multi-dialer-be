@@ -8,10 +8,22 @@ import { updateScriptSchema } from "../../../schemas/script.schema";
 export const getAllScriptsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId } = req.user!;
+    let targetUserId = userId;
     
+    // If user is AGENT, fetch scripts from their creator (ADMIN)
+    if (req.user?.role === "AGENT") {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
+
     // Get user's library
     const library = await prisma.library.findFirst({
-      where: { userId },
+      where: { userId: targetUserId },
     });
 
     if (!library) {
@@ -79,9 +91,20 @@ export const getScriptById = async (req: Request, res: Response): Promise<void> 
     const { id } = req.params;
     const { id: userId } = req.user!;
 
+    let targetUserId = userId;
+    if (req.user?.role === "AGENT") {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { createdById: true },
+      });
+      if (user?.createdById) {
+        targetUserId = user.createdById;
+      }
+    }
+
     // Get user's library
     const library = await prisma.library.findFirst({
-      where: { userId },
+      where: { userId: targetUserId },
     });
 
     if (!library) {

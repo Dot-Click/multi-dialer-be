@@ -51,29 +51,116 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
 
         const total = await prisma.callRecord.count({ where });
 
-        // Optimize list name fetching
-        const listIds = Array.from(new Set(calls.map(c => c.session?.listId).filter(Boolean))) as string[];
-        const lists = await prisma.contactList.findMany({
-            where: { id: { in: listIds } },
-            select: { id: true, name: true }
-        });
-        const listMap = new Map(lists.map(l => [l.id, l.name]));
+        // Collect IDs — guard against empty arrays before using hasSome
+        const sessionListIds = Array.from(
+            new Set(calls.map(c => c.session?.listId).filter((id): id is string => !!id))
+        );
+        const contactIds = Array.from(
+            new Set(calls.map(c => c.contact?.id).filter((id): id is string => !!id))
+        );
 
-        // Group fetching logic (if applicable)
-        // Since the schema doesn't have a direct link from Lead/Call to ContactGroups yet, 
-        // we'll leave it as "N/A" or search if possible.
-        // Assuming groups are linked to lists or contacts.
+        // Build the OR clauses only when the arrays are non-empty.
+        // hasSome: [] is undefined behaviour in Prisma/Postgres and silently
+        // drops rows, which causes lists/folders to "disappear".
+        const listOrClauses: any[] = [];
+        if (sessionListIds.length > 0) {
+            listOrClauses.push({ id: { in: sessionListIds } });
+        }
+        if (contactIds.length > 0) {
+            listOrClauses.push({ contactIds: { hasSome: contactIds } });
+        }
+
+        const lists = listOrClauses.length > 0
+            ? await prisma.contactList.findMany({
+                where: { userId, OR: listOrClauses },
+                select: { id: true, name: true, contactIds: true }
+            })
+            : [];
+
+        // Build list map — only add entries with a real id
+        const listMap = new Map<string, string>(
+            lists
+                .filter(l => !!l.id)
+                .map(l => [l.id, l.name])
+        );
+
+        // Fetch folders — guard hasSome the same way
+        const foundListIds = lists.map(l => l.id).filter((id): id is string => !!id);
+
+        const folders = foundListIds.length > 0
+            ? await prisma.cotactFolder.findMany({
+                where: {
+                    userId,
+                    listIds: { hasSome: foundListIds }
+                },
+                select: { id: true, name: true, listIds: true }
+            })
+            : [];
+
+        // Fetch groups — guard hasSome
+        const groups = contactIds.length > 0
+            ? await prisma.contactGroups.findMany({
+                where: {
+                    userId,
+                    contactIds: { hasSome: contactIds }
+                },
+                select: { name: true, contactIds: true }
+            })
+            : [];
 
         const reportData = calls.map(call => {
             const entity = call.contact || call.lead;
-            const phone = call.contact ? call.contact.phones?.[0]?.number : call.lead?.phone;
+            const contactId = call.contact?.id;
+            const phone = call.contact
+                ? call.contact.phones?.[0]?.number
+                : call.lead?.phone;
+
+            // ── Determine List ──────────────────────────────────────────────
+            let listName = "N/A";
+
+            if (call.session?.listId) {
+                // Prefer the session's list — most direct source
+                listName = listMap.get(call.session.listId) ?? "Unknown List";
+            } else if (contactId) {
+                // Fall back to any list that contains this contact
+                const list = lists.find(l => l.contactIds.includes(contactId));
+                if (list) listName = list.name;
+            }
+
+            // ── Determine Folder / Group ────────────────────────────────────
+            let groupName = "N/A";
+
+            if (call.session?.listId) {
+                // 1. Try to find a folder that owns the session's list
+                const folder = folders.find(f => f.listIds.includes(call.session!.listId!));
+                if (folder) groupName = folder.name;
+            }
+
+            if (groupName === "N/A" && contactId) {
+                // 2. Try a ContactGroup that contains this contact
+                const group = groups.find(g => g.contactIds.includes(contactId));
+                if (group) {
+                    groupName = group.name;
+                } else {
+                    // 3. Find a list for this contact, then a folder for that list
+                    const listForContact = lists.find(l => l.contactIds.includes(contactId));
+                    if (listForContact?.id) {
+                        const folder = folders.find(f => f.listIds.includes(listForContact.id));
+                        if (folder) groupName = folder.name;
+                    }
+                }
+            }
 
             return {
                 id: call.id,
                 name: entity?.fullName || "Unknown",
-                address: entity ? `${entity.address || ''}, ${entity.city || ''}, ${entity.state || ''} ${entity.zip || ''}`.replace(/^, | ,|, $/g, '').trim() || "N/A" : "N/A",
-                list: call.session?.listId ? (listMap.get(call.session.listId) || "Unknown List") : "N/A",
-                group: "N/A", // Group relation not explicitly in schema for CallRecord/Lead
+                address: entity
+                    ? `${entity.address || ""}, ${entity.city || ""}, ${entity.state || ""} ${entity.zip || ""}`
+                        .replace(/^,\s*|,\s*,|,\s*$/g, "")
+                        .trim() || "N/A"
+                    : "N/A",
+                list: listName,
+                group: groupName,
                 phoneNumber: phone || "N/A",
                 result: call.disposition || call.status,
                 startTime: call.startTime,

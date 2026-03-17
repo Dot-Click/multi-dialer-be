@@ -10,6 +10,11 @@ const notificationCore = {
   dailyCallReportEmail: z.string().email().optional().or(z.literal("")),
   enableAppointmentNotifications: z.boolean().optional(),
   enableComplianceAlerts: z.boolean().optional(),
+  emailChannel: z.boolean().optional(),
+  inAppChannel: z.boolean().optional(),
+  reminderMinutes: z.number().int().min(0).optional(),
+  followUpCallEvent: z.boolean().optional(),
+  scheduledMeetingEvent: z.boolean().optional(),
 };
 
 export const createNotificationSchema = z.object({
