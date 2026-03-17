@@ -56,7 +56,7 @@ app.use(async (err: any, req: Request, res: Response, next: any) => {
   // If it's a 500 error, notify admins via Web Push
   if (!err.status || err.status === 500) {
     try {
-      const { broadcastNotification } = await import('./routes/push/service');
+      const { broadcastNotification } = await import('./routes/push/service.js');
       await broadcastNotification({
         title: "Critical System Error",
         body: `A critical error occurred: ${err.message || 'Unknown error'}. Check server logs for details.`,
