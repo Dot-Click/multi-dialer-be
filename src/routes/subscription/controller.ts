@@ -553,6 +553,33 @@ export async function listBillings(req: Request, res: Response): Promise<void> {
 }
 
 /**
+ * List All Subscriptions (Admin/Owner only)
+ */
+export async function listAllSubscriptions(req: Request, res: Response): Promise<void> {
+  try {
+    const subs = await prisma.userSubscription.findMany({
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            role: true,
+            status: true,
+          }
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    successResponse(res, 200, "All subscriptions fetched successfully", subs);
+  } catch (error: any) {
+    console.error("[Controller] listAllSubscriptions Error:", error);
+    errorResponse(res, error.message || error);
+  }
+}
+
+/**
  * Fetch Plans directly from Zoho (Dedicated API)
  */
 export async function fetchZohoPlans(req: Request, res: Response): Promise<void> {

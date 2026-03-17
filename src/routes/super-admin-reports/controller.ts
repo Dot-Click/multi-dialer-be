@@ -9,6 +9,8 @@ import {
   getRevenueGrowthInDb,
   getBillingReportDetailInDb,
   getDashboardSummaryInDb,
+  getBusinessOverviewInDb,
+  getRevenuePlansInDb,
 } from "./service";
 
 export const getUserOverview = async (
@@ -246,6 +248,38 @@ export const userReportsBilling = async (
     };
 
     successResponse(res, 200, "Dashboard summary stats fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const businessOverview = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const data = await getBusinessOverviewInDb();
+    successResponse(res, 200, "Business overview fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const revenuePlans = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const data = await getRevenuePlansInDb();
+    successResponse(res, 200, "Revenue plans fetched successfully", data);
   } catch (error: any) {
     errorResponse(
       res,

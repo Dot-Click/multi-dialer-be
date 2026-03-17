@@ -3,16 +3,10 @@ import prisma from "../../lib/prisma";
 
 export async function getUserOverviewInDb() {
   try {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    const [newUsers, totalAgents, activeSubscriptions, revenueAggregation] = await Promise.all([
+    const [newUsers, totalAgents, activeSubscriptions, subscriptionRecords] = await Promise.all([
       prisma.user.count({
         where: {
-          role: {
-            not: "OWNER",
-          },
+          role: { not: "OWNER" },
         },
       }),
       prisma.user.count({
@@ -23,26 +17,22 @@ export async function getUserOverviewInDb() {
       prisma.userSubscription.count({
         where: {
           status: "ACTIVE",
+          user: { role: { not: "OWNER" } }
         },
       }),
-      prisma.billing.aggregate({
-        where: {
-          date: {
-            gte: startOfMonth,
-            lte: endOfMonth,
-          },
-        },
-        _sum: {
-          amount: true,
-        },
+      prisma.userSubscription.findMany({
+        where: { user: { role: { not: "OWNER" } } },
+        select: { amount: true }                            
       }),
     ]);
+
+    const totalRevenue = subscriptionRecords.reduce((sum, rec) => sum + parseFloat(rec.amount || "0"), 0);
 
     return {
       newUsers,
       totalAgents,
       activeSubscriptions,
-      currentMonthRevenue: revenueAggregation._sum.amount || 0,
+      totalRevenue,
     };
   } catch (error: any) {
     throw error;
@@ -319,5 +309,62 @@ export async function getDashboardSummaryInDb() {
       current: currCalls,
       previous: prevCalls
     }
+  };
+}
+
+export async function getBusinessOverviewInDb() {
+  const [revenueRecords, activeSubscriptions, activeUsers, totalAgents] = await Promise.all([
+    prisma.userSubscription.findMany({
+      where: { user: { role: { not: "OWNER" } } },
+      select: { amount: true }
+    }),
+    prisma.userSubscription.count({
+      where: { 
+        status: "ACTIVE",
+        user: { role: { not: "OWNER" } }
+      }
+    }),
+    prisma.user.count({
+      where: { status: "ACTIVE", role: { not: "OWNER" } }
+    }),
+    prisma.user.count({
+      where: { status: "ACTIVE", role: "AGENT" }
+    })
+  ]);
+
+  const totalRevenue = revenueRecords.reduce((sum, rec) => sum + parseFloat(rec.amount || "0"), 0);
+
+  return {
+    totalRevenue,
+    activeSubscriptions,
+    activeUsers,
+    totalAgents
+  };
+}
+
+export async function getRevenuePlansInDb() {
+  const plans = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
+  
+  const allSubs = await prisma.userSubscription.findMany({
+    where: {
+      user: { role: { not: "OWNER" } }
+    },
+    select: {
+      plan: true,
+      amount: true
+    }
+  });
+
+  const planRevenue = allSubs.reduce((acc: Record<string, number>, sub) => {
+    const amount = parseFloat(sub.amount || "0");
+    acc[sub.plan] = (acc[sub.plan] || 0) + amount;
+    return acc;
+  }, {});
+
+  return {
+    plans: plans.map(p => ({
+      plan: p.charAt(0) + p.slice(1).toLowerCase(),
+      amount: planRevenue[p] || 0
+    }))
   };
 }

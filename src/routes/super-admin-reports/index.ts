@@ -8,6 +8,8 @@ import {
   userReportsBilling,
   userSubscriptionDetails,
   userSubscriptionStatus,
+  businessOverview,
+  revenuePlans,
 } from "./controller";
 
 const router = Router();
@@ -24,6 +26,8 @@ router.get("/revenue-growth", revenueGrowth);
 router.get("/billing-report-detail", billingReportDetail);
 router.get("/user-reports-billing", userReportsBilling);
 
-
+//reporting
+router.get("/bussiness-overview", businessOverview);
+router.get("/revenue-plans", revenuePlans);
 
 export default router;

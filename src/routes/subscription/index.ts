@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createSubscription, listPlans, zohoAuth, zohoAuthCallback, getUpdateCardUrl, listSubscriptions, listBillings, fetchZohoPlans } from "./controller";
+import { createSubscription, listPlans, zohoAuth, zohoAuthCallback, getUpdateCardUrl, listSubscriptions, listBillings, fetchZohoPlans, listAllSubscriptions } from "./controller";
 import { protectRoute, checkRole } from "../../middlewares/auth.middleware";
 
 const router = Router();
@@ -21,5 +21,6 @@ router.get("/callback", zohoAuthCallback);
 
 router.get("/list",protectRoute,listSubscriptions)
 router.get("/billings",protectRoute,fetchZohoPlans)
+router.get("/all",protectRoute,checkRole(["OWNER"]),listAllSubscriptions)
 
 export default router;
