@@ -4,6 +4,8 @@ import path from "path";
 import fs from "fs";
 import { cloudinaryUploader } from "../../utils/handler";
 import { randomUUID } from "crypto";
+import { createInternalNotification } from "../notification/controller";
+
 
 function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
@@ -910,6 +912,37 @@ export async function moveToDncInDb(
         details: `Contact: ${contact.fullName}`,
       },
     });
+
+    // 4. Send Compliance Alert to Admin/Owner
+    try {
+      // Find the person who should be notified (the creator of this user, or the user themselves if they are admin/owner)
+      const performer = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, createdById: true, fullName: true }
+      });
+
+      if (performer) {
+        const adminId = performer.role === 'AGENT' ? performer.createdById : performer.id;
+
+        if (adminId) {
+          const adminSettings = await tx.system_Setting.findFirst({
+            where: { userId: adminId },
+            include: { notificationSetting: true }
+          });
+
+          if (adminSettings?.notificationSetting?.complianceAlert) {
+            await createInternalNotification(
+              adminId,
+              `🚫 Compliance Alert: DNC Marked`,
+              `${performer.fullName || 'User'} marked ${contact.fullName} (${phoneNumbers}) as Do Not Call.`,
+              'error'
+            );
+          }
+        }
+      }
+    } catch (notifErr) {
+      console.error("Failed to send DNC compliance alert:", notifErr);
+    }
 
     return { success: true };
   });
