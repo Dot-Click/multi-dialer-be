@@ -8,7 +8,20 @@ export const ActionPlanController = {
   // Screen 1: List Table
   list: async (req: any, res: Response) => {
     try {
-      const settings = await prisma.system_Setting.findFirst({ where: { userId: req.user.id } });
+      let targetUserId = req.user.id;
+      
+      // If the user is an AGENT, they should see plans created by their ADMIN (creator)
+      if (req.user.role === 'AGENT') {
+        const user = await prisma.user.findUnique({
+          where: { id: req.user.id },
+          select: { createdById: true }
+        });
+        if (user?.createdById) {
+          targetUserId = user.createdById;
+        }
+      }
+
+      const settings = await prisma.system_Setting.findFirst({ where: { userId: targetUserId } });
       if (!settings) {
         res.status(200).json({ success: true, data: [] });
         return;

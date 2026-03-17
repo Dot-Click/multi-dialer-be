@@ -9,9 +9,11 @@ import { cloudinaryConfig, envConfig, sessionMiddleware } from "@/lib/config";
 import { connectDB } from "@/lib/prisma";
 import sgMail from "@sendgrid/mail";
 import { startRetentionJobs } from "@/services/retention.service";
+import { initJobs } from "@/jobs";
 
 connectDB();
 startRetentionJobs();
+initJobs();
 
 const app = express();
 const PORT = envConfig.PORT || 3000;
