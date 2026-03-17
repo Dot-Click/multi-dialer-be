@@ -27,9 +27,12 @@ export const startAppointmentReminderJob = () => {
         },
         include: {
           assignBy: {
-            select: {
-              email: true,
-              fullName: true,
+            include: {
+              systemSettings: {
+                include: {
+                  notificationSetting: true,
+                },
+              },
             },
           },
           assignTo: {
@@ -50,74 +53,92 @@ export const startAppointmentReminderJob = () => {
 
       for (const event of upcomingEvents) {
         try {
-          const settings = event.assignTo.systemSettings?.[0]?.notificationSetting;
+          // Calculate when the reminder should trigger
+          // Use the creator's reminderMinutes as the threshold if available, else default to 15
+          const creatorSettings = event.assignBy.systemSettings?.[0]?.notificationSetting;
+          const assigneeSettings = event.assignTo.systemSettings?.[0]?.notificationSetting;
+          
+          const reminderMinutes = creatorSettings?.reminderMinutes ?? assigneeSettings?.reminderMinutes ?? 15;
+          const reminderTime = new Date(event.startDate.getTime() - (reminderMinutes * 60000));
 
-          // Default to 15 minutes if not set, or skip if fully disabled
-          if (!settings || (!settings.inAppChannel && !settings.appointmentReminder)) {
-            continue;
-          }
-
-          // Respect specific category toggles
-          if (event.category === 'FOLLOW_UP' && !settings.followUpCallEvent) continue;
-          if (event.category === 'APPOINTMENT' && !settings.scheduledMeetingEvent) continue;
-
-          const reminderMinutes = settings.reminderMinutes || 0;
-          const reminderTime = new Date(event.startDate.getTime() - reminderMinutes * 60000);
-
-          // If current time reached the reminder threshold
           if (now >= reminderTime) {
-            console.log(`[Job] Triggering reminder for event: ${event.title} to user ${event.assignTo.email}`);
+            console.log(`[Job] Triggering reminder for event: ${event.title}`);
+            const categoryLabel = (event.category || 'TASK').toLowerCase().replace('_', ' ');
+            const startTimeStr = event.startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-            // A. In-App & Push Notification
-            if (settings.inAppChannel) {
-                const categoryLabel = (event.category || 'TASK').toLowerCase().replace('_', ' ');
+            // 1. Notify Assignee (Agent)
+            if (assigneeSettings) {
+                const shouldNotifyAgent = (assigneeSettings.inAppChannel || assigneeSettings.appointmentNotification) && 
+                    (event.category !== 'FOLLOW_UP' || assigneeSettings.followUpCallEvent) &&
+                    (event.category !== 'APPOINTMENT' || assigneeSettings.scheduledMeetingEvent);
+
+                if (shouldNotifyAgent) {
+                    await createInternalNotification(
+                      event.assignToId,
+                      `⏰ Reminder: ${event.title}`,
+                      `Your ${categoryLabel} is scheduled in ${reminderMinutes} minutes at ${startTimeStr}.`,
+                      'event'
+                    );
+
+                    // Email for agent if enabled
+                    if (assigneeSettings.appointmentReminder && assigneeSettings.appointmentReminderEmail) {
+                        try {
+                            const htmlContent = getBaseEmailTemplate("Appointment Reminder", `
+                                <p>Hello ${event.assignTo.fullName || 'there'},</p>
+                                <p>This is a reminder for your upcoming ${categoryLabel}:</p>
+                                <div class="info-card">
+                                    <div class="info-item"><span class="info-label">Event:</span><span class="info-value highlight">${event.title}</span></div>
+                                    <div class="info-item"><span class="info-label">Time:</span><span class="info-value">${event.startDate.toLocaleString()}</span></div>
+                                </div>
+                            `);
+                            await sendEmail({
+                                to: assigneeSettings.appointmentReminderEmail,
+                                from: event.assignBy.email,
+                                subject: `⏰ Reminder: ${event.title}`,
+                                text: `Reminder: ${event.title} starting soon.`,
+                                html: htmlContent,
+                            });
+                        } catch (e) { console.error("Agent email failed:", e); }
+                    }
+                }
+            }
+
+            // 2. Notify Creator (Admin/Organizer)
+            if (creatorSettings && creatorSettings.appointmentNotification && event.assignById !== event.assignToId) {
                 await createInternalNotification(
-                  event.assignToId,
-                  `⏰ Reminder: ${event.title}`,
-                  `Your ${categoryLabel} is scheduled in ${reminderMinutes} minutes at ${event.startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
+                  event.assignById,
+                  `⏰ Reminder (As Organizer): ${event.title}`,
+                  `The ${categoryLabel} you scheduled for ${event.assignTo.fullName || 'the agent'} starts in ${reminderMinutes} minutes.`,
                   'event'
                 );
+
+                // Admin email if enabled
+                if (creatorSettings.appointmentReminder && creatorSettings.appointmentReminderEmail) {
+                    try {
+                        const htmlContent = getBaseEmailTemplate("Appointment Reminder (Organizer)", `
+                            <p>Hello,</p>
+                            <p>An appointment you organized is starting soon:</p>
+                            <div class="info-card">
+                                <div class="info-item"><span class="info-label">Event:</span><span class="info-value highlight">${event.title}</span></div>
+                                <div class="info-item"><span class="info-label">Assignee:</span><span class="info-value">${event.assignTo.fullName}</span></div>
+                                <div class="info-item"><span class="info-label">Time:</span><span class="info-value">${event.startDate.toLocaleString()}</span></div>
+                            </div>
+                        `);
+                        await sendEmail({
+                            to: creatorSettings.appointmentReminderEmail,
+                            from: "system@multidialer.com",
+                            subject: `⏰ Organizer Reminder: ${event.title}`,
+                            text: `Reminder: ${event.title} you organized is starting soon.`,
+                            html: htmlContent,
+                        });
+                    } catch (e) { console.error("Admin organizer email failed:", e); }
+                }
             }
 
-            // B. Email Notification
-            if (settings.appointmentReminder && settings.appointmentReminderEmail) {
-                const eventTime = new Date(event.startDate).toLocaleString();
-                const htmlContent = getBaseEmailTemplate(
-                  "Appointment Reminder",
-                  `
-                  <p>Hello,</p>
-                  <p>This is a reminder for your upcoming appointment. Please find the details below:</p>
-                  <div class="info-card">
-                    <div class="info-item">
-                      <span class="info-label">Event:</span>
-                      <span class="info-value highlight">${event.title}</span>
-                    </div>
-                    <div class="info-item">
-                      <span class="info-label">Date/Time:</span>
-                      <span class="info-value">${eventTime}</span>
-                    </div>
-                    <div class="info-item">
-                      <span class="info-label">Organizer:</span>
-                      <span class="info-value">${event.assignBy.fullName || "Dialer Admin"}</span>
-                    </div>
-                  </div>
-                  `
-                );
-
-                await sendEmail({
-                  to: settings.appointmentReminderEmail,
-                  from: event.assignBy.email,
-                  fromName: event.assignBy.fullName || "Dialer Reminder",
-                  subject: `⏰ Reminder: ${event.title}`,
-                  text: `Reminder: ${event.title} at ${eventTime}.`,
-                  html: htmlContent,
-                });
-            }
-
-            // 4. Mark as sent to prevent duplicates
+            // 3. Mark as sent
             await prisma.calendar.update({
               where: { id: event.id },
-              data: { reminderSent: true },
+              data: { reminderSent: true }
             });
           }
         } catch (eventError) {

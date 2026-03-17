@@ -109,10 +109,16 @@ export const endCall: RequestHandler = async (req, res) => {
       return;
     }
 
-    console.log("Terminating call:", callSid);
-    const call = await client.calls(callSid).update({ status: 'completed' });
+    console.log("Terminating call session for SID:", callSid);
+    
+    // Resolve the root call to ensure both legs are dropped
+    const currentCall = await client.calls(callSid).fetch();
+    const targetSid = currentCall.parentCallSid || callSid;
+    
+    console.log(`Resolved termination target: ${targetSid} (Original: ${callSid})`);
+    const call = await client.calls(targetSid).update({ status: 'completed' });
 
-    successResponse(res, 200, "Call terminated successfully", call);
+    successResponse(res, 200, "Call session terminated successfully", call);
     return;
   } catch (error: any) {
     console.error("End call failed:", error);
@@ -857,7 +863,7 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
         <Dial record="record-from-answer-dual" recordingStatusCallback="${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status">
           <Client>${agentIdentity}</Client>
         </Dial>
-        <Play loop="0">${musicUrl}</Play>
+        <Hangup/>
       </Response>`;
 
       await client.calls(customerLeg.sid).update({ twiml });

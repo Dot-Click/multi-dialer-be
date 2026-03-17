@@ -17,17 +17,20 @@ import {
 export const createNotification: RequestHandler = async (req, res): Promise<void> => {
   try {
     const { id: userId } = req.user!;
-
-
+    console.log("[NotificationController] Received Save Request for User:", userId, "Payload:", JSON.stringify(req.body, null, 2));
+    
     const result = await validateData(createNotificationSchema, req.body) as any;
     if (!("data" in result)) {
+      console.warn("[NotificationController] Validation FAILED:", JSON.stringify(result, null, 2));
       errorResponse(res, { errors: result }, 400);
       return;
     }
+    console.log("[NotificationController] Validation PASSED. Payload:", JSON.stringify(result.data, null, 2));
         
     const newNotification = await createNotificationInDb(result.data, userId);
     successResponse(res, 201, "Notification settings created", newNotification);
   } catch (error: any) {
+    console.error("[NotificationController] Error:", error);
     errorResponse(res, error.message || "Internal server error", 500);
   }
 };
@@ -50,6 +53,7 @@ export const getMyNotification: RequestHandler = async (req, res): Promise<void>
    
 
     const settings = await getNotificationFromDb(userId);
+    console.log("[NotificationController] Get Settings for User:", userId, "Result Found:", !!settings);
     if (!settings) {
       errorResponse(res, "Settings not found for this user", 404);
       return;
