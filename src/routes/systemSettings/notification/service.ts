@@ -1,6 +1,6 @@
 import prisma from "../../../lib/prisma";
 
-// 1. Create Notification Settings
+// 1. Create/Update Notification Settings (Upsert)
 export async function createNotificationInDb(payload: any, userId: string) {
   // Ensure SystemSetting exists
   let systemSetting = await prisma.system_Setting.findFirst({
@@ -13,18 +13,18 @@ export async function createNotificationInDb(payload: any, userId: string) {
     });
   }
 
-  const data = payload
-  console.log(data)
-  // Create Notification Setting
-  // return await prisma.notificationSetting.create({
-  //   data: {
-  //     ...payload,
-  //     systemSettingId: systemSetting.id,
-  //   },
-  //   include: {
-  //     systemSetting: true // Optional return data
-  //   }
-  // });
+  // Use upsert to create or update the single notification setting record
+  return await prisma.notificationSetting.upsert({
+    where: { systemSettingId: systemSetting.id },
+    create: {
+      ...payload,
+      systemSettingId: systemSetting.id,
+    },
+    update: payload,
+    include: {
+      systemSetting: true
+    }
+  });
 }
 
 // 2. Get All (For Admin/Owner viewing)

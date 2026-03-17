@@ -11,8 +11,9 @@ import { protectRoute, checkRole } from "../../../middlewares/auth.middleware";
 
 const router = Router();
 
-// 1. Create (POST /create)
-router.post("/create", protectRoute, checkRole(["ADMIN", "OWNER"]), createNotification);
+// 1. Create/Upsert (POST /create or POST /)
+router.post("/create", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), createNotification);
+router.post("/", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), createNotification);
 
 // 2. Get All (GET /all) - Admin/Owner sees everyone's
 router.get("/all", protectRoute, getAllNotifications);

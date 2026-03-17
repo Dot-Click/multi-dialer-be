@@ -37,6 +37,8 @@ export const sendNotificationToUser = async (userId: string, payload: { title: s
         where: { userId }
     });
 
+    console.log(`[Push] Found ${subscriptions.length} subscriptions for user ${userId}`);
+
     const sendPromises = subscriptions.map(sub => {
         const pushSubscription = {
             endpoint: sub.endpoint,

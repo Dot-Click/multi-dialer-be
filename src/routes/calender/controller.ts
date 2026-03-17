@@ -7,6 +7,7 @@ import {
   updateCalendarEventSchema,
 } from "../../schemas/calendar.schema";
 import { calendarInclude, insertCalendarEventInDb } from "./service";
+import { createInternalNotification } from "../notification/controller";
 
 const canManageOthers = (role?: string) => {
   return typeof role === "string" && ["ADMIN", "OWNER"].includes(role.toUpperCase());
@@ -106,6 +107,7 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
       description: payload.description,
       color: payload.color,
       eventType: payload.eventType,
+      category: payload.category ?? "TASK",
       startDate: payload.startDate,
       endDate: payload.endDate ?? null,
       assignToId,
@@ -117,6 +119,15 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
       where: { id: newEvent.id },
       include: calendarInclude,
     });
+
+    const categoryLabel = (payload.category || 'TASK').toLowerCase().replace('_', ' ');
+    // Create Notification for the assigned user
+    await createInternalNotification(
+      assignToId,
+      `New ${categoryLabel.charAt(0).toUpperCase() + categoryLabel.slice(1)}: ${payload.title}`,
+      `You have been assigned a new ${categoryLabel}.`,
+      payload.category === 'APPOINTMENT' ? 'meeting' : 'event'
+    );
 
     successResponse(res, 201, "Calendar event created", populatedEvent);
   } catch (error: any) {

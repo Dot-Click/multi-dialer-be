@@ -71,6 +71,12 @@ enum EventType {
   ALL_DAY
 }
 
+enum EventCategory {
+  TASK
+  APPOINTMENT
+  FOLLOW_UP
+}
+
 enum PhoneType {
   MOBILE
   TELEPHONE
@@ -212,14 +218,15 @@ model User {
   // All recordings uploaded by this admin — reusable across any settings
   recordings Recording[]
 
-  contactLists   ContactList[]
-  contactFolders CotactFolder[]
-  contactGroups  ContactGroups[]
-  contacts       Contact[]
-  importContacts ImportContact[]
-  exportContacts ExportContact[]
-  backupContacts BackupContacts[]
+  contactLists      ContactList[]
+  contactFolders    CotactFolder[]
+  contactGroups     ContactGroups[]
+  contacts          Contact[]
+  importContacts    ImportContact[]
+  exportContacts    ExportContact[]
+  backupContacts    BackupContacts[]
   pushSubscriptions PushSubscription[]
+  notifications     Notification[]
 
   @@map("users")
 }
@@ -656,11 +663,28 @@ model Integration {
   @@map("integrations")
 }
 
+model Notification {
+  id          String  @id @default(uuid())
+  title       String
+  description String
+  type        String? // 'event', 'meeting', 'success', 'error', etc.
+  isRead      Boolean @default(false)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("notifications")
+}
+
 model NotificationSetting {
   id              String         @id @default(uuid())
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
+  // System/Admin Reports
   appointmentReminder      Boolean @default(false)
   appointmentReminderEmail String?
 
@@ -671,6 +695,13 @@ model NotificationSetting {
 
   appointmentNotification Boolean @default(false)
   complianceAlert         Boolean @default(false)
+
+  // Agent Specific Preferences
+  emailChannel          Boolean @default(true)
+  inAppChannel          Boolean @default(true)
+  reminderMinutes       Int     @default(0)
+  followUpCallEvent     Boolean @default(true)
+  scheduledMeetingEvent Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -973,6 +1004,7 @@ model Calendar {
   description String
   color       String
   eventType   EventType
+  category    EventCategory @default(TASK)
   startDate   DateTime
   endDate     DateTime?
 
@@ -987,6 +1019,7 @@ model Calendar {
   status    AppointmentStatus @default(SET)
   contact   Contact?          @relation(fields: [contactId], references: [id])
   contactId String?
+  reminderSent Boolean @default(false)
 
   @@map("calendar")
 }
@@ -1080,11 +1113,11 @@ model ActionStep {
 }
 
 model Company {
-  id              String @id @default(cuid())
+  id              String  @id @default(cuid())
   companyName     String?
-  defaultTimeZone String @default("UTC")
-  defaultCurrency String @default("USD")
-  dateTimeFormat  String @default("MM/DD/YYYY - hh:mm A")
+  defaultTimeZone String  @default("UTC")
+  defaultCurrency String  @default("USD")
+  dateTimeFormat  String  @default("MM/DD/YYYY - hh:mm A")
 
   zohoSubscriptionsConnected Boolean   @default(false)
   zohoApiKey                 String?
@@ -1096,9 +1129,9 @@ model Company {
   notifyMaintenanceNotice Boolean @default(true)
   notifyCriticalError     Boolean @default(true)
 
-  email         String?  // The email address where notifications will be sent
-  newUserSignup Boolean  @default(false)
-  loginAlerts   Boolean  @default(false)
+  email         String? // The email address where notifications will be sent
+  newUserSignup Boolean @default(false)
+  loginAlerts   Boolean @default(false)
 
   minPasswordLength   Int     @default(8)
   passwordExpiryDays  Int?    @default(90)
@@ -1125,14 +1158,6 @@ model Company {
 
   @@map("companies")
 }
-
-
-
-
-
-
-
-
 
 model AuditLog {
   id        String   @id @default(uuid())
@@ -1212,5 +1237,3 @@ model PushSubscription {
 
   @@map("push_subscriptions")
 }
-  
-  
