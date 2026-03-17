@@ -353,6 +353,7 @@ export class DialerService {
     }
 
     if (isTerminal) {
+      console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}`);
       this.activeCalls.delete(sid);
       console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
       this.processQueue(userId);
