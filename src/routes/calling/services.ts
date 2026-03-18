@@ -1,6 +1,5 @@
 import { client } from "@/lib/config";
 import prisma from "@/lib/prisma";
-import { LeadCallStatus } from "@prisma/client";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
@@ -8,6 +7,22 @@ import os from "os";
 import { cloudinaryUploader } from "@/utils/handler";
 import { envConfig } from "@/lib/config";
 import Groq from "groq-sdk";
+
+
+enum LeadCallStatus {
+  PENDING = "PENDING",
+  CALLING = "CALLING",
+  CALLED = "CALLED",
+  FAILED = "FAILED",
+  BUSY = "BUSY",
+  NO_ANSWER = "NO_ANSWER",
+  HOT = "HOT",
+  WARM = "WARM",
+  COLD = "COLD",
+  CALL_BACK = "CALL_BACK",
+  DO_NOT_CALL = "DO_NOT_CALL",
+  NOT_INTERESTED = "NOT_INTERESTED",
+}
 
 const groq = new Groq({ apiKey: envConfig.GROK_API_KEY });
 
@@ -244,7 +259,7 @@ export class DialerService {
       .join("\n");
   }
 
-  async updateLeadStatusInDB(leadId: string, status: LeadCallStatus) {
+  async updateLeadStatusInDB(leadId: string, status: string) {
     try {
       await prisma.lead.update({
         where: { id: leadId },
@@ -310,15 +325,15 @@ export class DialerService {
     }
 
     const { leadId, contactId, userId } = metadata;
-    let dbStatus: LeadCallStatus = "CALLED";
+    let dbStatus: LeadCallStatus = LeadCallStatus.CALLED;
     const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
 
-    if (twilioStatus === "failed") dbStatus = "FAILED";
-    else if (twilioStatus === "busy") dbStatus = "BUSY";
-    else if (twilioStatus === "no-answer") dbStatus = "NO_ANSWER";
+    if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
+    else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
+    else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
     else if (twilioStatus === "completed") {
-      dbStatus = "CALLED";
+      dbStatus = LeadCallStatus.CALLED;
       this.clearTranscriptionLogs(sid);
     }
 

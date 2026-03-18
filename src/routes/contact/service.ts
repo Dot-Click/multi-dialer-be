@@ -224,6 +224,8 @@ export async function updateContactInDb(
     notes: string;
     miscValues: any;
     leadsheetValues: any;
+    status: string;
+    disposition: string;
   }>,
 ) {
   const existing = await prisma.contact.findUnique({
@@ -245,6 +247,7 @@ export async function updateContactInDb(
       miscValues: payload.miscValues,
       leadsheetValues: payload.leadsheetValues,
       dataDialerId: payload.dataDialerId,
+      status: payload.status || payload.disposition,
       emails: payload.emails
         ? {
           deleteMany: {},

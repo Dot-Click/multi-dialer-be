@@ -20,6 +20,7 @@ import actionplansRoutes from "./systemSettings/actionplan"
 import leadSheetRoutes from "./systemSettings/leadSheet"
 import regulatoryRoutes from "./systemSettings/regulatory"
 import auditLogRoutes from "./systemSettings/audit"
+import dispositionRoutes from "./systemSettings/dispositions"
 import callingRoutes from "./calling"
 import contactRoutes from "./contact"
 import contactListRoutes from "./contactlist"
@@ -61,6 +62,7 @@ router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "O
 router.use("/system-settings/integration", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), IntegrationRoute)
 router.use("/system-settings/regulatory", protectRoute, checkRole(["ADMIN", "OWNER"]), regulatoryRoutes)
 router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), auditLogRoutes)
+router.use("/system-settings/dispositions", protectRoute, checkRole(["ADMIN", "OWNER"]), dispositionRoutes)
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)

@@ -330,6 +330,7 @@ model Contact {
   leadsheetValues Json?
   miscFields      MiscField[]
   miscFieldId     String?
+  status          String         @default("PENDING")
 
   calendar Calendar[]
 
@@ -589,8 +590,28 @@ model System_Setting {
   appearance          Appearance?
   notificationSetting NotificationSetting?
   integrations        Integration[]
+  dispositions        Disposition[]
 
   @@map("system_settings")
+}
+
+model Disposition {
+  id              String         @id @default(cuid())
+  label           String
+  value           String
+  color           String         @default("blue")
+  icon            String         @default("Tag")
+  isSystem        Boolean        @default(false)
+  isActive        Boolean        @default(true)
+  order           Int            @default(0)
+
+  systemSettingId String
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("dispositions")
 }
 
 model RegulatorySetting {
@@ -814,7 +835,7 @@ model Lead {
   zip       String
   phoneType String
   priority  Int            @default(0)
-  status    LeadCallStatus @default(PENDING)
+  status    String         @default("PENDING")
   userId    String
   user      User           @relation(fields: [userId], references: [id])
   createdAt DateTime       @default(now())
@@ -1058,7 +1079,7 @@ model CallRecord {
   endTime     DateTime?
   duration    Int? // In seconds
   status      String // Twilio status: completed, failed, etc.
-  disposition LeadCallStatus?
+  disposition String?
 
   recordingUrl String?
   transcript   String? @db.Text
