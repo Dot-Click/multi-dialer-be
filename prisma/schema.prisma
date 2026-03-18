@@ -722,7 +722,7 @@ model DialerSetting {
   deleteFaxNumbers          Boolean @default(false)
 
   useCallSessionTimer Boolean @default(false)
-  voicemailMode      String  @default("auto")
+  voicemailMode       String  @default("auto")
 
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
@@ -872,10 +872,14 @@ model CallerId {
   createdAt       DateTime       @default(now())
   agents          User[]
   updatedAt       DateTime       @updatedAt
-  dialerType      DialerType?    @default(PREDICTIVE)
+  dialerType      DialerType?    @default(PREDICTIVE) 
   aiPacing        Boolean?       @default(false)
   counter         Int            @default(0)
   defaultForUsers User[]         @relation("DefaultCaller")
+
+  callCount  Int       @default(0)
+  frozenAt   DateTime?
+  unfreezeAt DateTime?
 
   @@map("caller_id")
 }
@@ -996,7 +1000,7 @@ model Appearance {
 }
 
 model Calendar {
-  id          String    @id @default(cuid())
+  id          String        @id @default(cuid())
   title       String
   description String
   color       String
@@ -1013,10 +1017,10 @@ model Calendar {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  status    AppointmentStatus @default(SET)
-  contact   Contact?          @relation(fields: [contactId], references: [id])
-  contactId String?
-  reminderSent Boolean @default(false)
+  status       AppointmentStatus @default(SET)
+  contact      Contact?          @relation(fields: [contactId], references: [id])
+  contactId    String?
+  reminderSent Boolean           @default(false)
 
   @@map("calendar")
 }

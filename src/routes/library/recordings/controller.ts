@@ -7,32 +7,28 @@ import { updateRecordingSchema } from "../../../schemas/recording.schema";
 import fs from "fs";
 import path from "path";
 
-export const getAllRecordingsOfSpecificUser = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    let targetUserId = userId;
+export const getAllRecordingsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user!.id;
 
-    if (req.user?.role === "AGENT") {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { createdById: true },
-      });
-      if (user?.createdById) {
-        targetUserId = user.createdById;
-      }
-    }
+  let userIds = [userId];
 
-    const recordings = await prisma.recording.findMany({
-      where: { userId: targetUserId },
-      orderBy: { createdAt: "desc" },
+  if (req.user?.role === "AGENT") {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { createdById: true },
     });
-    successResponse(res, 200, "Recordings fetched", recordings);
-  } catch (error: any) {
-    errorResponse(res, error.message || "Internal server error", 500);
+    if (user?.createdById) {
+      // Include BOTH the admin's recordings AND the agent's own
+      userIds = [userId, user.createdById];
+    }
   }
+
+  const recordings = await prisma.recording.findMany({
+    where: { userId: { in: userIds } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  successResponse(res, 200, "Recordings fetched", recordings);
 };
 
 export const getAllRecordingsOfAllUsers = async (
