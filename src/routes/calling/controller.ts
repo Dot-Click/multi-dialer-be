@@ -110,11 +110,11 @@ export const endCall: RequestHandler = async (req, res) => {
     }
 
     console.log("Terminating call session for SID:", callSid);
-    
+
     // Resolve the root call to ensure both legs are dropped
     const currentCall = await client.calls(callSid).fetch();
     const targetSid = currentCall.parentCallSid || callSid;
-    
+
     console.log(`Resolved termination target: ${targetSid} (Original: ${callSid})`);
     const call = await client.calls(targetSid).update({ status: 'completed' });
 
@@ -264,6 +264,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const caller = body.Caller || req.query.Caller || "";
   const agentId = body.agentId || req.query.agentId || req.params.agentId;
   const contactId = body.contactId || req.query.contactId || req.params.contactId;
+  const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
 
 
   console.log("================= Voice Webhook Dispatcher ================");
@@ -272,6 +273,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   console.log("From:", from);
   console.log("AgentId:", agentId);
   console.log("ContactId:", contactId);
+
+
 
   // PERSISTENCE: Create CallRecord for browser-initiated calls if not present
   if (caller.startsWith("client:") && agentId) {
@@ -310,6 +313,21 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   if (caller.startsWith("client:")) {
     console.log("[VoiceWebhook] Browser-to-PSTN Call detected");
     twiml.say("Please wait while we are connecting your call.");
+
+    const dialOptions: any = {
+      callerId: from,
+      record: "record-from-answer-dual",
+      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
+    };
+
+    if (answeringMachineUrl) {
+      dialOptions.machineDetection = "DetectMessageEnd";
+      dialOptions.asyncAmdStatusCallback =
+        `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(answeringMachineUrl)}&agentId=${agentId}`;
+      dialOptions.asyncAmdStatusCallbackMethod = "POST";
+    }
+
+
     const dial = twiml.dial({
       callerId: from, // This is the Twilio number assigned to the app/device
       record: "record-from-answer-dual",
@@ -340,6 +358,81 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   res.type("text/xml");
   res.send(twiml.toString());
   return;
+};
+
+
+// For answering machine. WEbhoook
+export const handleAmdStatus: RequestHandler = async (req, res) => {
+  try {
+    const { CallSid, AnsweredBy } = req.body;
+    const answeringMachineUrl = req.query.answeringMachineUrl as string;
+    const agentId = req.query.agentId as string;
+
+    console.log(`[AMD] Call ${CallSid} answered by: ${AnsweredBy}`);
+
+    // AnsweredBy values: 'human', 'machine_start', 'machine_end_beep', 
+    //                    'machine_end_silence', 'machine_end_other', 'fax', 'unknown'
+    const isMachine = AnsweredBy?.startsWith('machine') || AnsweredBy === 'fax';
+
+    if (isMachine && answeringMachineUrl) {
+      console.log(`[AMD] Answering machine detected for ${CallSid}, dropping voicemail`);
+
+      // Play the voicemail recording to the call
+      await client.calls(CallSid).update({
+        twiml: `<Response>
+                    <Play>${answeringMachineUrl}</Play>
+                    <Hangup/>
+                </Response>`
+      });
+
+      console.log(`[AMD] Voicemail dropped for ${CallSid}`);
+    } else {
+      console.log(`[AMD] Human answered ${CallSid}, continuing normally`);
+    }
+
+    res.sendStatus(200);
+    return;
+  } catch (error: any) {
+    console.error('[AMD] Status handling failed:', error);
+    res.sendStatus(200); // Always 200 to Twilio
+    return;
+  }
+};
+
+
+export const dropVoicemail: RequestHandler = async (req, res) => {
+    try {
+        const { callSid, voicemailUrl } = req.body;
+
+        if (!callSid || !voicemailUrl) {
+            errorResponse(res, { message: "callSid and voicemailUrl are required" }, 400);
+            return;
+        }
+
+        console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
+
+        // Find the customer leg
+        const currentCall = await client.calls(callSid).fetch();
+        const childCalls = await client.calls.list({ parentCallSid: callSid });
+        const customerLeg = childCalls.find(c => 
+            ['in-progress', 'ringing', 'answered'].includes(c.status)
+        ) || currentCall;
+
+        // Play voicemail to customer and hang up
+        await client.calls(customerLeg.sid).update({
+            twiml: `<Response>
+                <Play>${voicemailUrl}</Play>
+                <Hangup/>
+            </Response>`
+        });
+
+        successResponse(res, 200, "Voicemail dropped successfully", { callSid });
+        return;
+    } catch (error: any) {
+        console.error('[DropVoicemail] Failed:', error);
+        errorResponse(res, { message: error.message });
+        return;
+    }
 };
 
 
@@ -810,7 +903,7 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
       try {
         const potentialLeg = await client.calls(customerCallSid).fetch();
         // 🚨 Relaxed status check: Included 'answered' and 'queued'
-        const validStatuses =['in-progress', 'ringing', 'answered', 'queued'];
+        const validStatuses = ['in-progress', 'ringing', 'answered', 'queued'];
         if (potentialLeg && validStatuses.includes(potentialLeg.status)) {
           customerLeg = potentialLeg;
         }

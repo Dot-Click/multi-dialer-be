@@ -713,113 +713,159 @@ export const importContactCsv = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { contactListId, contactGroupId, keepOld, type, fileName } = req.body;
+    const {
+      contactListId,
+      contactGroupId,
+      fieldMappings: fieldMappingsRaw,
+      miscMappings: miscMappingsRaw,       // ← NEW
+      dupScope: dupScopeRaw,
+      dupFields: dupFieldsRaw,
+      dupHandling,
+    } = req.body;
+ 
     const file = req.file;
-
+ 
     if (!contactListId && !contactGroupId) {
       errorResponse(res, "List or Group ID not provided", 400);
       return;
     }
-
     if (!file) {
       errorResponse(res, "CSV file is required", 400);
       return;
     }
-
+ 
+    // ── Parse fieldMappings (primary fields) ──────────────────────────────────
+    let fieldMappings: Record<string, string> = {};
+    try {
+      fieldMappings =
+        typeof fieldMappingsRaw === "string"
+          ? JSON.parse(fieldMappingsRaw)
+          : fieldMappingsRaw || {};
+    } catch {
+      errorResponse(res, "Invalid fieldMappings format", 400);
+      return;
+    }
+ 
+    // ── Parse miscMappings { "<MiscField.id>": "<csvColumnHeader>" } ──────────
+    let miscMappings: Record<string, string> = {};
+    try {
+      miscMappings =
+        typeof miscMappingsRaw === "string"
+          ? JSON.parse(miscMappingsRaw)
+          : miscMappingsRaw || {};
+    } catch {
+      // non-critical
+    }
+ 
+    // ── Parse duplicate settings ──────────────────────────────────────────────
+    let dupScope: string[]  = ["Entire Database", "File Import"];
+    let dupFields: string[] = ["Phone"];
+    try {
+      if (dupScopeRaw)  dupScope  = typeof dupScopeRaw  === "string" ? JSON.parse(dupScopeRaw)  : dupScopeRaw;
+      if (dupFieldsRaw) dupFields = typeof dupFieldsRaw === "string" ? JSON.parse(dupFieldsRaw) : dupFieldsRaw;
+    } catch { /* use defaults */ }
+ 
+    const normalizedDupHandling = dupHandling || "Keep Old";
+    const keepOld = normalizedDupHandling === "Keep Old";
+ 
+    // ── Parse CSV ─────────────────────────────────────────────────────────────
     const fileContent = fs.readFileSync(file.path, "utf-8");
-    const records = parse(fileContent, {
+    const records: Record<string, string>[] = parse(fileContent, {
       columns: true,
       skip_empty_lines: true,
       trim: true,
     });
-
-    // Cleanup uploaded file
-    try {
-      fs.unlinkSync(file.path);
-    } catch (cleanupErr) {
-      console.error("Error deleting temp file:", cleanupErr);
-    }
-
-    // Filter and map records to formatted contacts
+ 
+    try { fs.unlinkSync(file.path); } catch (e) { console.error("Temp file cleanup error:", e); }
+ 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+ 
+    // Resolve a primary field value: fieldMappings["Name"] = "full_name" → record["full_name"]
+    const resolve = (record: Record<string, string>, systemField: string): string => {
+      const csvCol = fieldMappings[systemField];
+      if (!csvCol) return "";
+      return (record[csvCol] || "").trim();
+    };
+ 
+    // ── Map records → contacts ────────────────────────────────────────────────
     const contacts = records
-      .filter((r: any) => {
-        const name = (r.fullName || "").toLowerCase().trim();
-        return (
-          name !== "fullname" &&
-          name !== "full name" &&
-          name !== "name" &&
-          name !== ""
-        );
+      .filter((r) => {
+        const name = resolve(r, "Name").toLowerCase();
+        return name !== "fullname" && name !== "full name" && name !== "name" && name !== "";
       })
-      .map((r: any) => {
-        const emails = [];
-        if (r.primary_email) {
-          emails.push({ email: r.primary_email, isPrimary: true });
-        }
-        if (r.other_emails) {
-          const others = r.other_emails.split(",").map((e: string) => ({
-            email: e.trim(),
-            isPrimary: false,
-          }));
-          emails.push(...others);
-        }
-
-        const phones = [];
-        if (r.phone_mobile) {
-          phones.push({ number: r.phone_mobile.toString(), type: "MOBILE" });
-        }
-        if (r.phone_telephone) {
-          phones.push({
-            number: r.phone_telephone.toString(),
-            type: "TELEPHONE",
+      .map((r) => {
+        // Emails
+        const emails: { email: string; isPrimary: boolean }[] = [];
+        const emailVal = resolve(r, "Email");
+        if (emailVal) {
+          emailVal.split(",").forEach((e, idx) => {
+            const trimmed = e.trim();
+            if (trimmed) emails.push({ email: trimmed, isPrimary: idx === 0 });
           });
         }
-        if (r.phone_home) {
-          phones.push({ number: r.phone_home.toString(), type: "HOME" });
+ 
+        // Phones
+        const phones: { number: string; type: string }[] = [];
+        const phoneVal = resolve(r, "Phone");
+        if (phoneVal) {
+          phones.push({ number: phoneVal.toString(), type: "MOBILE" });
         }
-        if (r.phone_work) {
-          phones.push({ number: r.phone_work.toString(), type: "WORK" });
+ 
+        // Tags
+        const tagsVal = resolve(r, "Tags");
+        const tags = tagsVal
+          ? tagsVal.split(",").map((t) => t.trim()).filter(Boolean)
+          : [];
+ 
+        // ── Misc values — keyed by MiscField.id ──────────────────────────────
+        // miscMappings = { "3ccbf011-...": "dob_column", "ab12cd-...": "notes_col" }
+        // We read the CSV column value for each mapped misc field
+        const miscValues: Record<string, string> = {};
+        for (const [miscFieldId, csvCol] of Object.entries(miscMappings)) {
+          const val = (r[csvCol] || "").trim();
+          if (val) miscValues[miscFieldId] = val;
+          // Result: { "3ccbf011-416f-4716-8934-3cb5fbf75490": "1990-01-01" }
         }
+ 
         return {
-          fullName: r.fullName || "Unnamed",
-          city: r.city || "",
-          state: r.state || "",
-          zip: r.zip || "",
-          source: r.source || "CSV Import",
-          tags: r.tags ? r.tags.split(",").map((t: string) => t.trim()) : [],
-          notes: r.notes || "",
+          fullName: resolve(r, "Name") || "Unnamed",
+          address:  "",
+          city:     "",
+          state:    "",
+          zip:      "",
+          source:   "CSV Import",
+          notes:    "",
+          tags,
           emails,
           phones,
+          // Only set miscValues if there's actually something to save
+          miscValues: Object.keys(miscValues).length > 0 ? miscValues : undefined,
         };
       });
-
+ 
+    // ── Call service ──────────────────────────────────────────────────────────
     const result = await importContactsFromCsvInDb({
       userId: (req as any).user.id,
-      fileName: fileName || file.originalname,
-      type: type || "CSV",
+      fileName: file.originalname,
+      type: "CSV",
       contactListId:
-        contactListId === "null" ||
-        contactListId === "undefined" ||
-        !contactListId
-          ? undefined
-          : contactListId,
+        !contactListId || contactListId === "null" || contactListId === "undefined"
+          ? undefined : contactListId,
       contactGroupId:
-        contactGroupId === "null" ||
-        contactGroupId === "undefined" ||
-        !contactGroupId
-          ? undefined
-          : contactGroupId,
-      keepOld: keepOld === "true" || keepOld === true,
+        !contactGroupId || contactGroupId === "null" || contactGroupId === "undefined"
+          ? undefined : contactGroupId,
+      keepOld,
+      duplicateConfig: {
+        scope:    dupScope,
+        fields:   dupFields,
+        handling: normalizedDupHandling,
+      },
       contacts,
     });
-
+ 
     successResponse(res, 201, "Contacts imported successfully", result);
   } catch (error: any) {
-    errorResponse(
-      res,
-      error?.message || "Internal server error",
-      error?.statusCode || 500,
-    );
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
 };
 

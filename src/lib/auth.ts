@@ -36,6 +36,9 @@ export const auth = betterAuth({
   appName: "Boilerplate",
   database: prismaAdapter(prisma, { provider: "postgresql" }),
   user: {
+    changeEmail: {
+      enabled: true,
+    },
     modelName: "User",
     fields: {
       name: "fullName",
@@ -56,6 +59,7 @@ export const auth = betterAuth({
     ...(envConfig.FRONTEND_URL ? [envConfig.FRONTEND_URL] : []),
   ],
   emailVerification: {
+    enabled: true,
     sendVerificationEmail: async ({
       user,
       url,
@@ -113,6 +117,7 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
+
 
     password: {
       hash: async (password: string): Promise<string> => {
@@ -612,7 +617,7 @@ export const auth = betterAuth({
           if (companiesToNotify.length > 0) {
             const signupTime = new Date().toLocaleString("en-US", { timeZone: "UTC" }) + " UTC";
             const emailHtml = newUserSignupTemp(body.email, signupTime);
-            
+
             // Send emails asynchronously (fire and forget)
             companiesToNotify.forEach((company) => {
               if (company.email) {

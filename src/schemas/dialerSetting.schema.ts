@@ -19,6 +19,7 @@ export const createDialerSettingSchema = z.object({
   deleteDisconnectedNumbers: z.boolean().optional(),
   deleteFaxNumbers: z.boolean().optional(),
   useCallSessionTimer: z.boolean().optional(),
+  voicemailMode: z.string().optional(),
 });
 
 export const updateDialerSettingSchema = z.object({
@@ -37,4 +38,5 @@ export const updateDialerSettingSchema = z.object({
   deleteDisconnectedNumbers: z.boolean().optional(),
   deleteFaxNumbers: z.boolean().optional(),
   useCallSessionTimer: z.boolean().optional(),
+  voicemailMode: z.string().optional(), // ← this was missing
 });
