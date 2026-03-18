@@ -102,10 +102,9 @@ export const getAppearanceOfUser: RequestHandler = async (req, res): Promise<voi
 
 
     if (!appearance) {
-      errorResponse(res, "Appearance not found", 404);
+      errorResponse(res, "Appearance not found", 404);  
       return;
-    }
-
+    } 
 
     successResponse(res, 200, "Appearance fetched", appearance);
   } catch (error: any) {

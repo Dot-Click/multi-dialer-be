@@ -6478,18 +6478,7 @@ paths:
                 pipelineAccelerationIndex:
                   type: boolean
                   example: true
-                lockGroups:
-                  type: boolean
-                  example: false
-                birthdays:
-                  type: boolean
-                  example: true
-                homeCloseDate:
-                  type: boolean
-                  example: true
-                timeZone:
-                  type: string
-                  example: "America/New_York"
+
       responses:
         "201":
           description: "Appearance settings created successfully"
@@ -6589,14 +6578,7 @@ paths:
                   type: boolean
                 pipelineAccelerationIndex:
                   type: boolean
-                lockGroups:
-                  type: boolean
-                birthdays:
-                  type: boolean
-                homeCloseDate:
-                  type: boolean
-                timeZone:
-                  type: string
+
       responses:
         "200":
           description: "Appearance settings updated successfully"
