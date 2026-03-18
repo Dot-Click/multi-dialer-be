@@ -1,9 +1,14 @@
-import { Request, Response } from "express";
+import { Request, RequestHandler, Response } from "express";
 import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertCallerIdInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateCallerIdSchema } from "../../../schemas/callerId.schema";
+import {
+  resolveAdminId,
+  getCooldownStatus,
+  recordCallAndRotateIfNeeded,
+} from "./service";
 
 export const getAllCallerIdsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -22,7 +27,7 @@ export const getAllCallerIdsOfSpecificUser = async (req: Request, res: Response)
 
     // Get all CallerIds
     const callerIds = await prisma.callerId.findMany({
-      where: req.user?.role === "AGENT" 
+      where: req.user?.role === "AGENT"
         ? { agents: { some: { id: userId } } }
         : { systemSettingId: systemSettings.id },
       include: {
@@ -359,6 +364,49 @@ export const deleteCallerId = async (req: Request, res: Response): Promise<void>
       errorResponse(res, error.message, 403);
       return;
     }
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+
+
+// GET /calling/caller-id/status?numbers=+155...,+166...
+export const getCallerIdStatus: RequestHandler = async (req, res) => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+
+    const numbersParam = req.query.numbers as string;
+    if (!numbersParam) { errorResponse(res, "numbers query param is required", 400); return; }
+
+    const callerNumbers = numbersParam.split(",").map((n) => n.trim()).filter(Boolean);
+    if (callerNumbers.length === 0) { errorResponse(res, "At least one number is required", 400); return; }
+
+    const adminId = await resolveAdminId(userId);
+    const status = await getCooldownStatus(adminId, callerNumbers);
+
+    successResponse(res, 200, "Caller ID status fetched", status);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+// POST /calling/caller-id/use
+// Body: { callerNumber: string, maxCallsPerCid: number }
+export const useCallerId: RequestHandler = async (req, res) => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+
+    const { callerNumber, maxCallsPerCid } = req.body;
+    if (!callerNumber) { errorResponse(res, "callerNumber is required", 400); return; }
+    if (!maxCallsPerCid || maxCallsPerCid < 1) { errorResponse(res, "maxCallsPerCid must be a positive number", 400); return; }
+
+    const adminId = await resolveAdminId(userId);
+    const result = await recordCallAndRotateIfNeeded(adminId, callerNumber, maxCallsPerCid);
+
+    successResponse(res, 200, "Caller ID usage recorded", result);
+  } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
   }
 };
