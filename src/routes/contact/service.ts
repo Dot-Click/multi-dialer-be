@@ -961,6 +961,11 @@ export async function importContactsFromCsvInDb(args: {
   contactListId?: string;
   contactGroupId?: string;
   keepOld: boolean;
+  duplicateConfig?: {
+    scope: string[];   // ["Entire Database", "File Import"]
+    fields: string[];  // ["Phone", "Emails", "Property Addresses", "Mailing Addresses"]
+    handling: string;  // "Keep Old" | "Overwrite" | "Skip"
+  };
   contacts: any[];
 }) {
   const {
@@ -970,86 +975,263 @@ export async function importContactsFromCsvInDb(args: {
     contactListId,
     contactGroupId,
     keepOld,
+    duplicateConfig,
     contacts,
   } = args;
 
+  // ── Normalise duplicate config ──────────────────────────────────────────────
+
+  const dupHandling = duplicateConfig?.handling || (keepOld ? "Keep Old" : "Overwrite");
+  const dupFields   = duplicateConfig?.fields   || [];
+  const dupScope    = duplicateConfig?.scope    || [];
+
+  // Whether we should even run duplicate detection
+  const checkDuplicates = dupFields.length > 0 && dupScope.length > 0;
+
   return prisma.$transaction(
     async (tx) => {
-      // 1. Generate IDs and prepare data for bulk insertion
-      const contactData = contacts.map((c) => ({
-        id: randomUUID(),
+
+      // ── Step 1: Resolve duplicates ────────────────────────────────────────
+      //
+      // For each incoming contact we collect its identifying values (phones /
+      // emails) and check whether a matching record already exists in the DB.
+      //
+      // Result buckets:
+      //   toInsert  – brand-new contacts that should be created
+      //   toUpdate  – existing contacts that should be overwritten (handling === "Overwrite")
+      //   toSkip    – contacts that are duplicates and should be dropped
+
+      type IncomingContact = (typeof contacts)[number];
+
+      const toInsert:                        IncomingContact[] = [];
+      const toUpdate: { existingId: string; incoming: IncomingContact }[] = [];
+
+      for (const c of contacts) {
+        if (!checkDuplicates) {
+          toInsert.push(c);
+          continue;
+        }
+
+        let existingContact: { id: string } | null = null;
+
+        // ── Check by Phone ──────────────────────────────────────────────────
+        if (!existingContact && dupFields.includes("Phone")) {
+          const incomingNumbers = (c.phones || []).map((p: any) =>
+            p.number?.toString().trim()
+          ).filter(Boolean);
+
+          if (incomingNumbers.length > 0) {
+            const match = await tx.contactPhone.findFirst({
+              where: { number: { in: incomingNumbers } },
+              select: { contactId: true },
+            });
+            if (match) existingContact = { id: match.contactId };
+          }
+        }
+
+        // ── Check by Email ──────────────────────────────────────────────────
+        if (!existingContact && dupFields.includes("Emails")) {
+          const incomingEmails = (c.emails || []).map((e: any) =>
+            e.email?.toLowerCase().trim()
+          ).filter(Boolean);
+
+          if (incomingEmails.length > 0) {
+            const match = await tx.contactEmail.findFirst({
+              where: { email: { in: incomingEmails } },
+              select: { contactId: true },
+            });
+            if (match) existingContact = { id: match.contactId };
+          }
+        }
+
+        // ── Check by Property Address (address + city + state + zip) ────────
+        if (!existingContact && dupFields.includes("Property Addresses")) {
+          if (c.address && c.city && c.state) {
+            const match = await tx.contact.findFirst({
+              where: {
+                address: c.address,
+                city:    c.city,
+                state:   c.state,
+                zip:     c.zip || undefined,
+              },
+              select: { id: true },
+            });
+            if (match) existingContact = { id: match.id };
+          }
+        }
+
+        // ── Check by Mailing Address ────────────────────────────────────────
+        if (!existingContact && dupFields.includes("Mailing Addresses")) {
+          if (c.mailingAddress && c.mailingCity && c.mailingState) {
+            const match = await tx.contact.findFirst({
+              where: {
+                mailingAddress: c.mailingAddress,
+                mailingCity:    c.mailingCity,
+                mailingState:   c.mailingState,
+                mailingZip:     c.mailingZip || undefined,
+              },
+              select: { id: true },
+            });
+            if (match) existingContact = { id: match.id };
+          }
+        }
+
+        // ── Route to the correct bucket ─────────────────────────────────────
+        if (!existingContact) {
+          // No match found → always insert
+          toInsert.push(c);
+        } else if (dupHandling === "Overwrite") {
+          toUpdate.push({ existingId: existingContact.id, incoming: c });
+        } else {
+          // "Keep Old" or "Skip" → drop the incoming record
+        }
+      }
+
+      // ── Step 2: Bulk-insert new contacts ──────────────────────────────────
+
+      const contactData = toInsert.map((c) => ({
+        id:       randomUUID(),
         fullName: c.fullName || "Unnamed",
-        city: c.city,
-        state: c.state,
-        zip: c.zip,
-        source: c.source,
-        tags: c.tags || [],
-        notes: c.notes,
+        address:  c.address  || "",
+        city:     c.city     || "",
+        state:    c.state    || "",
+        zip:      c.zip      || "",
+        source:   c.source   || "CSV Import",
+        notes:    c.notes    || "",
+        tags:     c.tags     || [],
+        // Store misc field values as JSON blob (Birthday, Notes from misc, etc.)
+        miscValues: c.miscValues ?? null,
+        userId,
       }));
 
       const createdContactIds = contactData.map((c) => c.id);
 
-      const emailData = contacts.flatMap((c, index) => {
-        const contactId = contactData[index].id;
+      if (contactData.length > 0) {
+        await tx.contact.createMany({ data: contactData });
+      }
+
+      // ── Step 3: Bulk-insert emails & phones for new contacts ──────────────
+
+      const emailData = toInsert.flatMap((c, idx) => {
+        const contactId = contactData[idx].id;
         return (c.emails || []).map((e: any) => ({
-          email: e.email,
-          isPrimary: e.isPrimary,
+          email:     e.email,
+          isPrimary: e.isPrimary ?? false,
           contactId,
         }));
       });
 
-      const phoneData = contacts.flatMap((c, index) => {
-        const contactId = contactData[index].id;
+      const phoneData = toInsert.flatMap((c, idx) => {
+        const contactId = contactData[idx].id;
         return (c.phones || []).map((p: any) => ({
-          number: p.number,
-          type: p.type,
+          number:    p.number.toString(),
+          type:      p.type  || "MOBILE",
           contactId,
         }));
       });
 
-      // 2. Bulk Insert Contacts
-      await tx.contact.createMany({
-        data: contactData,
-      });
-
-      // 3. Bulk Insert Emails (if any)
       if (emailData.length > 0) {
-        await tx.contactEmail.createMany({
-          data: emailData,
-        });
+        await tx.contactEmail.createMany({ data: emailData });
       }
 
-      // 4. Bulk Insert Phones (if any)
       if (phoneData.length > 0) {
-        await tx.contactPhone.createMany({
-          data: phoneData,
-        });
+        await tx.contactPhone.createMany({ data: phoneData });
       }
 
-      // 5. Connect to List or Group
-      if (contactListId) {
+      // ── Step 4: Overwrite existing contacts ───────────────────────────────
+      //
+      // For "Overwrite" we update the scalar fields and replace phones/emails.
+      // We do this individually (not createMany) because we need to delete
+      // stale child rows first.
+
+      const updatedContactIds: string[] = [];
+
+      for (const { existingId, incoming } of toUpdate) {
+        updatedContactIds.push(existingId);
+
+        // Update scalar fields
+        await tx.contact.update({
+          where: { id: existingId },
+          data: {
+            fullName:   incoming.fullName || "Unnamed",
+            address:    incoming.address  || "",
+            city:       incoming.city     || "",
+            state:      incoming.state    || "",
+            zip:        incoming.zip      || "",
+            source:     incoming.source   || "CSV Import",
+            notes:      incoming.notes    || "",
+            tags:       incoming.tags     || [],
+            miscValues: incoming.miscValues ?? undefined,
+          },
+        });
+
+        // Replace emails
+        if ((incoming.emails || []).length > 0) {
+          await tx.contactEmail.deleteMany({ where: { contactId: existingId } });
+          await tx.contactEmail.createMany({
+            data: (incoming.emails as any[]).map((e) => ({
+              email:     e.email,
+              isPrimary: e.isPrimary ?? false,
+              contactId: existingId,
+            })),
+          });
+        }
+
+        // Replace phones
+        if ((incoming.phones || []).length > 0) {
+          await tx.contactPhone.deleteMany({ where: { contactId: existingId } });
+          await tx.contactPhone.createMany({
+            data: (incoming.phones as any[]).map((p) => ({
+              number:    p.number.toString(),
+              type:      p.type || "MOBILE",
+              contactId: existingId,
+            })),
+          });
+        }
+      }
+
+      // ── Step 5: Connect contacts to List or Group ─────────────────────────
+      //
+      // Both new inserts AND overwritten contacts are added to the list/group
+      // (if not already present).
+
+      const allContactIds = [...createdContactIds, ...updatedContactIds];
+
+      if (contactListId && allContactIds.length > 0) {
         const list = await tx.contactList.findUnique({
           where: { id: contactListId },
         });
         if (!list) throwHttp(404, "Contact list not found");
 
-        await tx.contactList.update({
-          where: { id: contactListId },
-          data: { contactIds: { push: createdContactIds } },
-        });
-      } else if (contactGroupId) {
+        // De-duplicate against existing contactIds on the list
+        const existing = new Set(list.contactIds);
+        const toAdd    = allContactIds.filter((id) => !existing.has(id));
+
+        if (toAdd.length > 0) {
+          await tx.contactList.update({
+            where: { id: contactListId },
+            data:  { contactIds: { push: toAdd } },
+          });
+        }
+      } else if (contactGroupId && allContactIds.length > 0) {
         const group = await tx.contactGroups.findUnique({
           where: { id: contactGroupId },
         });
         if (!group) throwHttp(404, "Contact group not found");
 
-        await tx.contactGroups.update({
-          where: { id: contactGroupId },
-          data: { contactIds: { push: createdContactIds } },
-        });
+        const existing = new Set(group.contactIds);
+        const toAdd    = allContactIds.filter((id) => !existing.has(id));
+
+        if (toAdd.length > 0) {
+          await tx.contactGroups.update({
+            where: { id: contactGroupId },
+            data:  { contactIds: { push: toAdd } },
+          });
+        }
       }
 
-      // 6. Record the import
+      // ── Step 6: Record the import ─────────────────────────────────────────
+
       return tx.importContact.create({
         data: {
           fileName,
@@ -1057,14 +1239,12 @@ export async function importContactsFromCsvInDb(args: {
           contactListId,
           contactGroupId,
           keepOld,
-          contactsCount: createdContactIds.length,
+          contactsCount: allContactIds.length,
           userId,
         },
       });
     },
-    {
-      timeout: 60000,
-    },
+    { timeout: 60000 },
   );
 }
 
