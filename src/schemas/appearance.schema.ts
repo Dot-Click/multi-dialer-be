@@ -22,13 +22,7 @@ export const createAppearanceSchema = z.object({
   agentImprovementScores: z.boolean(),
   pipelineAccelerationIndex: z.boolean(),
 
-  // Additional Options
-  lockGroups: z.boolean(),
-  birthdays: z.boolean(),
-  homeCloseDate: z.boolean(),
 
-  // Time Zone
-  timeZone: z.string(),
 });
 
 // For update, all fields optional

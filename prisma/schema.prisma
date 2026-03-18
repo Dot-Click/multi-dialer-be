@@ -984,11 +984,7 @@ model Appearance {
   agentImprovementScores    Boolean @default(true)
   pipelineAccelerationIndex Boolean @default(true)
 
-  lockGroups    Boolean @default(false)
-  birthdays     Boolean @default(false)
-  homeCloseDate Boolean @default(false)
 
-  timeZone String @default("CST")
 
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
