@@ -11,7 +11,7 @@ import {
   getDialerSettingByIdFromDb
 } from "./service";
 
-const isAuthorized = (role?: string) => ["ADMIN", "OWNER"].includes(role || "");
+const isAuthorized = (role?: string) => ["ADMIN", "OWNER", "AGENT"].includes(role || "");
 
 // 1. Upsert Dialer Settings (POST / or PUT /)
 // If settings exist for this user → update. If not → create.

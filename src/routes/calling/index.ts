@@ -20,7 +20,9 @@ import {
   setCounter,
   getCallerIds,
   toggleHold,
-  resumeCall
+  resumeCall,
+  dropVoicemail,
+  handleAmdStatus
 } from "./controller";
 import {
   getAggregateStats,
@@ -121,4 +123,10 @@ router.get("/calls-insights", protectRoute, getCallsInsights);
 // call managements}
 router.patch('/set-counter/:sid', protectRoute, setCounter)
 router.get('/callerIds', protectRoute, getCallerIds)
+
+
+// Answering Machine
+router.post("/webhooks/amd-status", handleAmdStatus);  
+router.post("/drop-voicemail", protectRoute, dropVoicemail);
+
 export default router;
