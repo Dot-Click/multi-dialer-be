@@ -105,12 +105,14 @@ export async function recordCallAndRotateIfNeeded(
       systemSettingId: systemSetting.id,
     },
     select: {
-      id:          true,
-      callCount:   true,
-      frozenAt:    true,
-      unfreezeAt:  true,
+      id:            true,
+      callCount:     true,
+      numberOfLines: true, // ← now fetching this
+      frozenAt:      true,
+      unfreezeAt:    true,
+      updatedAt:     true, // ← now fetching this
       twillioNumber: true,
-      label:       true,
+      label:         true,
     },
   });
 
@@ -132,15 +134,33 @@ export async function recordCallAndRotateIfNeeded(
   }
 
   // ── Step 3: Increment and freeze if needed ────────────────────────────────
-  const now      = new Date();
-  const newCount = (callerIdRow.callCount ?? 0) + 1;
+  const now = new Date();
+
+  // --- IDLE RESET LOGIC ---
+  // If the number hasn't been used for 20 mins, reset its count to 0.
+  // This prevents "rotated after 1 call" issues when starting a new session
+  // after a long break, even if the previous session didn't hit the limit.
+  let callCount = callerIdRow.callCount ?? 0;
+  const lastUsed = callerIdRow.updatedAt;
+  if (lastUsed && (now.getTime() - lastUsed.getTime()) > COOLDOWN_MS) {
+    console.log("[recordCall] 🟢 Idle reset: Last used > 20 mins ago. Resetting callCount to 0.");
+    callCount = 0;
+  }
+
+  // Determine threshold: use the record's specific limit if it's greater than 1,
+  // otherwise fallback to the session-wide limit passed from the frontend.
+  const threshold = (callerIdRow.numberOfLines && callerIdRow.numberOfLines > 1)
+    ? Math.max(maxCallsPerCid, callerIdRow.numberOfLines)
+    : maxCallsPerCid;
+
+  const newCount = callCount + 1;
   let isFrozen   = false;
   let unfreezeAt: Date | null = null;
   let rotated    = false;
 
-  console.log("[recordCall] current callCount:", callerIdRow.callCount, "→ newCount:", newCount, "threshold:", maxCallsPerCid);
+  console.log("[recordCall] current callCount:", callCount, "→ newCount:", newCount, "threshold:", threshold);
 
-  if (newCount >= maxCallsPerCid) {
+  if (newCount >= threshold) {
     unfreezeAt = new Date(now.getTime() + COOLDOWN_MS);
     isFrozen   = true;
     rotated    = true;
@@ -151,8 +171,8 @@ export async function recordCallAndRotateIfNeeded(
     where: { id: callerIdRow.id },
     data: {
       callCount:  newCount,
-      frozenAt:   rotated ? now       : undefined,
-      unfreezeAt: rotated ? unfreezeAt : undefined,
+      frozenAt:   rotated ? now        : (callCount === 0 ? null : undefined), // Reset states if idle reset happened
+      unfreezeAt: rotated ? unfreezeAt : (callCount === 0 ? null : undefined),
     },
   });
 
@@ -199,20 +219,32 @@ export async function getCooldownStatus(
       callCount:     true,
       frozenAt:      true,
       unfreezeAt:    true,
+      updatedAt:     true,
     },
   });
 
   console.log("[getCooldownStatus] found rows:", callerIdRows);
 
   // Auto-expire
-  const expired = callerIdRows.filter((r) => r.unfreezeAt !== null && r.unfreezeAt <= now);
-  if (expired.length > 0) {
-    console.log("[getCooldownStatus] 🟢 Expiring cooldowns:", expired.map((r) => r.twillioNumber));
+  // 1. Cooldowns that have actually finished their time
+  const expiredCooldowns = callerIdRows.filter((r) => r.unfreezeAt !== null && r.unfreezeAt <= now);
+  // 2. Idle numbers that haven't been used for 20 mins (resets callCount even if not frozen)
+  const idleNumbers = callerIdRows.filter((r) =>
+    r.unfreezeAt === null && // Not currently frozen
+    r.callCount > 0 && // Has a count to reset
+    r.updatedAt && (now.getTime() - r.updatedAt.getTime()) > COOLDOWN_MS
+  );
+
+  const resetBatch = [...expiredCooldowns, ...idleNumbers];
+
+  if (resetBatch.length > 0) {
+    console.log("[getCooldownStatus] 🟢 Resetting counts for:", resetBatch.map((r) => r.twillioNumber));
     await prisma.callerId.updateMany({
-      where: { id: { in: expired.map((r) => r.id) } },
+      where: { id: { in: resetBatch.map((r) => r.id) } },
       data:  { callCount: 0, frozenAt: null, unfreezeAt: null },
     });
-    expired.forEach((r) => { r.callCount = 0; r.frozenAt = null; r.unfreezeAt = null; });
+    // Update local objects for the response
+    resetBatch.forEach((r) => { r.callCount = 0; r.frozenAt = null; r.unfreezeAt = null; });
   }
 
   const rowMap = new Map(callerIdRows.map((r) => [r.twillioNumber, r]));
