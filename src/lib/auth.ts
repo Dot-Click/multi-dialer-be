@@ -73,7 +73,7 @@ export const auth = betterAuth({
       </div>
 
       <p style="font-size: 16px; color: #333;">
-        Hello <strong>\${user.fullName ?? "User"}</strong>,
+        Hello <strong>${user.fullName ?? "User"}</strong>,
       </p>
 
       <h2 style="color: #28a745; margin-top: 20px;">
@@ -86,10 +86,10 @@ export const auth = betterAuth({
 
       <div style="background: #f8f9fa; border: 2px dashed #28a745; padding: 15px; border-radius: 8px; margin: 20px 0;">
         <p style="margin: 5px 0; font-size: 15px;">
-          <strong>Email:</strong> \${user.email}
+          <strong>Email:</strong> ${user.email}
         </p>
         <p style="margin: 5px 0; font-size: 15px;">
-          <strong>Password:</strong> \${pendingPasswords.get(user.email.toLowerCase()) || "Undefined (Wait for console log)"}
+          <strong>Password:</strong> ${pendingPasswords.get(user.email.toLowerCase()) || "Undefined (Wait for console log)"}
         </p>
       </div>
 
@@ -255,7 +255,7 @@ export const auth = betterAuth({
 
             // Send emails asynchronously (fire and forget)
             companiesToNotify.forEach((company) => {
-              if (company.email) {
+              if (company.email && user) {
                 sendEmail(company.email, "New User Signed Up on CallScout", emailHtml)
                   .catch(err => console.error("Failed to send signup notification:", err));
               }

@@ -588,7 +588,7 @@ export const sendLeadSheetEmail = async (
       return;
     }
 
-    await sendLeadSheetEmailInDb(id, leadSheetId, recipientEmail);
+    await sendLeadSheetEmailInDb(id, leadSheetId, recipientEmail, (req as any).user.id);
     successResponse(res, 200, "Lead sheet email sent successfully", null);
   } catch (error: any) {
     errorResponse(
@@ -972,7 +972,7 @@ export const sendTemplateEmail = async (req: Request, res: Response) => {
       errorResponse(res, "Contact ID and Template ID are required", 400);
       return;
     }
-    await sendTemplateEmailInDb(id, templateId);
+    await sendTemplateEmailInDb(id, templateId, (req as any).user.id);
     successResponse(res, 200, "Email sent successfully", null);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);

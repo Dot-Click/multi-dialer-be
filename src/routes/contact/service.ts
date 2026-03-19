@@ -832,6 +832,7 @@ export async function sendLeadSheetEmailInDb(
   contactId: string,
   leadSheetId: string,
   recipientEmail: string,
+  userId: string,
 ) {
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
@@ -860,6 +861,7 @@ export async function sendLeadSheetEmailInDb(
     recipientEmail,
     `Lead Sheet: ${leadSheet.title} - ${contact.fullName}`,
     html,
+    { userId, contactId }
   );
 
   return true;
@@ -1798,7 +1800,7 @@ export async function getHotlistFromDb(userId: string, role: string) {
     .filter(Boolean);
 }
 
-export async function sendTemplateEmailInDb(contactId: string, templateId: string) {
+export async function sendTemplateEmailInDb(contactId: string, templateId: string, userId: string) {
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
     include: { emails: { where: { isPrimary: true } } },
@@ -1818,7 +1820,7 @@ export async function sendTemplateEmailInDb(contactId: string, templateId: strin
   content = content.replace(/{{fullName}}/g, contact.fullName || "Friend");
   content = content.replace(/{{city}}/g, contact.city || "");
 
-  await sendEmail(email, template.subject, content);
+  await sendEmail(email, template.subject, content, { userId, contactId, templateId });
 
   return true;
 }

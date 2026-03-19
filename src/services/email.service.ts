@@ -1,5 +1,7 @@
 import sgMail from "@sendgrid/mail";
 import { envConfig } from "../lib/config";
+import prisma from "../lib/prisma";
+import { EmailStatus } from "@prisma/client";
 
 export interface SendEmailOptions {
   to: string;
@@ -8,14 +10,19 @@ export interface SendEmailOptions {
   subject: string;
   text: string;
   html?: string;
+  
+  // Tracking (Optional: Only log if userId is provided)
+  userId?: string;
+  contactId?: string;
+  leadId?: string;
+  templateId?: string;
 }
 
 /**
- * Sends an email using SendGrid.
- * The sender email must be a verified sender in SendGrid.
+ * Sends an email using SendGrid and logs it to EmailHistory if userId is provided.
  */
 export async function sendEmail(options: SendEmailOptions) {
-  const { to, from, subject, text, html } = options;
+  const { to, from, subject, text, html, userId, contactId, leadId, templateId } = options;
 
   const msg = {
     to,
@@ -31,16 +38,47 @@ export async function sendEmail(options: SendEmailOptions) {
 
   console.log("[EmailService] Attempting to send email:", JSON.stringify({ ...msg, html: "[HTML_CONTENT]" }, null, 2));
 
+  let status: EmailStatus = EmailStatus.SENT;
+  let errorMsg: string | null = null;
+  let messageId: string | null = null;
+
   try {
-    await sgMail.send(msg);
+    const [response] = await sgMail.send(msg);
+    // SendGrid v3 returns response with headers. Log message-id if available
+    messageId = response.headers['x-message-id'] as string || null;
     console.log(`[EmailService] Email sent to ${to} from ${from}`);
     return { success: true };
   } catch (error: any) {
+    status = EmailStatus.FAILED;
+    errorMsg = error.message;
     console.error("[EmailService] Error sending email:", error);
     if (error.response) {
       console.error(error.response.body);
     }
     return { success: false, error: error.message };
+  } finally {
+    // Log to DB only if userId is provided
+    if (userId) {
+      try {
+        await prisma.emailLog.create({
+          data: {
+            to,
+            from,
+            subject,
+            content: html || text,
+            status,
+            error: errorMsg,
+            messageId,
+            userId,
+            contactId,
+            leadId,
+            templateId
+          }
+        });
+      } catch (dbError) {
+        console.error("[EmailService] Failed to log email history to DB:", dbError);
+      }
+    }
   }
 }
 

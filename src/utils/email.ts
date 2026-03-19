@@ -1,8 +1,4 @@
 import { envConfig } from "../lib/config";
-import sgMail from "@sendgrid/mail";
-
-
-
 export const otpTemp = (OTP: string) => `
 <!DOCTYPE html>
 <html lang="en">
@@ -258,18 +254,29 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
 </html>
 `
 
-export const sendEmail = async (to: string, subject: string, html: string) => {
+import { sendEmail as trackedSendEmail } from "../services/email.service";
+
+export const sendEmail = async (
+    to: string, 
+    subject: string, 
+    html: string, 
+    tracking?: { userId: string; contactId?: string; leadId?: string; templateId?: string }
+) => {
     try {
-        const msg = {
+        return await trackedSendEmail({
             to,
-            from: envConfig.EMAIL_USER as string,
+            from: "noreply@dialersaas.com", // Default from if not specified
             subject,
+            text: "Please view this email in an HTML compatible client.",
             html,
-        };
-        await sgMail.send(msg);
+            userId: tracking?.userId,
+            contactId: tracking?.contactId,
+            leadId: tracking?.leadId,
+            templateId: tracking?.templateId,
+        });
     }
     catch (error) {
-        console.log("Error sending email:", error);
+        console.log("Error sending email via utils:", error);
         return { error };
     }
 }
