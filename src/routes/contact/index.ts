@@ -26,6 +26,7 @@ import {
   deleteAttachment,
   assignAgentsToList,
   moveToDnc,
+  removeFromDnc,
   getDncList,
   getAllImportContacts,
   importContactCsv,
@@ -72,6 +73,7 @@ router.delete("/attachment/:attachmentId", deleteAttachment);
 router.delete("/:id", deleteContact);
 
 router.post("/:id/move-to-dnc", moveToDnc);
+router.post("/:id/remove-from-dnc", removeFromDnc);
 router.post("/create", createContact);
 router.post("/list", createContactList);
 router.patch("/list/:id", updateContactList);

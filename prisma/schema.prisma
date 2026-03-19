@@ -190,7 +190,6 @@ model User {
   multiLineDialers MultiLineDialer[]
   libraries        Library[]
   reportAnalytics  Report_Analytic[]
-  complianceDNC    Compliance_DNC[]
   auditLogs        AuditLog[]
 
   systemSettings    System_Setting[]
@@ -227,6 +226,7 @@ model User {
   backupContacts    BackupContacts[]
   pushSubscriptions PushSubscription[]
   notifications     Notification[]
+  emailLogs         EmailLog[]
 
   @@map("users")
 }
@@ -333,6 +333,7 @@ model Contact {
   status          String         @default("PENDING")
 
   calendar Calendar[]
+  emailLogs EmailLog[]
 
   @@index([dataDialerId])
   @@map("contacts")
@@ -366,7 +367,6 @@ model ContactPhone {
   id        String    @id @default(cuid())
   number    String
   type      PhoneType
-  isDnc     Boolean   @default(false)
   contactId String
   contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
@@ -502,6 +502,7 @@ model EmailTemplate {
   status       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  emailLogs    EmailLog[]
 
   @@unique([libraryId, templateName])
   @@map("email_templates")
@@ -558,19 +559,7 @@ model Report_Analytic {
   @@map("report_analytics")
 }
 
-model Compliance_DNC {
-  id        String   @id @default(uuid())
-  number    String
-  name      String?
-  email     String?
-  source    String?
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
-  @@map("compliance_dnc")
-}
 
 model System_Setting {
   id        String   @id @default(uuid())
@@ -842,6 +831,7 @@ model Lead {
   updatedAt DateTime       @updatedAt
 
   callRecords CallRecord[]
+  emailLogs   EmailLog[]
 
   @@map("leads")
 }
@@ -1135,11 +1125,11 @@ model ActionStep {
 }
 
 model Company {
-  id              String @id @default(cuid())
+  id              String  @id @default(cuid())
   companyName     String?
-  defaultTimeZone String @default("UTC")
-  defaultCurrency String @default("USD")
-  dateTimeFormat  String @default("MM/DD/YYYY - hh:mm A")
+  defaultTimeZone String  @default("UTC")
+  defaultCurrency String  @default("USD")
+  dateTimeFormat  String  @default("MM/DD/YYYY - hh:mm A")
 
   zohoSubscriptionsConnected Boolean   @default(false)
   zohoApiKey                 String?
@@ -1151,9 +1141,9 @@ model Company {
   notifyMaintenanceNotice Boolean @default(true)
   notifyCriticalError     Boolean @default(true)
 
-  email         String?  // The email address where notifications will be sent
-  newUserSignup Boolean  @default(false)
-  loginAlerts   Boolean  @default(false)
+  email         String? // The email address where notifications will be sent
+  newUserSignup Boolean @default(false)
+  loginAlerts   Boolean @default(false)
 
   minPasswordLength   Int     @default(8)
   passwordExpiryDays  Int?    @default(90)
@@ -1180,14 +1170,6 @@ model Company {
 
   @@map("companies")
 }
-
-
-
-
-
-
-
-
 
 model AuditLog {
   id        String   @id @default(uuid())
@@ -1267,5 +1249,36 @@ model PushSubscription {
 
   @@map("push_subscriptions")
 }
+
+enum EmailStatus {
+  SENT
+  FAILED
+}
+
+model EmailLog {
+  id        String      @id @default(uuid())
+  to        String
+  from      String
+  subject   String
+  content   String      @db.Text
+  status    EmailStatus
+  error     String?     @db.Text
+  messageId String?     // SendGrid Message ID
+
+  // Relations
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  
+  contactId String?
+  contact   Contact?    @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  leadId    String?
+  lead      Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  templateId String?
+  template   EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime    @default(now())
+
+  @@map("email_logs")
+}
