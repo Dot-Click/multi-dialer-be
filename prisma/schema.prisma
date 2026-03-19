@@ -190,7 +190,6 @@ model User {
   multiLineDialers MultiLineDialer[]
   libraries        Library[]
   reportAnalytics  Report_Analytic[]
-  complianceDNC    Compliance_DNC[]
   auditLogs        AuditLog[]
 
   systemSettings    System_Setting[]
@@ -366,7 +365,6 @@ model ContactPhone {
   id        String    @id @default(cuid())
   number    String
   type      PhoneType
-  isDnc     Boolean   @default(false)
   contactId String
   contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
@@ -558,19 +556,7 @@ model Report_Analytic {
   @@map("report_analytics")
 }
 
-model Compliance_DNC {
-  id        String   @id @default(uuid())
-  number    String
-  name      String?
-  email     String?
-  source    String?
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
-  @@map("compliance_dnc")
-}
 
 model System_Setting {
   id        String   @id @default(uuid())

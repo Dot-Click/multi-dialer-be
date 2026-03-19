@@ -84,7 +84,7 @@ export async function createContactInDb(payload: {
       },
       include: {
         emails: true,
-        phones: { where: { isDnc: false } },
+        phones: true,
       },
     });
 
@@ -104,11 +104,11 @@ export async function getAllContactsFromDb(userId: string, role: string) {
   if (role === "OWNER") {
     return prisma.contact.findMany({
       where: {
-        phones: { some: { isDnc: false } },
+        status: { not: "DO_NOT_CALL" },
       },
       include: {
         emails: true,
-        phones: { where: { isDnc: false } },
+        phones: true,
       },
       orderBy: { createdAt: "desc" },
     });
@@ -136,12 +136,12 @@ export async function getAllContactsFromDb(userId: string, role: string) {
               { id: { in: listContactIds } },
             ],
           },
-          { phones: { some: { isDnc: false } } },
+          { status: { not: "DO_NOT_CALL" } },
         ],
       },
       include: {
         emails: true,
-        phones: { where: { isDnc: false } },
+        phones: true,
       },
       orderBy: { createdAt: "desc" },
     });
@@ -165,12 +165,12 @@ export async function getAllContactsFromDb(userId: string, role: string) {
           {
             OR: [{ id: { in: assignedContactIds } }, { userId: userId }],
           },
-          { phones: { some: { isDnc: false } } },
+          { status: { not: "DO_NOT_CALL" } },
         ],
       },
       include: {
         emails: true,
-        phones: { where: { isDnc: false } },
+        phones: true,
       },
       orderBy: { createdAt: "desc" },
     });
@@ -180,11 +180,11 @@ export async function getAllContactsFromDb(userId: string, role: string) {
   return prisma.contact.findMany({
     where: {
       userId,
-      phones: { some: { isDnc: false } },
+      status: { not: "DO_NOT_CALL" },
     },
     include: {
       emails: true,
-      phones: { where: { isDnc: false } },
+      phones: true,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -195,7 +195,7 @@ export async function getContactByIdFromDb(id: string) {
     where: { id },
     include: {
       emails: true,
-      phones: { where: { isDnc: false } },
+      phones: true,
       attachments: true,
       callRecords: {
         include: {
@@ -269,7 +269,7 @@ export async function updateContactInDb(
     },
     include: {
       emails: true,
-      phones: { where: { isDnc: false } },
+      phones: true,
     },
   });
 }
@@ -552,11 +552,11 @@ export async function getContactsByListFromDb(
   return prisma.contact.findMany({
     where: {
       id: { in: list.contactIds },
-      phones: { some: { isDnc: false } },
+      status: { not: "DO_NOT_CALL" },
     },
     include: {
       emails: true,
-      phones: { where: { isDnc: false } },
+      phones: true,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -868,7 +868,8 @@ export async function sendLeadSheetEmailInDb(
 export async function moveToDncInDb(
   contactId: string,
   userId: string,
-  phoneIds: string[],
+  // phoneIds are now ignored as we mark the whole contact
+  _phoneIds?: string[],
 ) {
   return prisma.$transaction(async (tx) => {
     const contact = await tx.contact.findUnique({
@@ -877,48 +878,25 @@ export async function moveToDncInDb(
     });
 
     if (!contact) throwHttp(404, "Contact not found");
-    const primaryEmail =
-      contact.emails.find((e) => e.isPrimary)?.email ||
-      contact.emails[0]?.email ||
-      null;
 
-    const phonesToMark = contact.phones.filter((p) => phoneIds.includes(p.id));
-
-    if (phonesToMark.length === 0)
-      throwHttp(400, "No valid phone numbers selected");
-
-    // 1. Mark phone numbers as DNC in contact_phones
-    await tx.contactPhone.updateMany({
-      where: { id: { in: phoneIds } },
-      data: { isDnc: true },
-    });
-
-    // 2. Add to compliance_dnc table
-    const dncEntries = phonesToMark.map((p) => ({
-      number: p.number,
-      name: contact.fullName,
-      email: primaryEmail,
-      source: contact.source,
-      userId: userId,
-    }));
-
-    await tx.compliance_DNC.createMany({
-      data: dncEntries,
+    // 1. Mark contact as DO_NOT_CALL
+    await tx.contact.update({
+      where: { id: contactId },
+      data: { status: "DO_NOT_CALL" },
     });
 
     // 3. Create Audit Log
-    const phoneNumbers = phonesToMark.map((p) => p.number).join(", ");
+    const phoneNumbers = contact.phones.map((p) => p.number).join(", ");
     await tx.auditLog.create({
       data: {
         userId,
-        action: `Added ${phoneNumbers} to DNC`,
-        details: `Contact: ${contact.fullName}`,
+        action: `Contact marked as DNC`,
+        details: `Contact: ${contact.fullName} (${phoneNumbers})`,
       },
     });
 
     // 4. Send Compliance Alert to Admin/Owner
     try {
-      // Find the person who should be notified (the creator of this user, or the user themselves if they are admin/owner)
       const performer = await tx.user.findUnique({
         where: { id: userId },
         select: { id: true, role: true, createdById: true, fullName: true }
@@ -952,8 +930,10 @@ export async function moveToDncInDb(
 }
 
 export async function getDncListFromDb() {
-  return prisma.compliance_DNC.findMany({
-    orderBy: { createdAt: "desc" },
+  return prisma.contact.findMany({
+    where: { status: "DO_NOT_CALL" },
+    include: { phones: true, emails: true },
+    orderBy: { updatedAt: "desc" },
   });
 }
 
@@ -985,8 +965,8 @@ export async function importContactsFromCsvInDb(args: {
   // ── Normalise duplicate config ──────────────────────────────────────────────
 
   const dupHandling = duplicateConfig?.handling || (keepOld ? "Keep Old" : "Overwrite");
-  const dupFields   = duplicateConfig?.fields   || [];
-  const dupScope    = duplicateConfig?.scope    || [];
+  const dupFields = duplicateConfig?.fields || [];
+  const dupScope = duplicateConfig?.scope || [];
 
   // Whether we should even run duplicate detection
   const checkDuplicates = dupFields.length > 0 && dupScope.length > 0;
@@ -1006,7 +986,7 @@ export async function importContactsFromCsvInDb(args: {
 
       type IncomingContact = (typeof contacts)[number];
 
-      const toInsert:                        IncomingContact[] = [];
+      const toInsert: IncomingContact[] = [];
       const toUpdate: { existingId: string; incoming: IncomingContact }[] = [];
 
       for (const c of contacts) {
@@ -1053,9 +1033,9 @@ export async function importContactsFromCsvInDb(args: {
             const match = await tx.contact.findFirst({
               where: {
                 address: c.address,
-                city:    c.city,
-                state:   c.state,
-                zip:     c.zip || undefined,
+                city: c.city,
+                state: c.state,
+                zip: c.zip || undefined,
               },
               select: { id: true },
             });
@@ -1069,9 +1049,9 @@ export async function importContactsFromCsvInDb(args: {
             const match = await tx.contact.findFirst({
               where: {
                 mailingAddress: c.mailingAddress,
-                mailingCity:    c.mailingCity,
-                mailingState:   c.mailingState,
-                mailingZip:     c.mailingZip || undefined,
+                mailingCity: c.mailingCity,
+                mailingState: c.mailingState,
+                mailingZip: c.mailingZip || undefined,
               },
               select: { id: true },
             });
@@ -1093,15 +1073,15 @@ export async function importContactsFromCsvInDb(args: {
       // ── Step 2: Bulk-insert new contacts ──────────────────────────────────
 
       const contactData = toInsert.map((c) => ({
-        id:       randomUUID(),
+        id: randomUUID(),
         fullName: c.fullName || "Unnamed",
-        address:  c.address  || "",
-        city:     c.city     || "",
-        state:    c.state    || "",
-        zip:      c.zip      || "",
-        source:   c.source   || "CSV Import",
-        notes:    c.notes    || "",
-        tags:     c.tags     || [],
+        address: c.address || "",
+        city: c.city || "",
+        state: c.state || "",
+        zip: c.zip || "",
+        source: c.source || "CSV Import",
+        notes: c.notes || "",
+        tags: c.tags || [],
         // Store misc field values as JSON blob (Birthday, Notes from misc, etc.)
         miscValues: c.miscValues ?? null,
         userId,
@@ -1118,7 +1098,7 @@ export async function importContactsFromCsvInDb(args: {
       const emailData = toInsert.flatMap((c, idx) => {
         const contactId = contactData[idx].id;
         return (c.emails || []).map((e: any) => ({
-          email:     e.email,
+          email: e.email,
           isPrimary: e.isPrimary ?? false,
           contactId,
         }));
@@ -1127,8 +1107,8 @@ export async function importContactsFromCsvInDb(args: {
       const phoneData = toInsert.flatMap((c, idx) => {
         const contactId = contactData[idx].id;
         return (c.phones || []).map((p: any) => ({
-          number:    p.number.toString(),
-          type:      p.type  || "MOBILE",
+          number: p.number.toString(),
+          type: p.type || "MOBILE",
           contactId,
         }));
       });
@@ -1156,14 +1136,14 @@ export async function importContactsFromCsvInDb(args: {
         await tx.contact.update({
           where: { id: existingId },
           data: {
-            fullName:   incoming.fullName || "Unnamed",
-            address:    incoming.address  || "",
-            city:       incoming.city     || "",
-            state:      incoming.state    || "",
-            zip:        incoming.zip      || "",
-            source:     incoming.source   || "CSV Import",
-            notes:      incoming.notes    || "",
-            tags:       incoming.tags     || [],
+            fullName: incoming.fullName || "Unnamed",
+            address: incoming.address || "",
+            city: incoming.city || "",
+            state: incoming.state || "",
+            zip: incoming.zip || "",
+            source: incoming.source || "CSV Import",
+            notes: incoming.notes || "",
+            tags: incoming.tags || [],
             miscValues: incoming.miscValues ?? undefined,
           },
         });
@@ -1173,7 +1153,7 @@ export async function importContactsFromCsvInDb(args: {
           await tx.contactEmail.deleteMany({ where: { contactId: existingId } });
           await tx.contactEmail.createMany({
             data: (incoming.emails as any[]).map((e) => ({
-              email:     e.email,
+              email: e.email,
               isPrimary: e.isPrimary ?? false,
               contactId: existingId,
             })),
@@ -1185,8 +1165,8 @@ export async function importContactsFromCsvInDb(args: {
           await tx.contactPhone.deleteMany({ where: { contactId: existingId } });
           await tx.contactPhone.createMany({
             data: (incoming.phones as any[]).map((p) => ({
-              number:    p.number.toString(),
-              type:      p.type || "MOBILE",
+              number: p.number.toString(),
+              type: p.type || "MOBILE",
               contactId: existingId,
             })),
           });
@@ -1208,12 +1188,12 @@ export async function importContactsFromCsvInDb(args: {
 
         // De-duplicate against existing contactIds on the list
         const existing = new Set(list.contactIds);
-        const toAdd    = allContactIds.filter((id) => !existing.has(id));
+        const toAdd = allContactIds.filter((id) => !existing.has(id));
 
         if (toAdd.length > 0) {
           await tx.contactList.update({
             where: { id: contactListId },
-            data:  { contactIds: { push: toAdd } },
+            data: { contactIds: { push: toAdd } },
           });
         }
       } else if (contactGroupId && allContactIds.length > 0) {
@@ -1223,12 +1203,12 @@ export async function importContactsFromCsvInDb(args: {
         if (!group) throwHttp(404, "Contact group not found");
 
         const existing = new Set(group.contactIds);
-        const toAdd    = allContactIds.filter((id) => !existing.has(id));
+        const toAdd = allContactIds.filter((id) => !existing.has(id));
 
         if (toAdd.length > 0) {
           await tx.contactGroups.update({
             where: { id: contactGroupId },
-            data:  { contactIds: { push: toAdd } },
+            data: { contactIds: { push: toAdd } },
           });
         }
       }
@@ -1517,7 +1497,6 @@ export async function restoreContactFromDb(
         id: p.id,
         number: p.number,
         type: p.type,
-        isDnc: p.isDnc,
         contactId: foundContactData.id,
       }));
       await tx.contactPhone.createMany({ data: phonesData });
@@ -1795,8 +1774,8 @@ export async function getHotlistFromDb(userId: string, role: string) {
   const contacts = await prisma.contact.findMany({
     where: { id: { in: contactIds } },
     include: {
-      phones: { where: { isDnc: false }, take: 1 },
-      emails: { take: 1 },
+      phones: { take: 1 },
+      emails: { where: { isPrimary: true }, take: 1 },
     },
   });
 

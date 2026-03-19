@@ -676,11 +676,6 @@ export const moveToDnc = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (!phoneIds || !Array.isArray(phoneIds) || phoneIds.length === 0) {
-      errorResponse(res, "phoneIds array is required", 400);
-      return;
-    }
-
     const result = await moveToDncInDb(id, userId, phoneIds);
     successResponse(res, 200, "Successfully moved to DNC", result);
   } catch (error: any) {
