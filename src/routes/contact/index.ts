@@ -36,6 +36,8 @@ import {
   getHotlist,
   sendTemplateEmail,
   scheduleTemplateEmail,
+  bulkAssignContactsToList,
+  bulkMoveToDnc,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -86,5 +88,8 @@ router.patch("/group/:id", updateContactGroup);
 router.delete("/group/:id", deleteContactGroup);
 
 router.patch("/list/:id/agents", assignAgentsToList);
+
+router.post("/bulk-assign-list", bulkAssignContactsToList);
+router.post("/bulk-move-to-dnc", bulkMoveToDnc);
 
 export default router;

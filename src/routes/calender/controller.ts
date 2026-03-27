@@ -113,6 +113,7 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
       assignToId,
       assignById: userId,
       status: payload.status ?? "SET",
+      contactId: payload.contactId ?? null,
     });
 
     const populatedEvent = await prisma.calendar.findUnique({

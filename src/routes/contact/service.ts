@@ -959,6 +959,140 @@ export async function removeFromDncInDb(contactId: string, userId: string) {
   });
 }
 
+export async function bulkAssignContactsToListInDb(
+  contactIds: string[],
+  listId: string,
+) {
+  return prisma.$transaction(async (tx) => {
+    const newList = await tx.contactList.findUnique({
+      where: { id: listId },
+      select: { id: true, name: true, contactIds: true },
+    });
+    if (!newList) throwHttp(404, "Target List not found");
+
+    for (const contactId of contactIds) {
+      // Remove contact from every other list it currently belongs to
+      const currentLists = await tx.contactList.findMany({
+        where: { contactIds: { has: contactId } },
+        select: { id: true, contactIds: true },
+      });
+      for (const l of currentLists) {
+        if (l.id !== listId) {
+          await tx.contactList.update({
+            where: { id: l.id },
+            data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
+          });
+        }
+      }
+
+      // Add to target list if not already present
+      if (!newList.contactIds.includes(contactId)) {
+        await tx.contactList.update({
+          where: { id: listId },
+          data: { contactIds: { push: contactId } },
+        });
+      }
+
+      await tx.contact.update({
+        where: { id: contactId },
+        data: { source: newList.name },
+      });
+    }
+
+    return { success: true };
+  });
+}
+
+export async function bulkMoveToDncInDb(
+  contactIds: string[],
+  userId: string,
+) {
+  return prisma.$transaction(async (tx) => {
+    const contacts = await tx.contact.findMany({
+      where: { id: { in: contactIds } },
+      include: { phones: true },
+    });
+
+    for (const contact of contacts) {
+      // 1. Mark contact as DO_NOT_CALL
+      await tx.contact.update({
+        where: { id: contact.id },
+        data: { status: "DO_NOT_CALL" },
+      });
+
+      // 3. Create Audit Log
+      const phoneNumbers = contact.phones.map((p) => p.number).join(", ");
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: `Contact marked as DNC (Bulk)`,
+          details: `Contact: ${contact.fullName} (${phoneNumbers})`,
+        },
+      });
+    }
+
+    // 4. Send Compliance Alert to Admin/Owner (just one alert for bulk action)
+    try {
+      const performer = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, createdById: true, fullName: true }
+      });
+
+      if (performer) {
+        const adminId = performer.role === 'AGENT' ? performer.createdById : performer.id;
+
+        if (adminId) {
+          const adminSettings = await tx.system_Setting.findFirst({
+            where: { userId: adminId },
+            include: { notificationSetting: true }
+          });
+
+          if (adminSettings?.notificationSetting?.complianceAlert) {
+            await createInternalNotification(
+              adminId,
+              `🚫 Compliance Alert: Bulk DNC Marked`,
+              `${performer.fullName || 'User'} marked ${contacts.length} contacts as Do Not Call.`,
+              'error'
+            );
+          }
+        }
+      }
+    } catch (notifErr) {
+      console.error("Failed to send DNC compliance alert:", notifErr);
+    }
+
+    return { success: true };
+  });
+}
+
+export async function removeFromDncInDb(contactId: string, userId: string) {
+  return prisma.$transaction(async (tx) => {
+    const contact = await tx.contact.findUnique({
+      where: { id: contactId },
+      select: { id: true, fullName: true },
+    });
+
+    if (!contact) throwHttp(404, "Contact not found");
+
+    // 1. Reset contact status (setting to PENDING allows it to be dialed again)
+    await tx.contact.update({
+      where: { id: contactId },
+      data: { status: "PENDING" },
+    });
+
+    // 2. Create Audit Log
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Contact removed from DNC`,
+        details: `Contact: ${contact.fullName}`,
+      },
+    });
+
+    return { success: true };
+  });
+}
+
 export async function getDncListFromDb() {
   return prisma.contact.findMany({
     where: { status: "DO_NOT_CALL" },

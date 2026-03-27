@@ -46,6 +46,8 @@ import {
   getHotlistFromDb,
   sendTemplateEmailInDb,
   scheduleTemplateEmailInDb,
+  bulkAssignContactsToListInDb,
+  bulkMoveToDncInDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -700,6 +702,48 @@ export const removeFromDnc = async (req: Request, res: Response): Promise<void> 
 
     const result = await removeFromDncInDb(id, userId);
     successResponse(res, 200, "Successfully removed from DNC", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const bulkAssignContactsToList = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { contactIds, listId } = req.body;
+    if (!contactIds || !Array.isArray(contactIds) || !listId) {
+      errorResponse(res, "Contact IDs (array) and List ID are required", 400);
+      return;
+    }
+    const result = await bulkAssignContactsToListInDb(contactIds, listId);
+    successResponse(res, 200, "Contacts assigned to list successfully", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const bulkMoveToDnc = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { contactIds } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!contactIds || !Array.isArray(contactIds)) {
+      errorResponse(res, "Contact ids (array) is required", 400);
+      return;
+    }
+
+    const result = await bulkMoveToDncInDb(contactIds, userId);
+    successResponse(res, 200, "Successfully moved to DNC", result);
   } catch (error: any) {
     errorResponse(
       res,
