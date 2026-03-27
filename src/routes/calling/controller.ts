@@ -377,6 +377,14 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
     if (isMachine && answeringMachineUrl) {
       console.log(`[AMD] Answering machine detected for ${CallSid}, dropping voicemail`);
 
+      // Mark as machine in DB immediately
+      try {
+        await (prisma.callRecord as any).update({
+          where: { callSid: CallSid },
+          data: { disposition: "MACHINE", status: "machine-detected" }
+        });
+      } catch (e) { }
+
       // Play the voicemail recording to the call
       await client.calls(CallSid).update({
         twiml: `<Response>
@@ -387,7 +395,15 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
       console.log(`[AMD] Voicemail dropped for ${CallSid}`);
     } else {
-      console.log(`[AMD] Human answered ${CallSid}, continuing normally`);
+      if (isMachine) {
+        try {
+          await (prisma.callRecord as any).update({
+            where: { callSid: CallSid },
+            data: { disposition: "MACHINE", status: "machine-detected" }
+          });
+        } catch (e) { }
+      }
+      console.log(`[AMD] ${isMachine ? 'Machine' : 'Human'} answered ${CallSid}`);
     }
 
     res.sendStatus(200);
@@ -782,7 +798,10 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
       return;
     }
 
-    successResponse(res, 200, "Call status fetched successfully", { status: callRecord.status });
+    successResponse(res, 200, "Call status fetched successfully", { 
+      status: callRecord.status,
+      disposition: callRecord.disposition
+    });
     return;
   } catch (error: any) {
     console.error("Get call status failed:", error);
