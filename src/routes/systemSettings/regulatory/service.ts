@@ -1,14 +1,22 @@
 import prisma from "../../../lib/prisma";
 
 export async function getRegulatorySettingFromDb(userId: string) {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true, createdById: true },
+    });
+
+    // If it's an AGENT, use their creator's (Admin/Owner) settings
+    const targetUserId = (user?.role === "AGENT" && user.createdById) ? user.createdById : userId;
+
     let systemSetting = await prisma.system_Setting.findFirst({
-        where: { userId },
+        where: { userId: targetUserId },
         include: { regulatorySetting: true },
     });
 
     if (!systemSetting) {
         systemSetting = await prisma.system_Setting.create({
-            data: { userId },
+            data: { userId: targetUserId },
             include: { regulatorySetting: true },
         });
     }
@@ -23,8 +31,16 @@ export async function getRegulatorySettingFromDb(userId: string) {
 }
 
 export async function updateRegulatorySettingInDb(userId: string, payload: any) {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true, createdById: true },
+    });
+
+    // Agents shouldn't really update settings, but if they do, it should target the correct one
+    const targetUserId = (user?.role === "AGENT" && user.createdById) ? user.createdById : userId;
+
     const systemSetting = await prisma.system_Setting.findFirst({
-        where: { userId },
+        where: { userId: targetUserId },
         include: { regulatorySetting: true },
     });
 
