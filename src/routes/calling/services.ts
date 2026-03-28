@@ -235,6 +235,8 @@ export class DialerService {
             leadId: lead.id,
             userId: lead.userId,
             sessionId: sessionId || null,
+            // @ts-ignore - Prisma client needs regeneration
+            callerIdId: user?.defaultCaller?.id || null,
             status: "queued",
             startTime: new Date(),
           }

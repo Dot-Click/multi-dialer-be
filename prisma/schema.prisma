@@ -887,10 +887,14 @@ model CallerId {
   aiPacing        Boolean?       @default(false)
   counter         Int            @default(0)
   defaultForUsers User[]         @relation("DefaultCaller")
+  callRecords     CallRecord[]
 
-  callCount  Int       @default(0)
-  frozenAt   DateTime?
-  unfreezeAt DateTime?
+  callCount           Int       @default(0)
+  frozenAt            DateTime?
+  unfreezeAt          DateTime?
+  reputationStatus    String?
+  reputationScore     Int?
+  lastReputationCheck DateTime?
 
   @@map("caller_id")
 }
@@ -1073,6 +1077,9 @@ model CallRecord {
 
   recordingUrl String?
   transcript   String? @db.Text
+
+  callerIdId String?
+  callerId   CallerId? @relation(fields: [callerIdId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
