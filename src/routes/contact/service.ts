@@ -1065,34 +1065,6 @@ export async function bulkMoveToDncInDb(
   });
 }
 
-export async function removeFromDncInDb(contactId: string, userId: string) {
-  return prisma.$transaction(async (tx) => {
-    const contact = await tx.contact.findUnique({
-      where: { id: contactId },
-      select: { id: true, fullName: true },
-    });
-
-    if (!contact) throwHttp(404, "Contact not found");
-
-    // 1. Reset contact status (setting to PENDING allows it to be dialed again)
-    await tx.contact.update({
-      where: { id: contactId },
-      data: { status: "PENDING" },
-    });
-
-    // 2. Create Audit Log
-    await tx.auditLog.create({
-      data: {
-        userId,
-        action: `Contact removed from DNC`,
-        details: `Contact: ${contact.fullName}`,
-      },
-    });
-
-    return { success: true };
-  });
-}
-
 export async function getDncListFromDb() {
   return prisma.contact.findMany({
     where: { status: "DO_NOT_CALL" },

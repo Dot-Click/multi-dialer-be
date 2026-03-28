@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/utils/handler";
 import { RequestHandler } from "express";
+import { getNumberReputation } from "@/services/twilio-lookup";
 
 /**
  * Get agent specific report
@@ -179,55 +180,32 @@ export const getDialerHealth: RequestHandler = async (req, res) => {
             targetUserIds = [userId, ...agents.map(a => a.id)];
         }
 
-        // Fetch recent analyses
-        const analyses = await prisma.callAnalysis.findMany({
-            where: {
-                createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+        // 1. Fetch Reputation-based health from Caller IDs
+        // We only show unique Twilio numbers that have a SID (official status)
+        const callerIds = await prisma.callerId.findMany({
+            where: { 
+                systemSetting: { userId: { in: targetUserIds } },
+                twillioSid: { not: null },
+                twillioNumber: { not: null }
             },
-            orderBy: { createdAt: 'desc' },
-            take: 10,
+            orderBy: { createdAt: 'desc' }
         });
 
-        const callSids = analyses.map(a => a.callSid);
-        const callRecords = await prisma.callRecord.findMany({
-            where: {
-                callSid: { in: callSids },
-                userId: { in: targetUserIds }
-            },
-            include: {
-                contact: {
-                    select: {
-                        fullName: true,
-                        phones: { select: { number: true }, take: 1 }
-                    }
-                },
-                lead: {
-                    select: {
-                        fullName: true,
-                        phone: true
-                    }
-                }
-            }
-        });
-
-        const recordMap = new Map(callRecords.map(r => [r.callSid, r]));
-
-        const healthData = analyses
-            .map(a => {
-                const record = recordMap.get(a.callSid);
-                if (!record) return null;
-
-                const name = record.contact?.fullName || record.lead?.fullName || "Unknown";
-                const contact = record.contact?.phones[0]?.number || record.lead?.phone || "N/A";
-
-                return {
-                    id: a.id,
-                    name,
-                    contact,
-                    health: a.confidence >= 0.7 ? "healthy" : "unhealthy"
-                };
-            })
-            .filter(Boolean);
+        // De-duplicate by twillioNumber to ensure each number only appears once
+        const seenNumbers = new Set();
+        const healthData = callerIds.filter(cid => {
+            if (seenNumbers.has(cid.twillioNumber)) return false;
+            seenNumbers.add(cid.twillioNumber);
+            return true;
+        }).map(cid => ({
+            id: cid.id,
+            name: cid.label,
+            contact: cid.twillioNumber || "No Number",
+            health: cid.reputationStatus === "flagged" ? "unhealthy" : "healthy",
+            reputation: cid.reputationStatus,
+            score: cid.reputationScore,
+            type: "reputation"
+        }));
 
         successResponse(res, 200, "Dialer health fetched successfully", healthData);
     } catch (error: any) {
@@ -568,4 +546,49 @@ function formatDuration(seconds: number): string {
     if (h > 0) return `${h}h ${m}m ${s}s`;
     if (m > 0) return `${m}m ${s}s`;
     return `${s}s`;
+}
+
+/**
+ * Manually refresh Caller ID reputation status using Twilio Lookup
+ */
+export const refreshDialerHealth: RequestHandler = async (req, res) => {
+    try {
+        const { id: userId, role } = req.user!;
+        let targetUserIds = [userId];
+
+        if (role === 'ADMIN' || role === 'OWNER') {
+            const agents = await prisma.user.findMany({
+                where: { createdById: userId },
+                select: { id: true }
+            });
+            targetUserIds = [userId, ...agents.map(a => a.id)];
+        }
+
+        const callerIds = await prisma.callerId.findMany({
+            where: { systemSetting: { userId: { in: targetUserIds } } }
+        });
+
+        let updatedCount = 0;
+        for (const cid of callerIds) {
+            if (cid.twillioNumber) {
+                const result = await getNumberReputation(cid.twillioNumber);
+                if (result) {
+                    await prisma.callerId.update({
+                        where: { id: cid.id },
+                        data: {
+                            reputationStatus: result.status,
+                            reputationScore: result.score,
+                            lastReputationCheck: new Date()
+                        }
+                    });
+                    updatedCount++;
+                }
+            }
+        }
+
+        successResponse(res, 200, `Refreshed reputation for ${updatedCount} numbers`);
+    } catch (error: any) {
+        console.error("Error refreshing dialer health:", error);
+        errorResponse(res, { message: error.message });
+    }
 }
