@@ -22,29 +22,29 @@ export class DispositionService {
             });
         }
 
-        if (systemSetting.dispositions.length === 0) {
-            const defaults = [
-                { label: "Pending", value: "PENDING", color: "gray", icon: "Clock", isSystem: true, isActive: true, order: 1 },
-                { label: "Called", value: "CALLED", color: "green", icon: "CheckCircle2", isSystem: true, isActive: true, order: 2 },
-                { label: "Failed", value: "FAILED", color: "red", icon: "XCircle", isSystem: true, isActive: true, order: 3 },
-                { label: "Busy", value: "BUSY", color: "orange", icon: "PhoneOff", isSystem: true, isActive: true, order: 4 },
-                { label: "No Answer", value: "NO_ANSWER", color: "purple", icon: "PhoneMissed", isSystem: true, isActive: true, order: 5 },
-                { label: "Hot", value: "HOT", color: "red", icon: "Flame", isSystem: true, isActive: true, order: 6 },
-                { label: "Warm", value: "WARM", color: "orange", icon: "Thermometer", isSystem: true, isActive: true, order: 7 },
-                { label: "Cold", value: "COLD", color: "blue", icon: "Snowflake", isSystem: true, isActive: true, order: 8 },
-                { label: "Call Back", value: "CALL_BACK", color: "yellow", icon: "PhoneIncoming", isSystem: true, isActive: true, order: 9 },
-                { label: "Do Not Call", value: "DO_NOT_CALL", color: "red", icon: "Ban", isSystem: true, isActive: true, order: 10 },
-                { label: "Not Interested", value: "NOT_INTERESTED", color: "gray", icon: "ThumbsDown", isSystem: true, isActive: true, order: 11 },
-            ];
+        const mojoDefaults = [
+            { label: "contact", value: "CONTACT", color: "red", icon: "Users", isSystem: true, isActive: true, order: 1 },
+            { label: "no contact", value: "NO_ANSWER", color: "red", icon: "PhoneOff", isSystem: true, isActive: true, order: 2 },
+            { label: "bad number", value: "BAD_NUMBER", color: "red", icon: "XCircle", isSystem: true, isActive: true, order: 3 },
+            { label: "voice mail", value: "VOICEMAIL", color: "red", icon: "Mail", isSystem: true, isActive: true, order: 4 },
+            { label: "DNC contact", value: "DNC_CONTACT", color: "red", icon: "Ban", isSystem: true, isActive: true, order: 5 },
+            { label: "DNC number", value: "DNC_NUMBER", color: "red", icon: "Ban", isSystem: true, isActive: true, order: 6 },
+        ];
 
+        // Ensure these Mojo-standard defaults exist in DB
+        const currentValues = systemSetting.dispositions.map(d => d.value);
+        const missingDefaults = mojoDefaults.filter(d => !currentValues.includes(d.value));
+
+        if (missingDefaults.length > 0) {
             await prisma.disposition.createMany({
-                data: defaults.map(d => ({ ...d, systemSettingId: systemSetting!.id }))
+                data: missingDefaults.map(d => ({ ...d, systemSettingId: systemSetting!.id }))
             });
 
-            return await prisma.disposition.findMany({
-                where: { systemSettingId: systemSetting.id },
-                orderBy: { order: 'asc' }
-            });
+            // Re-fetch to return complete synced list
+            systemSetting = await prisma.system_Setting.findFirst({
+                where: { userId: targetUserId },
+                include: { dispositions: { orderBy: { order: 'asc' } } }
+            }) ?? systemSetting;
         }
 
         return systemSetting.dispositions;
