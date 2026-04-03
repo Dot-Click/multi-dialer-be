@@ -141,6 +141,23 @@ export const resumeCall: RequestHandler = async (req, res) => {
   res.send(twiml.toString());
 };
 
+export const stopDialing: RequestHandler = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
+      return;
+    }
+    dialerService.clearQueue(userId);
+    console.log(`[stopDialing] Queue cleared for user ${userId}`);
+    successResponse(res, 200, "Simultaneous dialing queue stopped", null);
+    return;
+  } catch (error: any) {
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
 /**
  * Bulk add leads to the database and priority queue
  */
@@ -209,7 +226,18 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
       })
     );
 
-    // 2. Add to Dialer Queue
+    // 2. Pre-check compliance
+    const compliance = await dialerService.checkCompliance(userId);
+    if (!compliance.autodialingEnabled) {
+      errorResponse(res, { message: "Autodialing is disabled in your Compliance settings." }, 403);
+      return;
+    }
+    if (!compliance.isAllowed) {
+      errorResponse(res, { message: "Cannot dial: Outside permitted calling hours (TCPA)." }, 403);
+      return;
+    }
+
+    // 3. Add to Dialer Queue
     await dialerService.addLeadsToQueue(
       userId,
       savedLeads.map((l) => ({
@@ -263,8 +291,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const from = body.From || req.query.From;
   const caller = body.Caller || req.query.Caller || "";
   const agentId = body.agentId || req.query.agentId || req.params.agentId;
-  const contactId = body.contactId || req.query.contactId || req.params.contactId;
+  const contactId = body.contactId || req.query.contactId || req.params.contactId || "";
   const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
+  const busyRecordingUrl = body.busyRecordingUrl || req.query.busyRecordingUrl || "";
 
 
   console.log("================= Voice Webhook Dispatcher ================");
@@ -344,6 +373,29 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   // We want to dial the Agent in the browser.
   else {
     console.log("[VoiceWebhook] PSTN-to-Browser (Bridge) Call detected");
+    
+    // Power Dialer Logic: Check if Agent is Busy
+    if (dialerService.isAgentBusy(agentId)) {
+      console.log(`[VoiceWebhook] Agent ${agentId} is currently busy. Routing to busy message and rescheduling.`);
+      if (busyRecordingUrl) {
+        twiml.play(busyRecordingUrl);
+      } else {
+        twiml.say("Please hold on, our agent is currently busy with another customer. We will contact you soon.");
+      }
+      twiml.hangup();
+      
+      if (contactId) {
+        dialerService.recycleLeadWithDelay(agentId, contactId);
+      }
+      
+      res.type("text/xml");
+      res.send(twiml.toString());
+      return;
+    }
+    
+    // Mark agent as busy now that we're routing a live person to them
+    dialerService.setAgentBusy(agentId, true);
+
     twiml.say("Please wait while we connect you to an agent.");
     const dial = twiml.dial({
       callerId: from, // Keep the original caller ID
@@ -352,7 +404,10 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     });
 
     // Bridge to the specific agent identity
-    dial.client(agentId);
+    const clientNode = dial.client(agentId);
+    if (contactId) {
+      clientNode.parameter({ name: 'contactId', value: contactId });
+    }
   }
 
   res.type("text/xml");
@@ -374,10 +429,9 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
     //                    'machine_end_silence', 'machine_end_other', 'fax', 'unknown'
     const isMachine = AnsweredBy?.startsWith('machine') || AnsweredBy === 'fax';
 
-    if (isMachine && answeringMachineUrl) {
-      console.log(`[AMD] Answering machine detected for ${CallSid}, dropping voicemail`);
-
-      // Mark as machine in DB immediately
+    if (isMachine) {
+      console.log(`[AMD] Machine detected for ${CallSid}.`);
+      
       try {
         await (prisma.callRecord as any).update({
           where: { callSid: CallSid },
@@ -385,24 +439,19 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
         });
       } catch (e) { }
 
-      // Play the voicemail recording to the call
-      await client.calls(CallSid).update({
-        twiml: `<Response>
-                    <Play>${answeringMachineUrl}</Play>
-                    <Hangup/>
-                </Response>`
-      });
-
-      console.log(`[AMD] Voicemail dropped for ${CallSid}`);
-    } else {
-      if (isMachine) {
-        try {
-          await (prisma.callRecord as any).update({
-            where: { callSid: CallSid },
-            data: { disposition: "MACHINE", status: "machine-detected" }
-          });
-        } catch (e) { }
+      if (answeringMachineUrl) {
+        console.log(`[AMD] Dropping out-of-band voicemail for ${CallSid}`);
+        await client.calls(CallSid).update({
+          twiml: `<Response>
+                      <Play>${answeringMachineUrl}</Play>
+                      <Hangup/>
+                  </Response>`
+        });
+      } else {
+        console.log(`[AMD] No voicemail configured. Hanging up ${CallSid}`);
+        await client.calls(CallSid).update({ status: 'completed' });
       }
+    } else {
       console.log(`[AMD] ${isMachine ? 'Machine' : 'Human'} answered ${CallSid}`);
     }
 

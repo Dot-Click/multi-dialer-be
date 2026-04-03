@@ -73,6 +73,7 @@ export class DialerService {
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
   private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
+  private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
 
   private constructor() { }
 
@@ -99,6 +100,23 @@ export class DialerService {
 
     // Process queue immediately
     this.processQueue(userId);
+  }
+
+  clearQueue(userId: string) {
+    const queue = this.userQueues.get(userId);
+    if (queue) {
+      queue.clear();
+      console.log(`[DialerService] Cleared queue for user ${userId}`);
+    }
+    
+    // HARD RESET states to unblock stuck sessions
+    this.agentBusyState.delete(userId);
+    for (const [sid, metadata] of this.activeCalls.entries()) {
+      if (metadata.userId === userId) {
+        this.activeCalls.delete(sid);
+      }
+    }
+    console.log(`[DialerService] Hardware reset of stuck states for user ${userId} complete.`);
   }
 
   /**
@@ -130,6 +148,13 @@ export class DialerService {
     console.log(`User ${userId} capacity: ${capacity}, active: ${currentActiveCount}`);
 
     // 3. While we have capacity and leads in queue, make calls
+    // But if agent is currently busy, do not originate NEW calls,
+    // to minimize the number of calls that connect while agent is occupied.
+    if (this.isAgentBusy(userId)) {
+      console.log(`[processQueue] Skipped dialing for user ${userId} because agent is currently busy.`);
+      return;
+    }
+
     let inFlight = currentActiveCount;
     while (inFlight < capacity && !queue.isEmpty()) {
       const lead = queue.dequeue();
@@ -174,7 +199,7 @@ export class DialerService {
     }
   }
 
-  private async checkCompliance(userId: string): Promise<{ isAllowed: boolean; autodialingEnabled: boolean }> {
+  public async checkCompliance(userId: string): Promise<{ isAllowed: boolean; autodialingEnabled: boolean }> {
     try {
       const settings = await prisma.system_Setting.findFirst({
         where: { userId },
@@ -211,21 +236,33 @@ export class DialerService {
         include: { defaultCaller: true }
       });
 
+      // Also fetch system settings to get answeringMachineRecordingUrl
+      const settings = await prisma.system_Setting.findFirst({
+        where: { userId: lead.userId },
+        include: { callSettings: { include: { answeringMachineRecording: true, busyRecording: true } } }
+      });
+      const amRecordingUrl = settings?.callSettings[0]?.answeringMachineRecording?.url || "";
+      const busyRecordingUrl = settings?.callSettings[0]?.busyRecording?.url || "";
+
       const fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
 
       // 3. Initiate Twilio Call
       const call = await client.calls.create({
         to: lead.phone,
         from: fromNumber as string,
-        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${lead.userId}`,
-        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${lead.userId}`,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&contactId=${lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
+        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
+        machineDetection: "DetectMessageEnd",
+        asyncAmd: "true",
+        asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}`,
+        asyncAmdStatusCallbackMethod: "POST",
       });
 
       console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
-      this.activeCalls.set(call.sid, { leadId: lead.id, userId: lead.userId, sessionId });
+      this.activeCalls.set(call.sid, { leadId: lead.id, contactId: lead.id, userId: lead.userId, sessionId });
 
       // 3. Create CallRecord in DB immediately
       try {
@@ -371,6 +408,7 @@ export class DialerService {
 
     if (isTerminal) {
       console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}`);
+      this.setAgentBusy(userId, false);
       this.activeCalls.delete(sid);
       console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
       this.processQueue(userId);
@@ -481,6 +519,43 @@ export class DialerService {
 
   clearTranscriptionLogs(callSid: string) {
     this.transcriptionLogs.delete(callSid);
+  }
+
+  // Agent State Management
+  setAgentBusy(userId: string, busy: boolean) {
+    this.agentBusyState.set(userId, busy);
+    console.log(`[AgentState] User ${userId} busy state set to: ${busy}`);
+    if (!busy) {
+      // Agent is free, process queue again
+      this.processQueue(userId);
+    }
+  }
+
+  isAgentBusy(userId: string): boolean {
+    return this.agentBusyState.get(userId) || false;
+  }
+
+  recycleLeadWithDelay(userId: string, leadId: string) {
+    // Schedule lead to be requeued later or at lower priority
+    setTimeout(async () => {
+      try {
+        const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+        if (lead) {
+          const queue = this.getOrCreateQueue(userId);
+          queue.enqueue({
+            id: lead.id,
+            fullName: lead.fullName,
+            phone: lead.phone,
+            priority: 0, // Lower priority or just push to queue
+            userId: lead.userId
+          });
+          console.log(`[DialerService] Recycled lead ${leadId} after breather.`);
+          this.processQueue(userId);
+        }
+      } catch (e) {
+        console.error("Failed to recycle lead", e);
+      }
+    }, 15000); // 15 second breather
   }
 
   // Session Management

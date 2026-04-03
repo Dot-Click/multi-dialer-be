@@ -246,6 +246,7 @@ model Recording {
   usedAsOnHold2          CallSettings[] @relation("OnHoldRecording2")
   usedAsIvr              CallSettings[] @relation("IvrRecording")
   usedAsAnsweringMachine CallSettings[] @relation("AnsweringMachineRecording")
+  usedAsBusy             CallSettings[] @relation("BusyRecording")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -928,6 +929,10 @@ model CallSettings {
 
   answeringMachineRecordingId String?
   answeringMachineRecording   Recording? @relation("AnsweringMachineRecording", fields: [answeringMachineRecordingId], references: [id], onDelete: SetNull)
+  
+  busyRecordingId String?
+  busyRecording   Recording? @relation("BusyRecording", fields: [busyRecordingId], references: [id], onDelete: SetNull)
+
   enableAutoPause             Boolean    @default(false)
   enableRecording             Boolean    @default(false)
   sendOutlookAppointment      Boolean    @default(false)
