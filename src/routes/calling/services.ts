@@ -215,8 +215,12 @@ export class DialerService {
       // Convert current time to string "HH:mm"
       const now = new Date();
       const currentStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-
-      const isAllowed = currentStr >= tcpaFrom && currentStr <= tcpaTo;
+      let isAllowed = true;
+      if (tcpaFrom && tcpaTo) {
+        isAllowed = tcpaFrom <= tcpaTo
+          ? (currentStr >= tcpaFrom && currentStr <= tcpaTo)
+          : (currentStr >= tcpaFrom || currentStr <= tcpaTo);
+      }
 
       return { isAllowed, autodialingEnabled: tcpaAutodialing };
     } catch (error) {
