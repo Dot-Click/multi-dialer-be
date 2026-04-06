@@ -440,7 +440,29 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
 
     // Mark agent as busy now that we're routing a live person to them
-    // Associate the lock with THIS specific call SID.
+    // Only acquire lock if not already held by another call
+    const existingLock = (dialerService as any).agentBridgedCallId.get(agentId);
+
+    if (existingLock && existingLock !== currentCallSid) {
+      // Lock already held — treat this call as busy
+      console.log(`[VoiceWebhook] Lock already held by ${existingLock}, rejecting ${currentCallSid}`);
+
+      if (busyRecordingUrl) {
+        twiml.play(busyRecordingUrl);
+      } else {
+        twiml.say("Please hold on, our agent is currently busy. We will contact you soon.");
+      }
+      twiml.hangup();
+
+      if (contactId) {
+        dialerService.recycleLeadWithDelay(agentId, contactId);
+      }
+
+      res.type("text/xml");
+      res.send(twiml.toString());
+      return;
+    }
+
     dialerService.setAgentBusy(agentId, true, currentCallSid);
     console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
 
@@ -464,8 +486,6 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
 
-    // Fallback if the agent's browser is offline or explicitly ignores the bridged call
-    // twiml.say("We're sorry, our agent was unable to connect. They will return your call shortly.");
   }
 
   res.type("text/xml");
