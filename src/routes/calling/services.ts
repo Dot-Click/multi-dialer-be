@@ -551,15 +551,20 @@ export class DialerService {
 
   // Agent State Management
   setAgentBusy(userId: string, busy: boolean, callSid?: string) {
-    this.agentBusyState.set(userId, busy);
     if (busy && callSid) {
+      const existingLock = this.agentBridgedCallId.get(userId);
+      if (existingLock && existingLock !== callSid) {
+        console.log(`[AgentState] Lock already held by ${existingLock}, ignoring request from ${callSid}`);
+        return;
+      }
       this.agentBridgedCallId.set(userId, callSid);
     } else if (!busy) {
       this.agentBridgedCallId.delete(userId);
     }
+
+    this.agentBusyState.set(userId, busy);
     console.log(`[AgentState] User ${userId} busy state set to: ${busy}`);
     if (!busy) {
-      // Agent is free, process queue again
       this.processQueue(userId);
     }
   }
