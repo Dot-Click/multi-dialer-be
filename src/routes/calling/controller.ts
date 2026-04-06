@@ -175,7 +175,7 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
 
     // Explicitly reset the agent block state so they aren't phantom-locked from a previous dropped run!
     (dialerService as any).setAgentBusy(userId, false);
-    
+
     // ADD THIS: Purge stale activeCalls from previous sessions
     for (const [sid, metadata] of (dialerService as any).activeCalls.entries()) {
       if (metadata.userId === userId) {
@@ -465,7 +465,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
 
     // Fallback if the agent's browser is offline or explicitly ignores the bridged call
-    twiml.say("We're sorry, our agent was unable to connect. They will return your call shortly.");
+    // twiml.say("We're sorry, our agent was unable to connect. They will return your call shortly.");
   }
 
   res.type("text/xml");
