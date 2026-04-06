@@ -74,6 +74,8 @@ export class DialerService {
   private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
+  private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
+  private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
 
   private constructor() { }
 
@@ -94,7 +96,11 @@ export class DialerService {
   /**
    * Add leads to queue and trigger processing for that user.
    */
-  async addLeadsToQueue(userId: string, leads: Lead[]) {
+  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string) {
+    if (callerId) {
+      this.userCallerIdPrefs.set(userId, callerId);
+    }
+
     const queue = this.getOrCreateQueue(userId);
     leads.forEach((lead) => queue.enqueue(lead));
 
@@ -108,9 +114,11 @@ export class DialerService {
       queue.clear();
       console.log(`[DialerService] Cleared queue for user ${userId}`);
     }
-    
+
     // HARD RESET states to unblock stuck sessions
     this.agentBusyState.delete(userId);
+    this.agentBridgedCallId.delete(userId);
+    this.userActiveSessions.delete(userId);
     for (const [sid, metadata] of this.activeCalls.entries()) {
       if (metadata.userId === userId) {
         this.activeCalls.delete(sid);
@@ -160,8 +168,9 @@ export class DialerService {
       const lead = queue.dequeue();
       if (lead) {
         inFlight++;
-        // Trigger call initiation (non-blocking here to allow simultaneous calls)
+        // Trigger call initiation with a slight stagger to prevent Twilio API Rate limit drops
         this.makeCall(lead);
+        await new Promise(r => setTimeout(r, 250));
       } else {
         break;
       }
@@ -240,6 +249,9 @@ export class DialerService {
         include: { defaultCaller: true }
       });
 
+      const preferredCallerId = this.userCallerIdPrefs.get(lead.userId);
+      const fromNumber = preferredCallerId || user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+
       // Also fetch system settings to get answeringMachineRecordingUrl
       const settings = await prisma.system_Setting.findFirst({
         where: { userId: lead.userId },
@@ -248,14 +260,12 @@ export class DialerService {
       const amRecordingUrl = settings?.callSettings[0]?.answeringMachineRecording?.url || "";
       const busyRecordingUrl = settings?.callSettings[0]?.busyRecording?.url || "";
 
-      const fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
-
       // 3. Initiate Twilio Call
       const call = await client.calls.create({
         to: lead.phone,
         from: fromNumber as string,
         url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&contactId=${lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
-        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
+        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
         machineDetection: "DetectMessageEnd",
@@ -356,18 +366,23 @@ export class DialerService {
     return JSON.parse(completion.choices[0].message.content!);
   }
 
-  async handleCallStatusUpdate(sid: string, twilioStatus: string, isChildLeg: boolean = false) {
+  async handleCallStatusUpdate(sid: string, twilioStatus: string, isChildLeg: boolean = false, providedAgentId?: string) {
     const metadata = this.activeCalls.get(sid);
-    if (!metadata) return;
 
-    // PROTECTION: For browser calls, ignore 'in-progress' from the parent leg (agent picking up)
-    // We only want 'in-progress' when the child leg (customer) picking up (isChildLeg = true)
-    if (metadata.isBrowserCall && !isChildLeg && (twilioStatus === "in-progress" || twilioStatus === "answered")) {
+    // PROTECTION: For browser calls... (keep this or move below userId check?)
+    // Actually, if metadata is missing we can't tell if it's a browser call.
+    if (metadata?.isBrowserCall && !isChildLeg && (twilioStatus === "in-progress" || twilioStatus === "answered")) {
       console.log(`[handleCallStatusUpdate] Ignoring premature ${twilioStatus} from parent leg of browser call: ${sid}`);
       return;
     }
 
-    const { leadId, contactId, userId } = metadata;
+    let { leadId, contactId, userId } = metadata || ({} as any);
+    if (!userId) userId = providedAgentId;
+
+    if (!userId) {
+      console.warn(`[handleCallStatusUpdate] No metadata and no providedAgentId for SID ${sid}. Cannot track status.`);
+      return;
+    }
     let dbStatus: LeadCallStatus = LeadCallStatus.CALLED;
     const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
@@ -395,7 +410,7 @@ export class DialerService {
           const endTime = new Date();
           const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000); // in seconds
           updateData.endTime = endTime;
-          updateData.sessionId = metadata.sessionId;
+          updateData.sessionId = metadata?.sessionId;
           updateData.duration = duration;
           updateData.disposition = dbStatus;
         }
@@ -412,7 +427,16 @@ export class DialerService {
 
     if (isTerminal) {
       console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}`);
-      this.setAgentBusy(userId, false);
+
+      // Only release the agent busy lock if THIS call is the one that was holding it!
+      if (this.agentBridgedCallId.get(userId!) === sid) {
+        console.log(`[handleCallStatusUpdate] Call ${sid} was the active bridge. Releasing agent ${userId}.`);
+        this.setAgentBusy(userId!, false);
+        this.agentBridgedCallId.delete(userId!);
+      } else {
+        console.log(`[handleCallStatusUpdate] Call ${sid} was not the active bridge. Skipping busy reset (Current lock: ${this.agentBridgedCallId.get(userId!)}).`);
+      }
+
       this.activeCalls.delete(sid);
       console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
       this.processQueue(userId);
@@ -526,8 +550,13 @@ export class DialerService {
   }
 
   // Agent State Management
-  setAgentBusy(userId: string, busy: boolean) {
+  setAgentBusy(userId: string, busy: boolean, callSid?: string) {
     this.agentBusyState.set(userId, busy);
+    if (busy && callSid) {
+      this.agentBridgedCallId.set(userId, callSid);
+    } else if (!busy) {
+      this.agentBridgedCallId.delete(userId);
+    }
     console.log(`[AgentState] User ${userId} busy state set to: ${busy}`);
     if (!busy) {
       // Agent is free, process queue again

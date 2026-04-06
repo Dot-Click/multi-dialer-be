@@ -148,8 +148,10 @@ export const stopDialing: RequestHandler = async (req, res) => {
       errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
       return;
     }
+    // Explicitly reset the agent block state so they aren't phantom-locked!
+    (dialerService as any).setAgentBusy(userId, false);
     dialerService.clearQueue(userId);
-    console.log(`[stopDialing] Queue cleared for user ${userId}`);
+    console.log(`[stopDialing] Queue cleared and lock released for user ${userId}`);
     successResponse(res, 200, "Simultaneous dialing queue stopped", null);
     return;
   } catch (error: any) {
@@ -163,12 +165,22 @@ export const stopDialing: RequestHandler = async (req, res) => {
  */
 export const addLeadsToDialer: RequestHandler = async (req, res) => {
   try {
-    const { leads }: { leads: any[] } = req.body;
+    const { leads, callerId }: { leads: any[], callerId?: string } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
       errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
       return;
+    }
+
+    // Explicitly reset the agent block state so they aren't phantom-locked from a previous dropped run!
+    (dialerService as any).setAgentBusy(userId, false);
+    
+    // ADD THIS: Purge stale activeCalls from previous sessions
+    for (const [sid, metadata] of (dialerService as any).activeCalls.entries()) {
+      if (metadata.userId === userId) {
+        (dialerService as any).activeCalls.delete(sid);
+      }
     }
 
     if (!leads || !Array.isArray(leads)) {
@@ -246,7 +258,8 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         phone: l.phone,
         priority: l.priority,
         userId: userId,
-      }))
+      })),
+      callerId // Pass selected caller ID to service
     );
 
     successResponse(res, 200, "Leads saved to DB and added to queue!", {
@@ -290,10 +303,15 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const to = body.To || req.query.To;
   const from = body.From || req.query.From;
   const caller = body.Caller || req.query.Caller || "";
-  const agentId = body.agentId || req.query.agentId || req.params.agentId;
+  let agentId = body.agentId || req.query.agentId || req.params.agentId;
   const contactId = body.contactId || req.query.contactId || req.params.contactId || "";
   const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
   const busyRecordingUrl = body.busyRecordingUrl || req.query.busyRecordingUrl || "";
+
+  if (!agentId && caller?.startsWith('client:')) {
+    agentId = caller.split(':')[1];
+    console.log(`[VoiceWebhook] Extracted agentId ${agentId} from caller identity.`);
+  }
 
 
   console.log("================= Voice Webhook Dispatcher ================");
@@ -330,84 +348,124 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
   }
 
-  // Start Real-time Transcription
   const start = twiml.start();
   start.transcription({
     track: "both_tracks",
     statusCallbackUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/transcription`,
   });
 
-  // CASE A: Call initiated FROM the Browser SDK (TwiML App flow)
-  // In this case, 'Caller' starts with 'client:'
-  if (caller.startsWith("client:")) {
+  const amRecordingUrl = req.query.amRecordingUrl as string;
+  const AnsweredBy = body.AnsweredBy || body.answered_by;
+  const currentCallSid = body.CallSid || body.call_sid || req.query.CallSid;
+
+  // 0. Handle Synchronous AMD if active
+  if (AnsweredBy) {
+    const isMachine = AnsweredBy.startsWith('machine') || AnsweredBy === 'fax';
+    if (isMachine) {
+      console.log(`[VoiceWebhook] Machine detected for ${currentCallSid}. Playing voicemail.`);
+      try {
+        await prisma.callRecord.update({
+          where: { callSid: currentCallSid },
+          data: { disposition: "MACHINE", status: "machine-detected" }
+        });
+      } catch (e) { }
+
+      if (amRecordingUrl) {
+        twiml.play(amRecordingUrl);
+      }
+      twiml.hangup();
+      res.type("text/xml");
+      res.send(twiml.toString());
+      return;
+    }
+  }
+
+  // CASE A: Standard Outbound (Client-to-PSTN)
+  if (caller?.startsWith("client:")) {
     console.log("[VoiceWebhook] Browser-to-PSTN Call detected");
-    twiml.say("Please wait while we are connecting your call.");
 
-    const dialOptions: any = {
-      callerId: from,
-      record: "record-from-answer-dual",
-      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
-    };
-
-    if (answeringMachineUrl) {
-      dialOptions.machineDetection = "DetectMessageEnd";
-      dialOptions.asyncAmdStatusCallback =
-        `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(answeringMachineUrl)}&agentId=${agentId}`;
-      dialOptions.asyncAmdStatusCallbackMethod = "POST";
+    // Mark agent as busy for manual calls too, so the power dialer knows they are occupied!
+    if (agentId) {
+      dialerService.setAgentBusy(agentId, true, body.CallSid);
     }
 
-
     const dial = twiml.dial({
-      callerId: from, // This is the Twilio number assigned to the app/device
+      callerId: envConfig.TWILIO_PHONE_NUMBER,
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
     dial.number({
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
-      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
+      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${agentId}`,
       statusCallbackMethod: "POST",
-    }, to); // Dial the actual phone number
+    }, to);
   }
-
   // CASE B: Bridged Call or Inbound (Server-side startCalling or Direct Inbound)
   // We want to dial the Agent in the browser.
   else {
     console.log("[VoiceWebhook] PSTN-to-Browser (Bridge) Call detected");
-    
+
     // Power Dialer Logic: Check if Agent is Busy
-    if (dialerService.isAgentBusy(agentId)) {
-      console.log(`[VoiceWebhook] Agent ${agentId} is currently busy. Routing to busy message and rescheduling.`);
+    const isBusyBoolean = dialerService.isAgentBusy(agentId);
+    const activeLockOwner = (dialerService as any).agentBridgedCallId.get(agentId);
+
+    // STALE LOCK PROTECTION: If the lock owner SID is NOT in our activeCalls Map, 
+    // it probably finished without clearing. We should ignore the busy state.
+    const isLockOwnerStale = activeLockOwner && !(dialerService as any).activeCalls.has(activeLockOwner);
+
+    const isActuallyBusy = isBusyBoolean && activeLockOwner && activeLockOwner !== currentCallSid && !isLockOwnerStale;
+
+    console.log("isActuallyBusy", isActuallyBusy);
+    console.log("isBusyBoolean", isBusyBoolean);
+    console.log("activeLockOwner", activeLockOwner);
+    console.log("currentCallSid", currentCallSid);
+    console.log("isLockOwnerStale", isLockOwnerStale);
+
+    if (isActuallyBusy) {
+      console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Rescheduling ${currentCallSid}.`);
       if (busyRecordingUrl) {
         twiml.play(busyRecordingUrl);
       } else {
         twiml.say("Please hold on, our agent is currently busy with another customer. We will contact you soon.");
       }
       twiml.hangup();
-      
+
       if (contactId) {
         dialerService.recycleLeadWithDelay(agentId, contactId);
       }
-      
+
       res.type("text/xml");
       res.send(twiml.toString());
       return;
     }
-    
+
     // Mark agent as busy now that we're routing a live person to them
-    dialerService.setAgentBusy(agentId, true);
+    // Associate the lock with THIS specific call SID.
+    dialerService.setAgentBusy(agentId, true, currentCallSid);
+    console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
+
+    (dialerService as any).activeCalls.set(currentCallSid, {
+      userId: agentId,
+      sessionId: null,
+      isBrowserCall: false
+    });
 
     twiml.say("Please wait while we connect you to an agent.");
     const dial = twiml.dial({
-      callerId: from, // Keep the original caller ID
+      callerId: caller, // Keep the original caller ID
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
 
-    // Bridge to the specific agent identity
-    const clientNode = dial.client(agentId);
+    // Bridge to the specific agent identity safely via TwiML nested tags
+    const clientNode = dial.client();
+    clientNode.identity(agentId);
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
+
+    // Fallback if the agent's browser is offline or explicitly ignores the bridged call
+    twiml.say("We're sorry, our agent was unable to connect. They will return your call shortly.");
   }
 
   res.type("text/xml");
@@ -431,7 +489,7 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
     if (isMachine) {
       console.log(`[AMD] Machine detected for ${CallSid}.`);
-      
+
       try {
         await (prisma.callRecord as any).update({
           where: { callSid: CallSid },
@@ -466,38 +524,38 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
 
 export const dropVoicemail: RequestHandler = async (req, res) => {
-    try {
-        const { callSid, voicemailUrl } = req.body;
+  try {
+    const { callSid, voicemailUrl } = req.body;
 
-        if (!callSid || !voicemailUrl) {
-            errorResponse(res, { message: "callSid and voicemailUrl are required" }, 400);
-            return;
-        }
+    if (!callSid || !voicemailUrl) {
+      errorResponse(res, { message: "callSid and voicemailUrl are required" }, 400);
+      return;
+    }
 
-        console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
+    console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
 
-        // Find the customer leg
-        const currentCall = await client.calls(callSid).fetch();
-        const childCalls = await client.calls.list({ parentCallSid: callSid });
-        const customerLeg = childCalls.find(c => 
-            ['in-progress', 'ringing', 'answered'].includes(c.status)
-        ) || currentCall;
+    // Find the customer leg
+    const currentCall = await client.calls(callSid).fetch();
+    const childCalls = await client.calls.list({ parentCallSid: callSid });
+    const customerLeg = childCalls.find(c =>
+      ['in-progress', 'ringing', 'answered'].includes(c.status)
+    ) || currentCall;
 
-        // Play voicemail to customer and hang up
-        await client.calls(customerLeg.sid).update({
-            twiml: `<Response>
+    // Play voicemail to customer and hang up
+    await client.calls(customerLeg.sid).update({
+      twiml: `<Response>
                 <Play>${voicemailUrl}</Play>
                 <Hangup/>
             </Response>`
-        });
+    });
 
-        successResponse(res, 200, "Voicemail dropped successfully", { callSid });
-        return;
-    } catch (error: any) {
-        console.error('[DropVoicemail] Failed:', error);
-        errorResponse(res, { message: error.message });
-        return;
-    }
+    successResponse(res, 200, "Voicemail dropped successfully", { callSid });
+    return;
+  } catch (error: any) {
+    console.error('[DropVoicemail] Failed:', error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
 };
 
 
@@ -570,6 +628,7 @@ export const getTranscriptionLogs: RequestHandler = async (req, res) => {
 export const handleCallStatus: RequestHandler = async (req, res) => {
   try {
     const { CallSid, CallStatus, ParentCallSid } = req.body;
+    const agentId = req.query.agentId as string;
 
     console.log(
       `Call ${CallSid} status update: ${CallStatus}` +
@@ -581,7 +640,8 @@ export const handleCallStatus: RequestHandler = async (req, res) => {
       await dialerService.handleCallStatusUpdate(
         ParentCallSid,
         CallStatus,
-        true
+        true,
+        agentId
       );
     }
 
@@ -590,7 +650,8 @@ export const handleCallStatus: RequestHandler = async (req, res) => {
       await dialerService.handleCallStatusUpdate(
         CallSid,
         CallStatus,
-        false
+        false,
+        agentId
       );
     }
 
@@ -847,7 +908,7 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
       return;
     }
 
-    successResponse(res, 200, "Call status fetched successfully", { 
+    successResponse(res, 200, "Call status fetched successfully", {
       status: callRecord.status,
       disposition: callRecord.disposition
     });
