@@ -175,6 +175,13 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
 
     // Explicitly reset the agent block state so they aren't phantom-locked from a previous dropped run!
     (dialerService as any).setAgentBusy(userId, false);
+    
+    // ADD THIS: Purge stale activeCalls from previous sessions
+    for (const [sid, metadata] of (dialerService as any).activeCalls.entries()) {
+      if (metadata.userId === userId) {
+        (dialerService as any).activeCalls.delete(sid);
+      }
+    }
 
     if (!leads || !Array.isArray(leads)) {
       errorResponse(res, { message: "Invalid leads format. Expected an array." }, 400);
@@ -361,7 +368,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
           where: { callSid: currentCallSid },
           data: { disposition: "MACHINE", status: "machine-detected" }
         });
-      } catch (e) {}
+      } catch (e) { }
 
       if (amRecordingUrl) {
         twiml.play(amRecordingUrl);
@@ -376,7 +383,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   // CASE A: Standard Outbound (Client-to-PSTN)
   if (caller?.startsWith("client:")) {
     console.log("[VoiceWebhook] Browser-to-PSTN Call detected");
-    
+
     // Mark agent as busy for manual calls too, so the power dialer knows they are occupied!
     if (agentId) {
       dialerService.setAgentBusy(agentId, true, body.CallSid);
@@ -401,12 +408,18 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     // Power Dialer Logic: Check if Agent is Busy
     const isBusyBoolean = dialerService.isAgentBusy(agentId);
     const activeLockOwner = (dialerService as any).agentBridgedCallId.get(agentId);
-    
+
     // STALE LOCK PROTECTION: If the lock owner SID is NOT in our activeCalls Map, 
     // it probably finished without clearing. We should ignore the busy state.
     const isLockOwnerStale = activeLockOwner && !(dialerService as any).activeCalls.has(activeLockOwner);
-    
+
     const isActuallyBusy = isBusyBoolean && activeLockOwner && activeLockOwner !== currentCallSid && !isLockOwnerStale;
+
+    console.log("isActuallyBusy", isActuallyBusy);
+    console.log("isBusyBoolean", isBusyBoolean);
+    console.log("activeLockOwner", activeLockOwner);
+    console.log("currentCallSid", currentCallSid);
+    console.log("isLockOwnerStale", isLockOwnerStale);
 
     if (isActuallyBusy) {
       console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Rescheduling ${currentCallSid}.`);
@@ -416,20 +429,26 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
         twiml.say("Please hold on, our agent is currently busy with another customer. We will contact you soon.");
       }
       twiml.hangup();
-      
+
       if (contactId) {
         dialerService.recycleLeadWithDelay(agentId, contactId);
       }
-      
+
       res.type("text/xml");
       res.send(twiml.toString());
       return;
     }
-    
+
     // Mark agent as busy now that we're routing a live person to them
     // Associate the lock with THIS specific call SID.
     dialerService.setAgentBusy(agentId, true, currentCallSid);
     console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
+
+    (dialerService as any).activeCalls.set(currentCallSid, {
+      userId: agentId,
+      sessionId: null,
+      isBrowserCall: false
+    });
 
     twiml.say("Please wait while we connect you to an agent.");
     const dial = twiml.dial({
@@ -444,7 +463,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
-    
+
     // Fallback if the agent's browser is offline or explicitly ignores the bridged call
     twiml.say("We're sorry, our agent was unable to connect. They will return your call shortly.");
   }
@@ -470,7 +489,7 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
     if (isMachine) {
       console.log(`[AMD] Machine detected for ${CallSid}.`);
-      
+
       try {
         await (prisma.callRecord as any).update({
           where: { callSid: CallSid },
@@ -505,38 +524,38 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
 
 export const dropVoicemail: RequestHandler = async (req, res) => {
-    try {
-        const { callSid, voicemailUrl } = req.body;
+  try {
+    const { callSid, voicemailUrl } = req.body;
 
-        if (!callSid || !voicemailUrl) {
-            errorResponse(res, { message: "callSid and voicemailUrl are required" }, 400);
-            return;
-        }
+    if (!callSid || !voicemailUrl) {
+      errorResponse(res, { message: "callSid and voicemailUrl are required" }, 400);
+      return;
+    }
 
-        console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
+    console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
 
-        // Find the customer leg
-        const currentCall = await client.calls(callSid).fetch();
-        const childCalls = await client.calls.list({ parentCallSid: callSid });
-        const customerLeg = childCalls.find(c => 
-            ['in-progress', 'ringing', 'answered'].includes(c.status)
-        ) || currentCall;
+    // Find the customer leg
+    const currentCall = await client.calls(callSid).fetch();
+    const childCalls = await client.calls.list({ parentCallSid: callSid });
+    const customerLeg = childCalls.find(c =>
+      ['in-progress', 'ringing', 'answered'].includes(c.status)
+    ) || currentCall;
 
-        // Play voicemail to customer and hang up
-        await client.calls(customerLeg.sid).update({
-            twiml: `<Response>
+    // Play voicemail to customer and hang up
+    await client.calls(customerLeg.sid).update({
+      twiml: `<Response>
                 <Play>${voicemailUrl}</Play>
                 <Hangup/>
             </Response>`
-        });
+    });
 
-        successResponse(res, 200, "Voicemail dropped successfully", { callSid });
-        return;
-    } catch (error: any) {
-        console.error('[DropVoicemail] Failed:', error);
-        errorResponse(res, { message: error.message });
-        return;
-    }
+    successResponse(res, 200, "Voicemail dropped successfully", { callSid });
+    return;
+  } catch (error: any) {
+    console.error('[DropVoicemail] Failed:', error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
 };
 
 
@@ -889,7 +908,7 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
       return;
     }
 
-    successResponse(res, 200, "Call status fetched successfully", { 
+    successResponse(res, 200, "Call status fetched successfully", {
       status: callRecord.status,
       disposition: callRecord.disposition
     });

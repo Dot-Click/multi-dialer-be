@@ -100,7 +100,7 @@ export class DialerService {
     if (callerId) {
       this.userCallerIdPrefs.set(userId, callerId);
     }
-    
+
     const queue = this.getOrCreateQueue(userId);
     leads.forEach((lead) => queue.enqueue(lead));
 
@@ -114,9 +114,11 @@ export class DialerService {
       queue.clear();
       console.log(`[DialerService] Cleared queue for user ${userId}`);
     }
-    
+
     // HARD RESET states to unblock stuck sessions
     this.agentBusyState.delete(userId);
+    this.agentBridgedCallId.delete(userId);
+    this.userActiveSessions.delete(userId);
     for (const [sid, metadata] of this.activeCalls.entries()) {
       if (metadata.userId === userId) {
         this.activeCalls.delete(sid);
@@ -168,7 +170,7 @@ export class DialerService {
         inFlight++;
         // Trigger call initiation with a slight stagger to prevent Twilio API Rate limit drops
         this.makeCall(lead);
-        await new Promise(r => setTimeout(r, 250)); 
+        await new Promise(r => setTimeout(r, 250));
       } else {
         break;
       }
@@ -375,8 +377,8 @@ export class DialerService {
     }
 
     let { leadId, contactId, userId } = metadata || ({} as any);
-    if (!userId) userId = providedAgentId; 
-    
+    if (!userId) userId = providedAgentId;
+
     if (!userId) {
       console.warn(`[handleCallStatusUpdate] No metadata and no providedAgentId for SID ${sid}. Cannot track status.`);
       return;
@@ -425,7 +427,7 @@ export class DialerService {
 
     if (isTerminal) {
       console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}`);
-      
+
       // Only release the agent busy lock if THIS call is the one that was holding it!
       if (this.agentBridgedCallId.get(userId!) === sid) {
         console.log(`[handleCallStatusUpdate] Call ${sid} was the active bridge. Releasing agent ${userId}.`);

@@ -62,14 +62,14 @@ export async function resolveAdminId(userId: string): Promise<string> {
     select: { role: true, createdById: true },
   });
 
-  console.log("[resolveAdminId] userId:", userId, "→ user:", user);
+  // console.log("[resolveAdminId] userId:", userId, "→ user:", user);
 
   if (!user) throw new Error("User not found");
   if (user.role === "AGENT" && user.createdById) {
-    console.log("[resolveAdminId] AGENT → resolving to adminId:", user.createdById);
+    // console.log("[resolveAdminId] AGENT → resolving to adminId:", user.createdById);
     return user.createdById;
   }
-  console.log("[resolveAdminId] ADMIN/OWNER → using own id:", userId);
+  // console.log("[resolveAdminId] ADMIN/OWNER → using own id:", userId);
   return userId;
 }
 
@@ -101,18 +101,18 @@ export async function recordCallAndRotateIfNeeded(
   // Using systemSettingId directly — avoids the nested relation filter issue
   const callerIdRow = await prisma.callerId.findFirst({
     where: {
-      twillioNumber:   callerNumber,
+      twillioNumber: callerNumber,
       systemSettingId: systemSetting.id,
     },
     select: {
-      id:            true,
-      callCount:     true,
+      id: true,
+      callCount: true,
       numberOfLines: true, // ← now fetching this
-      frozenAt:      true,
-      unfreezeAt:    true,
-      updatedAt:     true, // ← now fetching this
+      frozenAt: true,
+      unfreezeAt: true,
+      updatedAt: true, // ← now fetching this
       twillioNumber: true,
-      label:         true,
+      label: true,
     },
   });
 
@@ -154,37 +154,37 @@ export async function recordCallAndRotateIfNeeded(
     : maxCallsPerCid;
 
   const newCount = callCount + 1;
-  let isFrozen   = false;
+  let isFrozen = false;
   let unfreezeAt: Date | null = null;
-  let rotated    = false;
+  let rotated = false;
 
   console.log("[recordCall] current callCount:", callCount, "→ newCount:", newCount, "threshold:", threshold);
 
   if (newCount >= threshold) {
     unfreezeAt = new Date(now.getTime() + COOLDOWN_MS);
-    isFrozen   = true;
-    rotated    = true;
+    isFrozen = true;
+    rotated = true;
     console.log("[recordCall] 🔴 FREEZING callerId. unfreezeAt:", unfreezeAt);
   }
 
   const updated = await prisma.callerId.update({
     where: { id: callerIdRow.id },
     data: {
-      callCount:  newCount,
-      frozenAt:   rotated ? now        : (callCount === 0 ? null : undefined), // Reset states if idle reset happened
+      callCount: newCount,
+      frozenAt: rotated ? now : (callCount === 0 ? null : undefined), // Reset states if idle reset happened
       unfreezeAt: rotated ? unfreezeAt : (callCount === 0 ? null : undefined),
     },
   });
 
   console.log("[recordCall] ✅ DB updated:", {
-    id:         updated.id,
-    callCount:  updated.callCount,
-    frozenAt:   updated.frozenAt,
+    id: updated.id,
+    callCount: updated.callCount,
+    frozenAt: updated.frozenAt,
     unfreezeAt: updated.unfreezeAt,
   });
   console.log("─".repeat(60));
 
-  const unfreezeMs       = unfreezeAt?.getTime() ?? null;
+  const unfreezeMs = unfreezeAt?.getTime() ?? null;
   const secondsRemaining = unfreezeMs ? Math.max(0, Math.ceil((unfreezeMs - Date.now()) / 1000)) : 0;
 
   return { callCount: newCount, isFrozen, unfreezeAt: unfreezeMs, secondsRemaining, rotated };
@@ -194,7 +194,7 @@ export async function getCooldownStatus(
   adminId: string,
   callerNumbers: string[]
 ) {
-  console.log("[getCooldownStatus] adminId:", adminId, "numbers:", callerNumbers);
+  // console.log("[getCooldownStatus] adminId:", adminId, "numbers:", callerNumbers);
 
   const systemSetting = await prisma.system_Setting.findFirst({
     where: { userId: adminId },
@@ -202,7 +202,7 @@ export async function getCooldownStatus(
   });
 
   if (!systemSetting) {
-    console.error("[getCooldownStatus] ❌ No SystemSetting for adminId:", adminId);
+    // console.error("[getCooldownStatus] ❌ No SystemSetting for adminId:", adminId);
     return Object.fromEntries(callerNumbers.map((n) => [n, { callCount: 0, isFrozen: false, unfreezeAt: null, secondsRemaining: 0 }]));
   }
 
@@ -210,20 +210,20 @@ export async function getCooldownStatus(
 
   const callerIdRows = await prisma.callerId.findMany({
     where: {
-      twillioNumber:   { in: callerNumbers },
+      twillioNumber: { in: callerNumbers },
       systemSettingId: systemSetting.id,
     },
     select: {
-      id:            true,
+      id: true,
       twillioNumber: true,
-      callCount:     true,
-      frozenAt:      true,
-      unfreezeAt:    true,
-      updatedAt:     true,
+      callCount: true,
+      frozenAt: true,
+      unfreezeAt: true,
+      updatedAt: true,
     },
   });
 
-  console.log("[getCooldownStatus] found rows:", callerIdRows);
+  // console.log("[getCooldownStatus] found rows:", callerIdRows);
 
   // Auto-expire
   // 1. Cooldowns that have actually finished their time
@@ -238,10 +238,10 @@ export async function getCooldownStatus(
   const resetBatch = [...expiredCooldowns, ...idleNumbers];
 
   if (resetBatch.length > 0) {
-    console.log("[getCooldownStatus] 🟢 Resetting counts for:", resetBatch.map((r) => r.twillioNumber));
+    // console.log("[getCooldownStatus] 🟢 Resetting counts for:", resetBatch.map((r) => r.twillioNumber));
     await prisma.callerId.updateMany({
       where: { id: { in: resetBatch.map((r) => r.id) } },
-      data:  { callCount: 0, frozenAt: null, unfreezeAt: null },
+      data: { callCount: 0, frozenAt: null, unfreezeAt: null },
     });
     // Update local objects for the response
     resetBatch.forEach((r) => { r.callCount = 0; r.frozenAt = null; r.unfreezeAt = null; });
@@ -251,8 +251,8 @@ export async function getCooldownStatus(
   const result: Record<string, any> = {};
 
   for (const num of callerNumbers) {
-    const row        = rowMap.get(num);
-    const isFrozen   = !!row?.frozenAt && !!row?.unfreezeAt && row.unfreezeAt > now;
+    const row = rowMap.get(num);
+    const isFrozen = !!row?.frozenAt && !!row?.unfreezeAt && row.unfreezeAt > now;
     const unfreezeMs = isFrozen && row?.unfreezeAt ? row.unfreezeAt.getTime() : null;
     const secondsRemaining = unfreezeMs ? Math.max(0, Math.ceil((unfreezeMs - Date.now()) / 1000)) : 0;
 
@@ -264,6 +264,6 @@ export async function getCooldownStatus(
     };
   }
 
-  console.log("[getCooldownStatus] result:", result);
+  // console.log("[getCooldownStatus] result:", result);
   return result;
 }
