@@ -4,6 +4,7 @@ export const createContactListSchema = z.object({
   name: z.string().min(1),
   agentIds: z.array(z.string().min(1)).default([]),
   contactIds: z.array(z.string().min(1)).default([]),
+  folderId: z.string().optional(),
 });
 
 export const updateContactListSchema = z.object({
@@ -12,6 +13,7 @@ export const updateContactListSchema = z.object({
   agentIds: z.array(z.string().min(1)).optional(),
   // contactIds (if provided) will be replaced as-is
   contactIds: z.array(z.string().min(1)).optional(),
+  folderId: z.string().optional(),
 });
 
 

@@ -32,17 +32,7 @@ ADD COLUMN     "mailingState" TEXT,
 ADD COLUMN     "mailingZip" TEXT,
 ADD COLUMN     "miscFieldId" TEXT,
 ADD COLUMN     "miscValues" JSONB,
-ADD COLUMN     "notes" TEXT,
-ADD COLUMN     "userId" TEXT;
-
--- AlterTable
-ALTER TABLE "folders" ADD COLUMN     "userId" TEXT;
-
--- AlterTable
-ALTER TABLE "groups" ADD COLUMN     "userId" TEXT;
-
--- AlterTable
-ALTER TABLE "lists" ADD COLUMN     "userId" TEXT;
+ADD COLUMN     "notes" TEXT;
 
 -- AlterTable
 ALTER TABLE "user_subscriptions" ADD COLUMN     "amount" TEXT,
@@ -91,18 +81,6 @@ CREATE UNIQUE INDEX "_ContactToMiscField_AB_unique" ON "_ContactToMiscField"("A"
 
 -- CreateIndex
 CREATE INDEX "_ContactToMiscField_B_index" ON "_ContactToMiscField"("B");
-
--- AddForeignKey
-ALTER TABLE "lists" ADD CONSTRAINT "lists_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "folders" ADD CONSTRAINT "folders_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "groups" ADD CONSTRAINT "groups_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "contacts" ADD CONSTRAINT "contacts_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "attachments" ADD CONSTRAINT "attachments_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "contacts"("id") ON DELETE CASCADE ON UPDATE CASCADE;

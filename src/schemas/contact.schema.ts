@@ -20,7 +20,7 @@ export const createContactSchema = z.object({
   dataDialerId: z.string().optional(),
   emails: z.array(contactEmailSchema).default([]),
   phones: z.array(contactPhoneSchema).default([]),
-  notes: z.string().optional(),
+  notes: z.array(z.string()).default([]),
   contactListId: z.string().optional(),
   miscValues: z.record(z.string(), z.any()).optional(),
   leadsheetValues: z.record(z.string(), z.any()).optional(),
@@ -36,7 +36,7 @@ export const updateContactSchema = z.object({
   dataDialerId: z.string().nullable().optional(),
   emails: z.array(contactEmailSchema).optional(),
   phones: z.array(contactPhoneSchema).optional(),
-  notes: z.string().optional(),
+  notes: z.array(z.string()).optional(),
   miscValues: z.record(z.string(), z.any()).optional(),
   leadsheetValues: z.record(z.string(), z.any()).optional(),
   status: z.string().optional(),
@@ -47,6 +47,7 @@ export const updateContactSchema = z.object({
 export const createListFolderSchema = z.object({
   name: z.string().min(1),
   listIds: z.array(z.string().min(1)).default([]),
+  parentId: z.string().optional(),
 });
 
 export const createContactGroupSchema = z.object({

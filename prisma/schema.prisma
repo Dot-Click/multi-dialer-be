@@ -218,7 +218,7 @@ model User {
   recordings Recording[]
 
   contactLists      ContactList[]
-  contactFolders    CotactFolder[]
+  contactFolders    ContactFolder[]
   contactGroups     ContactGroups[]
   contacts          Contact[]
   importContacts    ImportContact[]
@@ -265,21 +265,31 @@ model ContactList {
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  folderId String?
+  folder   ContactFolder? @relation(fields: [folderId], references: [id])
+
   importContacts ImportContact[]
   exportContacts ExportContact[]
 
   @@map("lists")
 }
 
-model CotactFolder {
+model ContactFolder {
   id        String   @id @default(cuid())
   name      String
   listIds   String[] @default([])
+  contactIds String[] @default([])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  parentId   String?
+  parent     ContactFolder?  @relation("SubFolders", fields: [parentId], references: [id])
+  subFolders ContactFolder[] @relation("SubFolders")
+  lists      ContactList[]
+  contacts    Contact[]
 
   @@map("folders")
 }
@@ -313,7 +323,7 @@ model Contact {
   mailingZip     String?
   source         String?
   tags           String[] @default([])
-  notes          String?
+  notes          String[] @default([])
   dataDialerId   String?
   userId         String?
 
@@ -336,7 +346,11 @@ model Contact {
   calendar Calendar[]
   emailLogs EmailLog[]
 
+  folderId     String?
+  folder       ContactFolder? @relation(fields: [folderId], references: [id])
+
   @@index([dataDialerId])
+  @@index([folderId])
   @@map("contacts")
 }
 
