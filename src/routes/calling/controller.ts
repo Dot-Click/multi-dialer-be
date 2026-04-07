@@ -552,22 +552,42 @@ export const dropVoicemail: RequestHandler = async (req, res) => {
       return;
     }
 
-    console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
+    console.log(`[DropVoicemail] Dropping voicemail for session related to ${callSid}`);
 
-    // Find the customer leg
-    const currentCall = await client.calls(callSid).fetch();
-    const childCalls = await client.calls.list({ parentCallSid: callSid });
-    const customerLeg = childCalls.find(c =>
-      ['in-progress', 'ringing', 'answered'].includes(c.status)
-    ) || currentCall;
+    // 1. Identify the entire call session (root parent and all legs)
+    const agentCall = await client.calls(callSid).fetch();
+    const rootSid = agentCall.parentCallSid || callSid;
+    
+    const childCalls = await client.calls.list({ parentCallSid: rootSid });
+    const rootCall = agentCall.parentCallSid ? await client.calls(rootSid).fetch() : agentCall;
+    
+    // Combine to see every leg in this bridge
+    const allLegsInSession = [rootCall, ...childCalls];
+    
+    // 2. Identify the Customer leg (The one that is NOT the agent leg provided by frontend)
+    const customerLeg = allLegsInSession.find(c => 
+      c.sid !== callSid && 
+      ['in-progress', 'ringing', 'answered', 'queued'].includes(c.status)
+    );
 
-    // Play voicemail to customer and hang up
+    if (!customerLeg) {
+      throw new Error("Could not identify an active customer leg for voicemail drop.");
+    }
+
+    console.log(`[DropVoicemail] Target Customer Leg: ${customerLeg.sid}, Agent Leg: ${callSid}`);
+
+    // 3. Update CUSTOMER leg with Voicemail TwiML
     await client.calls(customerLeg.sid).update({
       twiml: `<Response>
                 <Play>${voicemailUrl}</Play>
                 <Hangup/>
             </Response>`
     });
+
+    // 4. Force-terminate the AGENT leg instantly to ensure they don't hear anything
+    if (['in-progress', 'answered'].includes(agentCall.status)) {
+      await client.calls(callSid).update({ status: 'completed' });
+    }
 
     successResponse(res, 200, "Voicemail dropped successfully", { callSid });
     return;
