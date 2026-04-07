@@ -13,6 +13,7 @@ import {
   getAllContactsFromDb,
   getContactByIdFromDb,
   updateContactInDb,
+  addContactNoteInDb,
   createContactListInDb,
   createContactFolderInDb,
   createContactGroupInDb,
@@ -140,6 +141,29 @@ export const updateContact = async (
 
     const updated = await updateContactInDb(id, result.data);
     successResponse(res, 200, "Contact updated", updated);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const addContactNote = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { note } = req.body;
+    if (!id || !note) {
+      errorResponse(res, "Contact id and note are required", 400);
+      return;
+    }
+
+    const updated = await addContactNoteInDb(id, note);
+    successResponse(res, 200, "Note added successfully", updated);
   } catch (error: any) {
     errorResponse(
       res,

@@ -38,7 +38,7 @@ export async function createContactInDb(payload: {
   zip: string;
   source: string;
   tags: string[];
-  notes: string;
+  notes: string[];
   dataDialerId: string;
   emails: { email: string; isPrimary: boolean }[];
   phones: { number: string; type: any }[];
@@ -64,7 +64,7 @@ export async function createContactInDb(payload: {
         zip: payload.zip,
         source: payload.source,
         tags: payload.tags ?? [],
-        notes: payload.notes ?? "",
+        notes: payload.notes ?? [],
         miscValues: payload.miscValues ?? {},
         leadsheetValues: payload.leadsheetValues ?? {},
         dataDialerId: payload.dataDialerId,
@@ -209,6 +209,19 @@ export async function getContactByIdFromDb(id: string) {
   return contact;
 }
 
+export async function addContactNoteInDb(id: string, note: string) {
+  return prisma.contact.update({
+    where: { id },
+    data: {
+      notes: { push: note }
+    },
+    include: {
+      emails: true,
+      phones: true,
+    }
+  });
+}
+
 export async function updateContactInDb(
   id: string,
   payload: Partial<{
@@ -221,7 +234,7 @@ export async function updateContactInDb(
     dataDialerId: string | null;
     emails: { email: string; isPrimary: boolean }[];
     phones: { number: string; type: any }[];
-    notes: string;
+    notes: string[];
     miscValues: any;
     leadsheetValues: any;
     status: string;

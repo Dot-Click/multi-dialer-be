@@ -38,6 +38,7 @@ import {
   scheduleTemplateEmail,
   bulkAssignContactsToList,
   bulkMoveToDnc,
+  addContactNote,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -60,6 +61,7 @@ router.get("/dnc-list", getDncList);
 router.get("/contacts-list/:lid", getContactsByList);
 router.get("/:id", getContactById);
 router.put("/:id", updateContact);
+router.post("/:id/note", addContactNote);
 router.patch("/:id/assign", assignContactToList);
 router.patch("/:id/groups", assignContactToGroups);
 router.post("/:id/leadsheet/send-email", sendLeadSheetEmail);

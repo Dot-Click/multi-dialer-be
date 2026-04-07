@@ -313,7 +313,7 @@ model Contact {
   mailingZip     String?
   source         String?
   tags           String[] @default([])
-  notes          String?
+  notes          String[] @default([])
   dataDialerId   String?
   userId         String?
 
