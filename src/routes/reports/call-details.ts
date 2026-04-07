@@ -88,7 +88,7 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
         const foundListIds = lists.map(l => l.id).filter((id): id is string => !!id);
 
         const folders = foundListIds.length > 0
-            ? await prisma.cotactFolder.findMany({
+            ? await prisma.contactFolder.findMany({
                 where: {
                     userId,
                     listIds: { hasSome: foundListIds }

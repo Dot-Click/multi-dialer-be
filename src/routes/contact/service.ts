@@ -469,13 +469,14 @@ export async function deleteAttachmentFromDb(attachmentId: string) {
 // ---------------------------------------------------------------------------
 
 export async function createContactListInDb(
-  payload: { name: string; contactIds: string[] },
+  payload: { name: string; contactIds: string[]; folderId?: string },
   userId: string,
 ) {
   return prisma.contactList.create({
     data: {
       name: payload.name,
       contactIds: payload.contactIds,
+      folderId: payload.folderId,
       userId,
     },
   });
@@ -487,15 +488,16 @@ export async function updateContactListInDb(
     name?: string;
     contactIds?: string[];
     agentIds?: string[];
+    folderId?: string;
   },
 ) {
   return prisma.contactList.update({
     where: { id },
     data: {
       name: payload.name,
-      // Use `set` so we replace, not append
       contactIds: payload.contactIds ? { set: payload.contactIds } : undefined,
       agentIds: payload.agentIds ? { set: payload.agentIds } : undefined,
+      folderId: payload.folderId,
     },
   });
 }
@@ -575,6 +577,47 @@ export async function getContactsByListFromDb(
   });
 }
 
+export async function getContactsByFolderFromDb(
+  folderId: string,
+  userId: string,
+  role: string,
+) {
+  const folder = await prisma.contactFolder.findUnique({
+    where: { id: folderId },
+    select: { userId: true },
+  });
+  if (!folder) throwHttp(404, "Folder not found");
+
+  // ADMIN: folder must belong to them or one of their agents
+  if (role === "ADMIN") {
+    if (folder.userId !== null) {
+      const poolUserIds = await getAdminUserPool(userId);
+      if (!poolUserIds.includes(folder.userId)) {
+        throwHttp(403, "Access denied to this folder");
+      }
+    }
+  }
+
+  // AGENT: folder must belong to them (folders aren't currently "assigned" to agents in the same way lists are)
+  if (role === "AGENT") {
+    if (folder.userId !== userId) {
+      throwHttp(403, "Access denied to this folder");
+    }
+  }
+
+  return prisma.contact.findMany({
+    where: {
+      folderId,
+      status: { not: "DO_NOT_CALL" },
+    },
+    include: {
+      emails: true,
+      phones: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 export async function assignContactToListInDb(
   contactId: string,
   listId: string,
@@ -627,13 +670,15 @@ export async function assignContactToListInDb(
 // ---------------------------------------------------------------------------
 
 export async function createContactFolderInDb(
-  payload: { name: string; listIds: string[] },
+  payload: { name: string; listIds: string[]; contactIds?: string[]; parentId?: string },
   userId: string,
 ) {
-  return prisma.cotactFolder.create({
+  return prisma.contactFolder.create({
     data: {
       name: payload.name,
       listIds: payload.listIds,
+      contactIds: payload.contactIds,
+      parentId: payload.parentId,
       userId,
     },
   });
@@ -641,20 +686,21 @@ export async function createContactFolderInDb(
 
 export async function updateContactFolderInDb(
   id: string,
-  payload: { name?: string; listIds?: string[] },
+  payload: { name?: string; listIds?: string[]; contactIds?: string[]; parentId?: string },
 ) {
-  return prisma.cotactFolder.update({
+  return prisma.contactFolder.update({
     where: { id },
     data: {
       name: payload.name,
-      // FIX: was `push` — should be `set` to replace, not append
       listIds: payload.listIds ? { set: payload.listIds } : undefined,
+      contactIds: payload.contactIds ? { set: payload.contactIds } : undefined,
+      parentId: payload.parentId,
     },
   });
 }
 
 export async function deleteContactFolderFromDb(id: string) {
-  return prisma.cotactFolder.delete({ where: { id } });
+  return prisma.contactFolder.delete({ where: { id } });
 }
 
 export async function getAllContactFoldersFromDb(
@@ -662,12 +708,12 @@ export async function getAllContactFoldersFromDb(
   role?: string,
 ) {
   if (role === "OWNER") {
-    return prisma.cotactFolder.findMany({ orderBy: { createdAt: "desc" } });
+    return prisma.contactFolder.findMany({ orderBy: { createdAt: "desc" } });
   }
 
   if (role === "ADMIN") {
     const poolUserIds = await getAdminUserPool(userId);
-    return prisma.cotactFolder.findMany({
+    return prisma.contactFolder.findMany({
       where: {
         OR: [{ userId: { in: poolUserIds } }, { userId: null }],
       },
@@ -683,15 +729,25 @@ export async function getAllContactFoldersFromDb(
     });
     const listIds = assignedLists.map((l) => l.id);
 
-    return prisma.cotactFolder.findMany({
+    return prisma.contactFolder.findMany({
       where: { listIds: { hasSome: listIds } },
       orderBy: { createdAt: "desc" },
     });
   }
 
-  return prisma.cotactFolder.findMany({
+  return prisma.contactFolder.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function assignContactToFolderInDb(
+  contactId: string,
+  folderId: string | null,
+) {
+  return prisma.contact.update({
+    where: { id: contactId },
+    data: { folderId },
   });
 }
 
@@ -1012,7 +1068,7 @@ export async function bulkAssignContactsToListInDb(
       });
     }
 
-    return { success: true };
+    return { success: true, listName: newList.name };
   });
 }
 
@@ -1979,3 +2035,40 @@ export async function scheduleTemplateEmailInDb(contactId: string, templateId: s
   console.log(`[SCHEDULED] Email template ${templateId} to contact ${contactId} at ${scheduledAt}`);
   return true;
 }
+export const getDuplicateContactsFromDb = async () => {
+    // ── 1. Find Duplicate Phone Numbers ────────────────────────────────
+    const dupPhones = await prisma.contactPhone.groupBy({
+        by: ['number'],
+        _count: { number: true },
+        having: { number: { _count: { gt: 1 } } },
+    });
+    const dupPhoneNumbers = dupPhones.map((p) => p.number);
+
+    // ── 2. Find Duplicate Emails ───────────────────────────────────────
+    const dupEmailsRaw = await prisma.contactEmail.groupBy({
+        by: ['email'],
+        _count: { email: true },
+        having: { email: { _count: { gt: 1 } } },
+    });
+    const dupEmailAddresses = dupEmailsRaw.map((e) => e.email);
+
+    // ── 3. Fetch All Contacts with Duplicates ──────────────────────────
+    // Note: We use OR here to fetch any contact that has at least one duplicate identifier
+    const contacts = await prisma.contact.findMany({
+        where: {
+            OR: [
+                { phones: { some: { number: { in: dupPhoneNumbers } } } },
+                { emails: { some: { email: { in: dupEmailAddresses } } } },
+            ],
+        },
+        include: {
+            phones: true,
+            emails: true,
+        },
+        orderBy: {
+            fullName: 'asc',
+        },
+    });
+
+    return contacts;
+};

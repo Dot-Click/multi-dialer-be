@@ -14,6 +14,7 @@ import {
   getContactByIdFromDb,
   updateContactInDb,
   addContactNoteInDb,
+  getDuplicateContactsFromDb,
   createContactListInDb,
   createContactFolderInDb,
   createContactGroupInDb,
@@ -49,6 +50,8 @@ import {
   scheduleTemplateEmailInDb,
   bulkAssignContactsToListInDb,
   bulkMoveToDncInDb,
+  assignContactToFolderInDb,
+  getContactsByFolderFromDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -164,6 +167,22 @@ export const addContactNote = async (
 
     const updated = await addContactNoteInDb(id, note);
     successResponse(res, 200, "Note added successfully", updated);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getDuplicateContacts = async (
+  _req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const duplicates = await getDuplicateContactsFromDb();
+    successResponse(res, 200, "Duplicate contacts fetched", duplicates);
   } catch (error: any) {
     errorResponse(
       res,
@@ -747,6 +766,54 @@ export const bulkAssignContactsToList = async (
     }
     const result = await bulkAssignContactsToListInDb(contactIds, listId);
     successResponse(res, 200, "Contacts assigned to list successfully", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const bulkAssignContactsToFolder = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { contactIds, folderId } = req.body;
+    if (!contactIds || !Array.isArray(contactIds)) {
+      errorResponse(res, "Contact IDs (array) are required", 400);
+      return;
+    }
+
+    // folderId can be null to move to Root
+    for (const id of contactIds) {
+      await assignContactToFolderInDb(id, folderId || null);
+    }
+
+    successResponse(res, 200, "Contacts assigned to folder successfully", { success: true });
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getContactsByFolder = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { fid } = req.params;
+    const { id: userId, role } = (req as any).user;
+    if (!fid) {
+      errorResponse(res, "Folder id is required", 400);
+      return;
+    }
+    const contacts = await getContactsByFolderFromDb(fid, userId, role);
+    successResponse(res, 200, "Contacts fetched by folder", contacts);
   } catch (error: any) {
     errorResponse(
       res,

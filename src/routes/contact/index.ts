@@ -37,8 +37,11 @@ import {
   sendTemplateEmail,
   scheduleTemplateEmail,
   bulkAssignContactsToList,
+  bulkAssignContactsToFolder,
   bulkMoveToDnc,
   addContactNote,
+  getDuplicateContacts,
+  getContactsByFolder,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -49,6 +52,7 @@ router.get("/hotlist", getHotlist);
 router.get("/backup-contacts", getAllBackupContacts);
 
 router.get("/import-contacts", getAllImportContacts);
+router.get("/duplicates", getDuplicateContacts);
 router.post("/import-csv", singleUpload("file"), importContactCsv);
 router.post("/export-csv", exportContactCsv);
 router.get("/export-csv", getAllExportContacts);
@@ -92,6 +96,8 @@ router.delete("/group/:id", deleteContactGroup);
 router.patch("/list/:id/agents", assignAgentsToList);
 
 router.post("/bulk-assign-list", bulkAssignContactsToList);
+router.patch("/bulk-assign-folder", bulkAssignContactsToFolder);
 router.post("/bulk-move-to-dnc", bulkMoveToDnc);
+router.get("/contacts-folder/:fid", getContactsByFolder);
 
 export default router;
