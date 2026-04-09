@@ -466,9 +466,10 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     dialerService.setAgentBusy(agentId, true, currentCallSid);
     console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
 
+    const existingMetadata = (dialerService as any).activeCalls.get(currentCallSid) || {};
     (dialerService as any).activeCalls.set(currentCallSid, {
-      userId: agentId,
-      sessionId: null,
+      ...existingMetadata,
+      userId: agentId || (existingMetadata as any).userId,
       isBrowserCall: false
     });
 
