@@ -398,19 +398,22 @@ export class DialerService {
       console.warn(`[handleCallStatusUpdate] No metadata and no providedAgentId for SID ${sid}. Cannot track status.`);
       return;
     }
-    let dbStatus: LeadCallStatus = LeadCallStatus.CALLED;
-    const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
+    let dbStatus: LeadCallStatus | null = null;
+    const terminalStatuses = ["failed", "busy", "no-answer", "completed", "canceled"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
 
     if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
     else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
+    else if (twilioStatus === "canceled") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "completed") {
       dbStatus = LeadCallStatus.CALLED;
       this.clearTranscriptionLogs(sid);
     }
+    // Note: 'answered' or 'in-progress' do not change the Lead status to CALLED yet.
 
-    if (leadId) {
+
+    if (leadId && dbStatus) {
       await this.updateLeadStatusInDB(leadId, dbStatus);
     }
 
@@ -427,7 +430,7 @@ export class DialerService {
           updateData.endTime = endTime;
           updateData.sessionId = metadata?.sessionId;
           updateData.duration = duration;
-          updateData.disposition = dbStatus;
+          if (dbStatus) updateData.disposition = dbStatus;
         }
 
         await (prisma.callRecord as any).update({
