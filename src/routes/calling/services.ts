@@ -75,7 +75,8 @@ export class DialerService {
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
-  private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
+  private userCallerIdPrefs: Map<string, string[]> = new Map(); // userId -> callerIds[]
+  private userCallerIdIndex: Map<string, number> = new Map(); // userId -> lastUsedIndex
 
   private constructor() { }
 
@@ -96,9 +97,10 @@ export class DialerService {
   /**
    * Add leads to queue and trigger processing for that user.
    */
-  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string) {
-    if (callerId) {
-      this.userCallerIdPrefs.set(userId, callerId);
+  async addLeadsToQueue(userId: string, leads: Lead[], callerIds?: string[]) {
+    if (callerIds && callerIds.length > 0) {
+      this.userCallerIdPrefs.set(userId, callerIds);
+      this.userCallerIdIndex.set(userId, 0); // Reset index for new batch
     }
 
     const queue = this.getOrCreateQueue(userId);
@@ -119,6 +121,8 @@ export class DialerService {
     this.agentBusyState.delete(userId);
     this.agentBridgedCallId.delete(userId);
     this.userActiveSessions.delete(userId);
+    this.userCallerIdPrefs.delete(userId);
+    this.userCallerIdIndex.delete(userId);
     for (const [sid, metadata] of this.activeCalls.entries()) {
       if (metadata.userId === userId) {
         this.activeCalls.delete(sid);
@@ -249,8 +253,18 @@ export class DialerService {
         include: { defaultCaller: true }
       });
 
-      const preferredCallerId = this.userCallerIdPrefs.get(lead.userId);
-      const fromNumber = preferredCallerId || user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+      const callerIds = this.userCallerIdPrefs.get(lead.userId);
+      let fromNumber: string;
+
+      if (callerIds && callerIds.length > 0) {
+        const index = this.userCallerIdIndex.get(lead.userId) || 0;
+        fromNumber = callerIds[index];
+        // Increment index for next call
+        this.userCallerIdIndex.set(lead.userId, (index + 1) % callerIds.length);
+      } else {
+        // @ts-ignore
+        fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+      }
 
       // Also fetch system settings to get answeringMachineRecordingUrl
       const settings = await prisma.system_Setting.findFirst({

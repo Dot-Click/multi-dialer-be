@@ -165,7 +165,7 @@ export const stopDialing: RequestHandler = async (req, res) => {
  */
 export const addLeadsToDialer: RequestHandler = async (req, res) => {
   try {
-    const { leads, callerId }: { leads: any[], callerId?: string } = req.body;
+    const { leads, callerId, callerIds }: { leads: any[], callerId?: string, callerIds?: string[] } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -259,7 +259,7 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         priority: l.priority,
         userId: userId,
       })),
-      callerId // Pass selected caller ID to service
+      callerIds || (callerId ? [callerId] : undefined) // Pass selected caller IDs to service
     );
 
     successResponse(res, 200, "Leads saved to DB and added to queue!", {
