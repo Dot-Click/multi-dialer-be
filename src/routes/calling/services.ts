@@ -348,6 +348,7 @@ export class DialerService {
       queueSize: queue?.size() || 0,
       activeCallsCount: userActiveCalls.length,
       currentQueue: queue?.getQueue() || [],
+      callStatuses: userActiveCalls.map(c => ({ contactId: c.contactId, status: c.status }))
     };
   }
 
