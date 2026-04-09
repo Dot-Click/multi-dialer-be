@@ -474,18 +474,28 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     });
 
     // Removed: twiml.say("Please wait while we connect you to an agent.");
+    console.log(`[VoiceWebhook] Bridging Call ${currentCallSid} to Agent ${agentId} with CallerId ${caller}`);
+
     const dial = twiml.dial({
-      callerId: caller, // Keep the original caller ID
+      callerId: caller,
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
 
-    // Bridge to the specific agent identity safely via TwiML nested tags
-    const clientNode = dial.client();
-    clientNode.identity(agentId);
+    // Bridge to the specific agent identity safely
+    const clientNode = dial.client(agentId); 
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
+
+    // Fallback verbs in case the <Dial> fails to connect (e.g. agent offline)
+    // This prevents immediate hangup and gives we a chance to see what happened.
+    twiml.say("Connecting you now, please stay on the line.");
+    twiml.pause({ length: 3 });
+    twiml.redirect(`${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentId}&contactId=${contactId || ''}&retry=true`);
+
+    console.log(`[VoiceWebhook] Generated TwiML for bridge: ${twiml.toString()}`);
+
 
   }
 
