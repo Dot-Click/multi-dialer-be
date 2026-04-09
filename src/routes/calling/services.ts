@@ -71,7 +71,7 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
@@ -383,9 +383,6 @@ export class DialerService {
 
   async handleCallStatusUpdate(sid: string, twilioStatus: string, isChildLeg: boolean = false, providedAgentId?: string) {
     const metadata = this.activeCalls.get(sid);
-    if (metadata) {
-      metadata.status = twilioStatus;
-    }
 
     // PROTECTION: For browser calls... (keep this or move below userId check?)
     // Actually, if metadata is missing we can't tell if it's a browser call.
