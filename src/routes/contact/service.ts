@@ -33,9 +33,14 @@ async function getAdminUserPool(adminId: string): Promise<string[]> {
 
 export async function createContactInDb(payload: {
   fullName: string;
+  address: string;
   city: string;
   state: string;
   zip: string;
+  mailingAddress: string;
+  mailingCity: string;
+  mailingState: string;
+  mailingZip: string;
   source: string;
   tags: string[];
   notes: string[];
@@ -59,9 +64,14 @@ export async function createContactInDb(payload: {
     const created = await tx.contact.create({
       data: {
         fullName: payload.fullName,
+        address: payload.address,
         city: payload.city,
         state: payload.state,
         zip: payload.zip,
+        mailingAddress: payload.mailingAddress,
+        mailingCity: payload.mailingCity,
+        mailingState: payload.mailingState,
+        mailingZip: payload.mailingZip,
         source: payload.source,
         tags: payload.tags ?? [],
         notes: payload.notes ?? [],
@@ -226,9 +236,14 @@ export async function updateContactInDb(
   id: string,
   payload: Partial<{
     fullName: string;
+    address: string;
     city: string;
     state: string;
     zip: string;
+    mailingAddress: string;
+    mailingCity: string;
+    mailingState: string;
+    mailingZip: string;
     source: string;
     tags: string[];
     dataDialerId: string | null;
@@ -239,6 +254,12 @@ export async function updateContactInDb(
     leadsheetValues: any;
     status: string;
     disposition: string;
+    permission: boolean;
+    want: boolean;
+    why: boolean;
+    statusQuo: boolean;
+    timeline: boolean;
+    agent: boolean;
   }>,
 ) {
   const existing = await prisma.contact.findUnique({
@@ -251,14 +272,25 @@ export async function updateContactInDb(
     where: { id },
     data: {
       fullName: payload.fullName,
+      address: payload.address,
       city: payload.city,
       state: payload.state,
       zip: payload.zip,
+      mailingAddress: payload.mailingAddress,
+      mailingCity: payload.mailingCity,
+      mailingState: payload.mailingState,
+      mailingZip: payload.mailingZip,
       source: payload.source,
       tags: payload.tags,
       notes: payload.notes,
       miscValues: payload.miscValues,
       leadsheetValues: payload.leadsheetValues,
+      permission: payload.permission,
+      want: payload.want,
+      why: payload.why,
+      statusQuo: payload.statusQuo,
+      timeline: payload.timeline,
+      agent: payload.agent,
       dataDialerId: payload.dataDialerId,
       status: payload.status || payload.disposition,
       emails: payload.emails

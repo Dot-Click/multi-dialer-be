@@ -16,7 +16,7 @@ startRetentionJobs();
 initJobs();
 
 const app = express();
-const PORT = envConfig.PORT || 3001;
+const PORT = envConfig.PORT || 3000;
 
 app.use(sessionMiddleware);
 

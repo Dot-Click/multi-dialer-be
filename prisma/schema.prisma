@@ -349,6 +349,14 @@ model Contact {
   folderId     String?
   folder       ContactFolder? @relation(fields: [folderId], references: [id])
 
+  // Lead Sheet / Qualification Fields
+  permission Boolean @default(false)
+  want       Boolean @default(false)
+  why        Boolean @default(false)
+  statusQuo  Boolean @default(false)
+  timeline   Boolean @default(false)
+  agent      Boolean @default(false)
+
   @@index([dataDialerId])
   @@index([folderId])
   @@map("contacts")
