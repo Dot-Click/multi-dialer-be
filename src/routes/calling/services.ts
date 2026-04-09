@@ -1,6 +1,5 @@
 import { client } from "@/lib/config";
 import prisma from "@/lib/prisma";
-import { LeadCallStatus } from "@prisma/client";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
@@ -8,6 +7,22 @@ import os from "os";
 import { cloudinaryUploader } from "@/utils/handler";
 import { envConfig } from "@/lib/config";
 import Groq from "groq-sdk";
+
+
+enum LeadCallStatus {
+  PENDING = "PENDING",
+  CALLING = "CALLING",
+  CALLED = "CALLED",
+  FAILED = "FAILED",
+  BUSY = "BUSY",
+  NO_ANSWER = "NO_ANSWER",
+  HOT = "HOT",
+  WARM = "WARM",
+  COLD = "COLD",
+  CALL_BACK = "CALL_BACK",
+  DO_NOT_CALL = "DO_NOT_CALL",
+  NOT_INTERESTED = "NOT_INTERESTED",
+}
 
 const groq = new Groq({ apiKey: envConfig.GROK_API_KEY });
 
@@ -56,8 +71,12 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
+  private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
+  private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
+  private userCallerIdPrefs: Map<string, string[]> = new Map(); // userId -> callerIds[]
+  private userCallerIdIndex: Map<string, number> = new Map(); // userId -> lastUsedIndex
 
   private constructor() { }
 
@@ -78,12 +97,38 @@ export class DialerService {
   /**
    * Add leads to queue and trigger processing for that user.
    */
-  async addLeadsToQueue(userId: string, leads: Lead[]) {
+  async addLeadsToQueue(userId: string, leads: Lead[], callerIds?: string[]) {
+    if (callerIds && callerIds.length > 0) {
+      this.userCallerIdPrefs.set(userId, callerIds);
+      this.userCallerIdIndex.set(userId, 0); // Reset index for new batch
+    }
+
     const queue = this.getOrCreateQueue(userId);
     leads.forEach((lead) => queue.enqueue(lead));
 
     // Process queue immediately
     this.processQueue(userId);
+  }
+
+  clearQueue(userId: string) {
+    const queue = this.userQueues.get(userId);
+    if (queue) {
+      queue.clear();
+      console.log(`[DialerService] Cleared queue for user ${userId}`);
+    }
+
+    // HARD RESET states to unblock stuck sessions
+    this.agentBusyState.delete(userId);
+    this.agentBridgedCallId.delete(userId);
+    this.userActiveSessions.delete(userId);
+    this.userCallerIdPrefs.delete(userId);
+    this.userCallerIdIndex.delete(userId);
+    for (const [sid, metadata] of this.activeCalls.entries()) {
+      if (metadata.userId === userId) {
+        this.activeCalls.delete(sid);
+      }
+    }
+    console.log(`[DialerService] Hardware reset of stuck states for user ${userId} complete.`);
   }
 
   /**
@@ -92,6 +137,17 @@ export class DialerService {
   private async processQueue(userId: string) {
     const queue = this.userQueues.get(userId);
     if (!queue || queue.isEmpty()) return;
+
+    // 0. Check TCPA hours & Autodialing toggle
+    const { isAllowed, autodialingEnabled } = await this.checkCompliance(userId);
+    if (!autodialingEnabled) {
+      console.log(`[processQueue] Autodialing is DISABLED for user ${userId}.`);
+      return;
+    }
+    if (!isAllowed) {
+      console.log(`[processQueue] User ${userId} is outside calling hours.`);
+      return;
+    }
 
     // 1. Get user capacity (simultaneous lines)
     const capacity = await this.getUserCapacity(userId);
@@ -104,13 +160,21 @@ export class DialerService {
     console.log(`User ${userId} capacity: ${capacity}, active: ${currentActiveCount}`);
 
     // 3. While we have capacity and leads in queue, make calls
+    // But if agent is currently busy, do not originate NEW calls,
+    // to minimize the number of calls that connect while agent is occupied.
+    if (this.isAgentBusy(userId)) {
+      console.log(`[processQueue] Skipped dialing for user ${userId} because agent is currently busy.`);
+      return;
+    }
+
     let inFlight = currentActiveCount;
     while (inFlight < capacity && !queue.isEmpty()) {
       const lead = queue.dequeue();
       if (lead) {
         inFlight++;
-        // Trigger call initiation (non-blocking here to allow simultaneous calls)
+        // Trigger call initiation with a slight stagger to prevent Twilio API Rate limit drops
         this.makeCall(lead);
+        await new Promise(r => setTimeout(r, 250));
       } else {
         break;
       }
@@ -148,24 +212,85 @@ export class DialerService {
     }
   }
 
+  public async checkCompliance(userId: string): Promise<{ isAllowed: boolean; autodialingEnabled: boolean }> {
+    try {
+      const settings = await prisma.system_Setting.findFirst({
+        where: { userId },
+        include: { regulatorySetting: true },
+      });
+
+      if (!settings || !settings.regulatorySetting) {
+        return { isAllowed: true, autodialingEnabled: true }; // Default to allowed if no settings
+      }
+
+      const { tcpaFrom, tcpaTo, tcpaAutodialing } = settings.regulatorySetting;
+
+      // Convert current time to string "HH:mm"
+      const now = new Date();
+      const currentStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      let isAllowed = true;
+      if (tcpaFrom && tcpaTo) {
+        isAllowed = tcpaFrom <= tcpaTo
+          ? (currentStr >= tcpaFrom && currentStr <= tcpaTo)
+          : (currentStr >= tcpaFrom || currentStr <= tcpaTo);
+      }
+
+      return { isAllowed, autodialingEnabled: tcpaAutodialing };
+    } catch (error) {
+      console.error(`Error checking compliance for user ${userId}:`, error);
+      return { isAllowed: true, autodialingEnabled: true };
+    }
+  }
+
   private async makeCall(lead: Lead) {
     try {
       // 1. Update status to CALLING in DB
       await this.updateLeadStatusInDB(lead.id, "CALLING");
 
-      // 2. Initiate Twilio Call
+      // 2. Fetch User's default caller ID if exists
+      const user = await prisma.user.findUnique({
+        where: { id: lead.userId },
+        include: { defaultCaller: true }
+      });
+
+      const callerIds = this.userCallerIdPrefs.get(lead.userId);
+      let fromNumber: string;
+
+      if (callerIds && callerIds.length > 0) {
+        const index = this.userCallerIdIndex.get(lead.userId) || 0;
+        fromNumber = callerIds[index];
+        // Increment index for next call
+        this.userCallerIdIndex.set(lead.userId, (index + 1) % callerIds.length);
+      } else {
+        // @ts-ignore
+        fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+      }
+
+      // Also fetch system settings to get answeringMachineRecordingUrl
+      const settings = await prisma.system_Setting.findFirst({
+        where: { userId: lead.userId },
+        include: { callSettings: { include: { answeringMachineRecording: true, busyRecording: true } } }
+      });
+      const amRecordingUrl = settings?.callSettings[0]?.answeringMachineRecording?.url || "";
+      const busyRecordingUrl = settings?.callSettings[0]?.busyRecording?.url || "";
+
+      // 3. Initiate Twilio Call
       const call = await client.calls.create({
         to: lead.phone,
-        from: envConfig.TWILIO_PHONE_NUMBER as string,
-        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice/${lead.userId}`,
-        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status/${lead.userId}`,
+        from: fromNumber as string,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&contactId=${lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
+        statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
+        machineDetection: "DetectMessageEnd",
+        asyncAmd: "true",
+        asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}`,
+        asyncAmdStatusCallbackMethod: "POST",
       });
 
       console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
-      this.activeCalls.set(call.sid, { leadId: lead.id, userId: lead.userId, sessionId });
+      this.activeCalls.set(call.sid, { leadId: lead.id, contactId: lead.id, userId: lead.userId, sessionId });
 
       // 3. Create CallRecord in DB immediately
       try {
@@ -175,6 +300,8 @@ export class DialerService {
             leadId: lead.id,
             userId: lead.userId,
             sessionId: sessionId || null,
+            // @ts-ignore - Prisma client needs regeneration
+            callerIdId: user?.defaultCaller?.id || null,
             status: "queued",
             startTime: new Date(),
           }
@@ -199,7 +326,7 @@ export class DialerService {
       .join("\n");
   }
 
-  async updateLeadStatusInDB(leadId: string, status: LeadCallStatus) {
+  async updateLeadStatusInDB(leadId: string, status: string) {
     try {
       await prisma.lead.update({
         where: { id: leadId },
@@ -221,6 +348,7 @@ export class DialerService {
       queueSize: queue?.size() || 0,
       activeCallsCount: userActiveCalls.length,
       currentQueue: queue?.getQueue() || [],
+      callStatuses: userActiveCalls.map(c => ({ contactId: c.contactId, status: c.status }))
     };
   }
 
@@ -253,20 +381,35 @@ export class DialerService {
     return JSON.parse(completion.choices[0].message.content!);
   }
 
-  async handleCallStatusUpdate(sid: string, twilioStatus: string) {
+  async handleCallStatusUpdate(sid: string, twilioStatus: string, isChildLeg: boolean = false, providedAgentId?: string) {
     const metadata = this.activeCalls.get(sid);
-    if (!metadata) return;
+    if (metadata) {
+      metadata.status = twilioStatus;
+    }
 
-    const { leadId, contactId, userId } = metadata;
-    let dbStatus: LeadCallStatus = "CALLED";
+    // PROTECTION: For browser calls... (keep this or move below userId check?)
+    // Actually, if metadata is missing we can't tell if it's a browser call.
+    if (metadata?.isBrowserCall && !isChildLeg && (twilioStatus === "in-progress" || twilioStatus === "answered")) {
+      console.log(`[handleCallStatusUpdate] Ignoring premature ${twilioStatus} from parent leg of browser call: ${sid}`);
+      return;
+    }
+
+    let { leadId, contactId, userId } = metadata || ({} as any);
+    if (!userId) userId = providedAgentId;
+
+    if (!userId) {
+      console.warn(`[handleCallStatusUpdate] No metadata and no providedAgentId for SID ${sid}. Cannot track status.`);
+      return;
+    }
+    let dbStatus: LeadCallStatus = LeadCallStatus.CALLED;
     const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
 
-    if (twilioStatus === "failed") dbStatus = "FAILED";
-    else if (twilioStatus === "busy") dbStatus = "BUSY";
-    else if (twilioStatus === "no-answer") dbStatus = "NO_ANSWER";
+    if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
+    else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
+    else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
     else if (twilioStatus === "completed") {
-      dbStatus = "CALLED";
+      dbStatus = LeadCallStatus.CALLED;
       this.clearTranscriptionLogs(sid);
     }
 
@@ -277,15 +420,15 @@ export class DialerService {
     // Update CallRecord in DB
     try {
       const callRecord = await (prisma.callRecord as any).findUnique({ where: { callSid: sid } });
-      
+
       if (callRecord) {
         const updateData: any = { status: twilioStatus };
-        
+
         if (isTerminal) {
           const endTime = new Date();
           const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000); // in seconds
           updateData.endTime = endTime;
-          updateData.sessionId = metadata.sessionId;
+          updateData.sessionId = metadata?.sessionId;
           updateData.duration = duration;
           updateData.disposition = dbStatus;
         }
@@ -301,6 +444,17 @@ export class DialerService {
     }
 
     if (isTerminal) {
+      console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}`);
+
+      // Only release the agent busy lock if THIS call is the one that was holding it!
+      if (this.agentBridgedCallId.get(userId!) === sid) {
+        console.log(`[handleCallStatusUpdate] Call ${sid} was the active bridge. Releasing agent ${userId}.`);
+        this.setAgentBusy(userId!, false);
+        this.agentBridgedCallId.delete(userId!);
+      } else {
+        console.log(`[handleCallStatusUpdate] Call ${sid} was not the active bridge. Skipping busy reset (Current lock: ${this.agentBridgedCallId.get(userId!)}).`);
+      }
+
       this.activeCalls.delete(sid);
       console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
       this.processQueue(userId);
@@ -313,8 +467,8 @@ export class DialerService {
 
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
-      
-      
+
+
       const transcription = await groq.audio.transcriptions.create({
         url: cloudinaryUrl,
         model: "whisper-large-v3",
@@ -323,28 +477,28 @@ export class DialerService {
       });
       // AI Sentiments Logic should be implemented here
       const sentimentAnalysis = await this.analyzeSentiment(transcription.text);
-      
+
       // console.log("sentimentAnalysis",sentimentAnalysis)
-      
+
       Promise.allSettled([
         await prisma.callRecord.update({
           where: { callSid: callSid },
           data: { recordingUrl: cloudinaryUrl },
-      }),
+        }),
         await prisma.callAnalysis.upsert({
           where: { callSid: callSid },
-        update: { recordingUrl: cloudinaryUrl },
-        create: {
-          callSid: callSid,
-          leadId: "",
-          recordingUrl: cloudinaryUrl,
-          sentiment: sentimentAnalysis?.sentiment || "", // Placeholder for now
-          confidence: sentimentAnalysis?.confidence || 0,
-          aiSummary: sentimentAnalysis?.summary || "",
-          transcript: transcription.text
-        }
-      })
-    ])  
+          update: { recordingUrl: cloudinaryUrl },
+          create: {
+            callSid: callSid,
+            leadId: "",
+            recordingUrl: cloudinaryUrl,
+            sentiment: sentimentAnalysis?.sentiment || "", // Placeholder for now
+            confidence: sentimentAnalysis?.confidence || 0,
+            aiSummary: sentimentAnalysis?.summary || "",
+            transcript: transcription.text
+          }
+        })
+      ])
       console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
     } catch (error) {
       console.error("Failed to handle recording update:", error);
@@ -411,6 +565,53 @@ export class DialerService {
 
   clearTranscriptionLogs(callSid: string) {
     this.transcriptionLogs.delete(callSid);
+  }
+
+  // Agent State Management
+  setAgentBusy(userId: string, busy: boolean, callSid?: string) {
+    if (busy && callSid) {
+      const existingLock = this.agentBridgedCallId.get(userId);
+      if (existingLock && existingLock !== callSid) {
+        console.log(`[AgentState] Lock already held by ${existingLock}, ignoring request from ${callSid}`);
+        return;
+      }
+      this.agentBridgedCallId.set(userId, callSid);
+    } else if (!busy) {
+      this.agentBridgedCallId.delete(userId);
+    }
+
+    this.agentBusyState.set(userId, busy);
+    console.log(`[AgentState] User ${userId} busy state set to: ${busy}`);
+    if (!busy) {
+      this.processQueue(userId);
+    }
+  }
+
+  isAgentBusy(userId: string): boolean {
+    return this.agentBusyState.get(userId) || false;
+  }
+
+  recycleLeadWithDelay(userId: string, leadId: string) {
+    // Schedule lead to be requeued later or at lower priority
+    setTimeout(async () => {
+      try {
+        const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+        if (lead) {
+          const queue = this.getOrCreateQueue(userId);
+          queue.enqueue({
+            id: lead.id,
+            fullName: lead.fullName,
+            phone: lead.phone,
+            priority: 0, // Lower priority or just push to queue
+            userId: lead.userId
+          });
+          console.log(`[DialerService] Recycled lead ${leadId} after breather.`);
+          this.processQueue(userId);
+        }
+      } catch (e) {
+        console.error("Failed to recycle lead", e);
+      }
+    }, 15000); // 15 second breather
   }
 
   // Session Management

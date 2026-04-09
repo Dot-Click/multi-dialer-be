@@ -2,14 +2,10 @@ import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
 import { createUserSchema, updateUserSchema } from "../../schemas/user.schema";
-import {
-    getAllUsersFromDb,
-    createUserInDb,
-    updateUserInDb,
-    deleteUserFromDb,
-    deleteAllUsersFromDb,
-} from "./service";
+import { getAllUsersFromDb, createUserInDb, updateUserInDb, deleteUserFromDb, deleteAllUsersFromDb } from "./service";
 import { generateSecurePassword } from "../../utils/password";
+import { cloudinaryUploader } from "../../utils/handler";
+import fs from "fs";
 
 
 export const createUser = async (req: Request, res: Response): Promise<void> => {
@@ -91,5 +87,31 @@ export const deleteAllUsers = async (req: Request, res: Response): Promise<void>
         successResponse(res, 200, "All users deleted successfully", null);
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+    }
+};
+
+export const uploadProfileImage = async (req: Request, res: Response): Promise<void> => {
+    try {
+        if (!req.file) {
+            errorResponse(res, "No file uploaded", 400);
+            return;
+        }
+
+        const filePath = req.file.path;
+        const result = await cloudinaryUploader(filePath);
+
+        // Delete local file after upload
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        if (!result || !result.secure_url) {
+            errorResponse(res, "Failed to upload to Cloudinary", 500);
+            return;
+        }
+
+        successResponse(res, 200, "Profile image uploaded successfully", { url: result.secure_url });
+    } catch (error: any) {
+        errorResponse(res, error?.message || "Internal server error", 500);
     }
 };

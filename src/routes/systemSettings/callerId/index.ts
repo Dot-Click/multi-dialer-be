@@ -5,29 +5,24 @@ import {
   getAllCallerIdsOfSpecificUser,
   getCallerIdById,
   updateCallerId,
-  deleteCallerId
+  deleteCallerId,
+  getCallerIdStatus,  // ← add this import
+  useCallerId,        // ← add this import
 } from "./controller";
 import { protectRoute } from "../../../middlewares/auth.middleware";
 
 const router = Router();
 
-// Create a CallerId
+// ── Cooldown routes — must come BEFORE /:id to avoid param collision ──────────
+router.get("/status", protectRoute, getCallerIdStatus);   // GET  /caller-id/status?numbers=...
+router.post("/use",   protectRoute, useCallerId);          // POST /caller-id/use
+
+// ── Standard CRUD ─────────────────────────────────────────────────────────────
 router.post("/create", createCallerId);
-
-// Get all CallerIds of all users
-router.get("/all", getAllCallerIdsOfAllUsers);
-
-// Get all CallerIds of specific user
-router.get("/", getAllCallerIdsOfSpecificUser);
-
-// Get a single CallerId by ID
-router.get("/:id", getCallerIdById);
-
-// Update a CallerId by ID
-router.put("/:id", updateCallerId);
-
-// Delete a CallerId by ID
-router.delete("/:id", deleteCallerId);
+router.get("/all",     getAllCallerIdsOfAllUsers);
+router.get("/",        getAllCallerIdsOfSpecificUser);
+router.get("/:id",     getCallerIdById);
+router.put("/:id",     updateCallerId);
+router.delete("/:id",  deleteCallerId);
 
 export default router;
-

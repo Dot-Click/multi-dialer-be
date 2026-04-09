@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zoho Card Collection - Test UI</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #5850ec;
+            --primary-hover: #4e46e5;
+            --bg: #f9fafb;
+            --card-bg: #ffffff;
+            --text: #111827;
+            --text-muted: #6b7280;
+            --border: #e5e7eb;
+            --error: #ef4444;
+            --success: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            background-color: var(--card-bg);
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 480px;
+            transition: transform 0.2s ease;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            text-align: center;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+
+        .info-box {
+            background-color: rgba(88, 80, 236, 0.05);
+            border-left: 4px solid var(--primary);
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+            margin-top: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:disabled {
+            background-color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        #result {
+            margin-top: 24px;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+            word-break: break-all;
+            white-space: pre-wrap;
+            text-align: center;
+        }
+
+        #result.success {
+            display: block;
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        #result.error {
+            display: block;
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--error);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .payment-link {
+            display: inline-block;
+            margin-top: 15px;
+            padding: 12px 24px;
+            background-color: var(--success);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+
+        .payment-link:hover {
+            opacity: 0.9;
+        }
+
+        .loader {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Zoho Card Attachment</h1>
+        <p class="subtitle">Securely add your card details via Zoho Hosted Pages</p>
+        
+        <div class="info-box">
+            <strong>Step 1:</strong> Click below to add/update your card details via Zoho. This is required for auto-collecting payments.
+        </div>
+        
+        <button id="generateBtn">
+            <span id="btnText">Generate Secure Payment Link</span>
+            <div class="loader" id="loader"></div>
+        </button>
+
+        <div id="paymentResult"></div>
+
+        <hr style="margin: 30px 0; border: 0; border-top: 1px solid var(--border);">
+
+        <div class="info-box" style="background-color: rgba(16, 185, 129, 0.05); border-left-color: var(--success);">
+            <strong>Step 2:</strong> Once the card is added, select a plan and create the subscription.
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 14px;">Select Subscription Plan</label>
+            <select id="planSelect" style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-family: inherit; font-size: 14px;">
+                <option value="starter_123">Starter Plan (STARTER)</option>
+                <option value="professional_123" selected>Professional Plan (PROFESSIONAL)</option>
+                <option value="enterprise_123">Enterprise Plan (ENTERPRISE)</option>
+            </select>
+        </div>
+
+        <button id="subscribeBtn" style="background-color: var(--success);">
+            <span id="subBtnText">Create Subscription</span>
+            <div class="loader" id="subLoader"></div>
+        </button>
+
+        <div id="subResult"></div>
+    </div>
+
+    <script>
+        const generateBtn = document.getElementById('generateBtn');
+        const loader = document.getElementById('loader');
+        const paymentResultDiv = document.getElementById('paymentResult');
+
+        // Step 1: Generate Payment Link
+        generateBtn.addEventListener('click', async () => {
+            generateBtn.disabled = true;
+            loader.style.display = 'block';
+            paymentResultDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/subscriptions/update-card-link', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    const hostedPageUrl = data.data.hostedpage.url;
+                    paymentResultDiv.className = 'success';
+                    paymentResultDiv.style.display = 'block';
+                    paymentResultDiv.innerHTML = `
+                        <p>Link generated successfully!</p>
+                        <a href="${hostedPageUrl}" class="payment-link" target="_blank">Open Secure Payment Form</a>
+                        <p style="margin-top: 10px; font-size: 12px; color: var(--text-muted)">Once finished, proceed to Step 2.</p>
+                    `;
+                } else {
+                    paymentResultDiv.className = 'error';
+                    paymentResultDiv.style.display = 'block';
+                    paymentResultDiv.textContent = `Error: ${data.message || 'Failed to generate link'}`;
+                }
+            } catch (error) {
+                paymentResultDiv.className = 'error';
+                paymentResultDiv.style.display = 'block';
+                paymentResultDiv.textContent = `Network Error: ${error.message}`;
+            } finally {
+                generateBtn.disabled = false;
+                loader.style.display = 'none';
+            }
+        });
+
+        // Step 2: Create Subscription
+        const subscribeBtn = document.getElementById('subscribeBtn');
+        const subLoader = document.getElementById('subLoader');
+        const subResultDiv = document.getElementById('subResult');
+        const planSelect = document.getElementById('planSelect');
+
+        subscribeBtn.addEventListener('click', async () => {
+            subscribeBtn.disabled = true;
+            subLoader.style.display = 'block';
+            subResultDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/subscriptions/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plan_code: planSelect.value })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    subResultDiv.className = 'success';
+                    subResultDiv.style.display = 'block';
+                    subResultDiv.innerHTML = `
+                        <p><strong>Success!</strong> Subscription created.</p>
+                        <div style="text-align: left; margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 200px; overflow: auto; background: #fff; padding: 10px; border: 1px solid #ddd;">
+                            ${JSON.stringify(data.data, null, 2)}
+                        </div>
+                    `;
+                } else {
+                    subResultDiv.className = 'error';
+                    subResultDiv.style.display = 'block';
+                    subResultDiv.textContent = `Error: ${data.message || 'Failed to create subscription'}`;
+                }
+            } catch (error) {
+                subResultDiv.className = 'error';
+                subResultDiv.style.display = 'block';
+                subResultDiv.textContent = `Network Error: ${error.message}`;
+            } finally {
+                subscribeBtn.disabled = false;
+                subLoader.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

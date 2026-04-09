@@ -12,48 +12,32 @@ import {
 } from "./service";
 
 // Helper: Only Admin & Owner allowed
-const isAuthorized = (role?: string) => ["ADMIN", "OWNER"].includes(role || "");
 
 // 1. Create Notification Settings (POST /create)
 export const createNotification: RequestHandler = async (req, res): Promise<void> => {
   try {
-    const { id: userId, role } = req.user!;
-
-    if (!isAuthorized(role)) {
-      errorResponse(res, "Access Denied: Admin/Owner only", 403);
-      return;
-    }
-
+    const { id: userId } = req.user!;
+    console.log("[NotificationController] Received Save Request for User:", userId, "Payload:", JSON.stringify(req.body, null, 2));
+    
     const result = await validateData(createNotificationSchema, req.body) as any;
     if (!("data" in result)) {
+      console.warn("[NotificationController] Validation FAILED:", JSON.stringify(result, null, 2));
       errorResponse(res, { errors: result }, 400);
       return;
     }
-
-    // Check if already exists
-    const existing = await getNotificationFromDb(userId);
-    if (existing) {
-      errorResponse(res, "Settings already exist. Please use UPDATE endpoint.", 400);
-      return;
-    }
-
+    console.log("[NotificationController] Validation PASSED. Payload:", JSON.stringify(result.data, null, 2));
+        
     const newNotification = await createNotificationInDb(result.data, userId);
     successResponse(res, 201, "Notification settings created", newNotification);
   } catch (error: any) {
+    console.error("[NotificationController] Error:", error);
     errorResponse(res, error.message || "Internal server error", 500);
   }
 };
-
+     
 // 2. Get ALL Notification Settings (GET /all)
 export const getAllNotifications: RequestHandler = async (req, res): Promise<void> => {
   try {
-    const { role } = req.user!;
-
-    if (!isAuthorized(role)) {
-      errorResponse(res, "Access Denied", 403);
-      return;
-    }
-
     const allSettings = await getAllNotificationsFromDb();
     successResponse(res, 200, "All notification settings fetched", allSettings);
   } catch (error: any) {
@@ -64,14 +48,12 @@ export const getAllNotifications: RequestHandler = async (req, res): Promise<voi
 // 3. Get My Notification Settings (GET /)
 export const getMyNotification: RequestHandler = async (req, res): Promise<void> => {
   try {
-    const { id: userId, role } = req.user!;
+    const { id: userId } = req.user!;
 
-    if (!isAuthorized(role)) {
-      errorResponse(res, "Access Denied", 403);
-      return;
-    }
+   
 
     const settings = await getNotificationFromDb(userId);
+    console.log("[NotificationController] Get Settings for User:", userId, "Result Found:", !!settings);
     if (!settings) {
       errorResponse(res, "Settings not found for this user", 404);
       return;
@@ -87,12 +69,8 @@ export const getMyNotification: RequestHandler = async (req, res): Promise<void>
 export const getNotificationById: RequestHandler = async (req, res): Promise<void> => {
   try {
     const { id } = req.params;
-    const { role } = req.user!;
 
-    if (!isAuthorized(role)) {
-      errorResponse(res, "Access Denied", 403);
-      return;
-    }
+   
 
     const settings = await getNotificationByIdFromDb(id);
     if (!settings) {
@@ -111,12 +89,9 @@ export const getNotificationById: RequestHandler = async (req, res): Promise<voi
 export const updateNotification: RequestHandler = async (req, res): Promise<void> => {
   try {
     const { id } = req.params;
-    const { id: userId, role } = req.user!;
+    const { id: userId } = req.user!;
 
-    if (!isAuthorized(role)) {
-      errorResponse(res, "Access Denied", 403);
-      return;
-    }
+   
 
     const result = await validateData(updateNotificationSchema, req.body) as any;
     if (!("data" in result)) {
@@ -140,12 +115,9 @@ export const updateNotification: RequestHandler = async (req, res): Promise<void
 export const deleteNotification: RequestHandler = async (req, res): Promise<void> => {
   try {
     const { id } = req.params;
-    const { id: userId, role } = req.user!;
+    const { id: userId } = req.user!;
 
-    if (!isAuthorized(role)) {
-      errorResponse(res, "Access Denied", 403);
-      return;
-    }
+   
 
     await deleteNotificationFromDb(id, userId);
     successResponse(res, 200, "Settings deleted", null);

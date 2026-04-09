@@ -1,28 +1,42 @@
 import prisma from "../../../lib/prisma";
 
-// 1. Create Notification Settings
 export async function createNotificationInDb(payload: any, userId: string) {
-  // Ensure SystemSetting exists
-  let systemSetting = await prisma.system_Setting.findFirst({
-    where: { userId },
-  });
-
-  if (!systemSetting) {
-    systemSetting = await prisma.system_Setting.create({
-      data: { userId },
+  try {
+    console.log("[NotificationService] Upserting for User:", userId, "Payload:", JSON.stringify(payload, null, 2));
+    
+    // Ensure SystemSetting exists
+    let systemSetting = await prisma.system_Setting.findFirst({
+      where: { userId },
     });
-  }
 
-  // Create Notification Setting
-  return await prisma.notificationSetting.create({
-    data: {
-      ...payload,
-      systemSettingId: systemSetting.id,
-    },
-    include: {
-      systemSetting: true // Optional return data
+    if (!systemSetting) {
+      console.log("[NotificationService] No SystemSetting found, creating for User:", userId);
+      systemSetting = await prisma.system_Setting.create({
+        data: { userId },
+      });
     }
-  });
+
+    console.log("[NotificationService] Using SystemSettingId:", systemSetting.id);
+
+    // Use upsert to create or update the single notification setting record
+    const result = await prisma.notificationSetting.upsert({
+      where: { systemSettingId: systemSetting.id },
+      create: {
+        ...payload,
+        systemSettingId: systemSetting.id,
+      },
+      update: payload,
+      include: {
+        systemSetting: true
+      }
+    });
+
+    console.log("[NotificationService] Upsert Succeeded. ID:", result.id);
+    return result;
+  } catch (error) {
+    console.error("[NotificationService] Upsert FAILED:", error);
+    throw error;
+  }
 }
 
 // 2. Get All (For Admin/Owner viewing)

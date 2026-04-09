@@ -10,9 +10,7 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { sendEmail } from "../utils/email";
-import { errorResponse } from "@/utils/handler";
-import { Console } from "console";
+import { sendEmail, newUserSignupTemp, loginAlertTemp } from "../utils/email";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -26,6 +24,7 @@ interface AuthUser {
   role?: string | null;
   fullName?: string | null;
   status?: string | null;
+  defaultCallerId?: string | null;
 }
 
 const pendingPasswords = new Map<string, string>();
@@ -43,6 +42,7 @@ export const auth = betterAuth({
       fullName: { type: "string", required: false },
       status: { type: "string", required: false },
       createdById: { type: "string", required: false },
+      defaultCallerId: { type: "string", required: false },
     },
   },
   trustedOrigins: [
@@ -181,6 +181,18 @@ export const auth = betterAuth({
 
   hooks: {
     before: createAuthMiddleware(async (ctx: any) => {
+      // Update updatedAt on logout to track when the user logs out
+      if (ctx.path.startsWith("/sign-out")) {
+        const session = ctx.session;
+        if (session?.userId) {
+          await prisma.user.update({
+            where: { id: session.userId },
+            data: { updatedAt: new Date() },
+          });
+          console.log(`[Auth] User \${session.userId} logged out. updatedAt updated.`);
+        }
+      }
+
       // Capture plain password for the email hook
       if (ctx.path.includes("sign-up")) {
         const body = ctx.body;
@@ -188,7 +200,7 @@ export const auth = betterAuth({
           throw new APIError("BAD_REQUEST", { message: "invalid role" });
         }
         if (body?.email && body?.password) {
-          console.log(`[Auth] Captured password for ${body.email}`);
+          console.log(`[Auth] Captured password for \${body.email}`);
           pendingPasswords.set(body.email.toLowerCase(), body.password);
         }
       }
@@ -229,6 +241,29 @@ export const auth = betterAuth({
             },
           });
         }
+
+        // Trigger New User Signup notification for companies that have it enabled
+        try {
+          const companiesToNotify = await prisma.company.findMany({
+            where: { newUserSignup: true, email: { not: null } },
+            select: { email: true },
+          });
+
+          if (companiesToNotify.length > 0) {
+            const signupTime = new Date().toLocaleString("en-US", { timeZone: "UTC" }) + " UTC";
+            const emailHtml = newUserSignupTemp(body.email, signupTime);
+
+            // Send emails asynchronously (fire and forget)
+            companiesToNotify.forEach((company) => {
+              if (company.email && user) {
+                sendEmail(company.email, "New User Signed Up on CallScout", emailHtml)
+                  .catch(err => console.error("Failed to send signup notification:", err));
+              }
+            });
+          }
+        } catch (error) {
+          console.error("Signup notification error:", error);
+        }
       }
 
       if (ctx.path.startsWith("/sign-in") || ctx.path.startsWith("/callback")) {
@@ -244,24 +279,50 @@ export const auth = betterAuth({
         // Fetch additional user data
         const userFromDb = await prisma.user.findUnique({
           where: { email: resp.user.email },
-          select: { role: true, fullName: true, status: true },
+          select: { role: true, fullName: true, status: true, defaultCallerId: true },
         });
 
         if (!userFromDb) return resp;
 
-        return {
+        const combinedResp = {
           ...resp,
           user: {
             ...resp.user,
             role: userFromDb.role ?? null,
             fullName: userFromDb.fullName ?? null,
             status: userFromDb.status ?? null,
+            defaultCallerId: userFromDb.defaultCallerId ?? null,
           },
           session: {
             ...resp.session,
             role: userFromDb.role ?? null,
           },
         };
+
+        // Trigger Login Alert notification for companies that have it enabled
+        try {
+          const companiesToNotify = await prisma.company.findMany({
+            where: { loginAlerts: true, email: { not: null } },
+            select: { email: true },
+          });
+
+          if (companiesToNotify.length > 0) {
+            const loginTime = new Date().toLocaleString("en-US", { timeZone: "UTC" }) + " UTC";
+            const emailHtml = loginAlertTemp(resp.user.email, loginTime);
+
+            // Send emails asynchronously (fire and forget)
+            companiesToNotify.forEach((company) => {
+              if (company.email) {
+                sendEmail(company.email, "User Logged into CallScout", emailHtml)
+                  .catch(err => console.error("Failed to send login alert:", err));
+              }
+            });
+          }
+        } catch (error) {
+          console.error("Login notification error:", error);
+        }
+
+        return combinedResp;
       }
 
       if (ctx.path.startsWith("/sign-up")) {

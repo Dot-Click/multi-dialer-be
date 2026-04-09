@@ -160,7 +160,13 @@ export async function createLeadSheetInDb(payload: CreateLeadSheetInput, userId:
 }
 
 export async function getLeadSheetsForUser(userId: string) {
-  const systemSettings = await prisma.system_Setting.findFirst({ where: { userId } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, createdById: true } });
+  if (!user) return [];
+
+  const isManager = ["ADMIN", "OWNER"].includes(user.role.toUpperCase());
+  const targetUserId = isManager ? userId : (user.createdById || userId);
+
+  const systemSettings = await prisma.system_Setting.findFirst({ where: { userId: targetUserId } });
   if (!systemSettings) return [];
 
   return prisma.leadSheet.findMany({
@@ -225,16 +231,16 @@ export async function updateLeadSheetForUser(id: string, payload: UpdateLeadShee
         ...data,
         ...(shouldReplaceQuestions
           ? {
-              questions: {
-                deleteMany: {},
-                create: normalizedQuestions.map((q) => ({
-                  text: q.text,
-                  type: q.type,
-                  options: q.options,
-                  required: q.required ?? null,
-                })),
-              },
-            }
+            questions: {
+              deleteMany: {},
+              create: normalizedQuestions.map((q) => ({
+                text: q.text,
+                type: q.type,
+                options: q.options,
+                required: q.required ?? null,
+              })),
+            },
+          }
           : {}),
       },
       include: {

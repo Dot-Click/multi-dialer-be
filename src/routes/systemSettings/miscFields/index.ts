@@ -9,10 +9,12 @@ import {
 } from "./controller";
 import { protectRoute } from "../../../middlewares/auth.middleware";
 
+import { checkRole } from "../../../middlewares/auth.middleware";
+
 const router = Router();
 
 // Create a misc field
-router.post("/create", createMiscField);
+router.post("/create", checkRole(["ADMIN", "OWNER"]), createMiscField);
 
 // Get all misc fields of all users
 router.get("/all", getAllMiscFieldsOfAllUsers);
@@ -24,10 +26,9 @@ router.get("/", getAllMiscFieldsOfSpecificUser);
 router.get("/:id", getMiscFieldById);
 
 // Update a misc field by ID
-router.put("/:id", updateMiscField);
+router.put("/:id", checkRole(["ADMIN", "OWNER"]), updateMiscField);
 
 // Delete a misc field by ID
-router.delete("/:id", deleteMiscField);
+router.delete("/:id", checkRole(["ADMIN", "OWNER"]), deleteMiscField);
 
 export default router;
-

@@ -71,6 +71,12 @@ enum EventType {
   ALL_DAY
 }
 
+enum EventCategory {
+  TASK
+  APPOINTMENT
+  FOLLOW_UP
+}
+
 enum PhoneType {
   MOBILE
   TELEPHONE
@@ -78,7 +84,6 @@ enum PhoneType {
   WORK
 }
 
-// 1. The 8 Providers from your Figma
 enum IntegrationProvider {
   TWILIO
   GOOGLE_MAPS
@@ -91,7 +96,6 @@ enum IntegrationProvider {
   ZOHO
 }
 
-// 2. The Status for the UI (Green/Red/Yellow)
 enum IntegrationStatus {
   CONNECTED
   FAILED
@@ -99,7 +103,6 @@ enum IntegrationStatus {
   NEED_SETUP
 }
 
-// --- NEW ENUMS FOR ACTION PLANS ---
 enum ActionSchedType {
   FREQUENCY_BASED
   DATE_BASED
@@ -125,7 +128,6 @@ enum ActionEndLogic {
   START_OTHER_PLAN
 }
 
-// --- LEAD SHEETS ---
 enum LeadSheetQuestionType {
   TEXTFIELD
   DROPDOWN
@@ -140,6 +142,26 @@ enum DialerType {
   PREVIEW
 }
 
+enum RecordingType {
+  VOICE_MAIL
+  ON_HOLD
+  EMAIL_VIDEO
+}
+
+enum RecordingSlot {
+  ON_HOLD
+  IVR
+  ANSWERING_MACHINE
+  VOICEMAIL
+  GENERAL
+}
+
+enum ExportType {
+  LIST
+  GROUP
+  ALL_CONTACTS
+}
+
 model User {
   id       String   @id @default(uuid())
   fullName String?
@@ -147,8 +169,8 @@ model User {
   password String?
   role     UserRole @default(AGENT)
 
-  status    UserStatus @default(ACTIVE) // Active / Pending / Suspended / Expiring Soon
-  lastLogin DateTime? // null => "Never"
+  status    UserStatus @default(ACTIVE)
+  lastLogin DateTime?
 
   emailVerified Boolean @default(false)
   image         String?
@@ -160,7 +182,6 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations (UNCHANGED)
   sessions Session[]
   accounts Account[]
   leads    Lead[]
@@ -169,29 +190,68 @@ model User {
   multiLineDialers MultiLineDialer[]
   libraries        Library[]
   reportAnalytics  Report_Analytic[]
-  complianceDNC    Compliance_DNC[]
+  auditLogs        AuditLog[]
 
-  systemSettings     System_Setting[]
-  billings           Billing[]
-  leadStores         LeadStore[]
-  userSubscriptions  UserSubscription[]
-  planFeatures       PlanFeature[]
-  products           Product[]
-  calendarAssignedTo Calendar[]         @relation("CalendarAssignTo")
-  calendarAssignedBy Calendar[]         @relation("CalendarAssignBy")
+  systemSettings    System_Setting[]
+  billings          Billing[]
+  leadStores        LeadStore[]
+  userSubscriptions UserSubscription[]
+  planFeatures      PlanFeature[]
+  products          Product[]
 
-  createdById  String?
-  createdBy    User?      @relation("UserCreator", fields: [createdById], references: [id])
-  createdUsers User[]     @relation("UserCreator")
-  
-  callerIds    CallerId[] 
-  companies Company[]
+  calendarAssignedTo Calendar[] @relation("CalendarAssignTo")
+  calendarAssignedBy Calendar[] @relation("CalendarAssignBy")
+  createdById        String?
+  createdBy          User?      @relation("UserCreator", fields: [createdById], references: [id])
+  createdUsers       User[]     @relation("UserCreator")
+  callerIds          CallerId[]
+  defaultCallerId    String?
+  defaultCaller      CallerId?  @relation("DefaultCaller", fields: [defaultCallerId], references: [id])
+  companies          Company[]
 
   signature Signature?
 
   agentSessions AgentSession[]
   callRecords   CallRecord[]
+
+  // All recordings uploaded by this admin — reusable across any settings
+  recordings Recording[]
+
+  contactLists      ContactList[]
+  contactFolders    ContactFolder[]
+  contactGroups     ContactGroups[]
+  contacts          Contact[]
+  importContacts    ImportContact[]
+  exportContacts    ExportContact[]
+  backupContacts    BackupContacts[]
+  pushSubscriptions PushSubscription[]
+  notifications     Notification[]
+  emailLogs         EmailLog[]
+
   @@map("users")
+}
+
+model Recording {
+  id       String        @id @default(uuid())
+  name     String
+  url      String
+  fileSize Int?
+  duration Int?
+  mimeType String?
+  slot     RecordingSlot @default(GENERAL)
+
+  userId                 String
+  user                   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usedAsOnHold1          CallSettings[] @relation("OnHoldRecording1")
+  usedAsOnHold2          CallSettings[] @relation("OnHoldRecording2")
+  usedAsIvr              CallSettings[] @relation("IvrRecording")
+  usedAsAnsweringMachine CallSettings[] @relation("AnsweringMachineRecording")
+  usedAsBusy             CallSettings[] @relation("BusyRecording")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("recordings")
 }
 
 model ContactList {
@@ -202,15 +262,34 @@ model ContactList {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  folderId String?
+  folder   ContactFolder? @relation(fields: [folderId], references: [id])
+
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
+
   @@map("lists")
 }
 
-model CotactFolder {
+model ContactFolder {
   id        String   @id @default(cuid())
   name      String
   listIds   String[] @default([])
+  contactIds String[] @default([])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  parentId   String?
+  parent     ContactFolder?  @relation("SubFolders", fields: [parentId], references: [id])
+  subFolders ContactFolder[] @relation("SubFolders")
+  lists      ContactList[]
+  contacts    Contact[]
 
   @@map("folders")
 }
@@ -222,28 +301,79 @@ model ContactGroups {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
+
   @@map("groups")
 }
 
 model Contact {
-  id           String         @id @default(cuid())
-  fullName     String
-  city         String?
-  state        String?
-  zip          String?
-  source       String?
-  tags         String[]       @default([])
-  dataDialerId String?
-  dataDialer   DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
-  emails       ContactEmail[]
-  phones       ContactPhone[]
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id             String   @id @default(cuid())
+  fullName       String
+  address        String?
+  city           String?
+  state          String?
+  zip            String?
+  mailingAddress String?
+  mailingCity    String?
+  mailingState   String?
+  mailingZip     String?
+  source         String?
+  tags           String[] @default([])
+  notes          String[] @default([])
+  dataDialerId   String?
+  userId         String?
+
+  dataDialer  DataDialer?    @relation(fields: [dataDialerId], references: [id], onDelete: SetNull)
+  user        User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  emails      ContactEmail[]
+  phones      ContactPhone[]
+  attachments Attachment[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   callRecords CallRecord[]
 
+  miscValues      Json?
+  leadsheetValues Json?
+  miscFields      MiscField[]
+  miscFieldId     String?
+  status          String         @default("PENDING")
+
+  calendar Calendar[]
+  emailLogs EmailLog[]
+
+  folderId     String?
+  folder       ContactFolder? @relation(fields: [folderId], references: [id])
+
+  // Lead Sheet / Qualification Fields
+  permission Boolean @default(false)
+  want       Boolean @default(false)
+  why        Boolean @default(false)
+  statusQuo  Boolean @default(false)
+  timeline   Boolean @default(false)
+  agent      Boolean @default(false)
+
   @@index([dataDialerId])
+  @@index([folderId])
   @@map("contacts")
+}
+
+model Attachment {
+  id        String   @id @default(cuid())
+  fileName  String
+  fileUrl   String
+  fileSize  Int
+  mimeType  String?
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("attachments")
 }
 
 model ContactEmail {
@@ -395,6 +525,7 @@ model EmailTemplate {
   status       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  emailLogs    EmailLog[]
 
   @@unique([libraryId, templateName])
   @@map("email_templates")
@@ -406,7 +537,6 @@ model Signature {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // If signature is per-user/admin:
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -425,12 +555,6 @@ model CallbackPrompt {
   @@map("callback_prompts")
 }
 
-enum RecordingType {
-  VOICE_MAIL
-  ON_HOLD
-  EMAIL_VIDEO
-}
-
 model MediaCenter {
   id           String       @id @default(uuid())
   libraryId    String
@@ -439,8 +563,8 @@ model MediaCenter {
   mediaType    MediaType
   fileName     String
   fileUrl      String?
-  fileSize     Int // in bytes
-  duration     Int? // in seconds, nullable
+  fileSize     Int
+  duration     Int?
   fileCategory FileCategory
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -458,15 +582,7 @@ model Report_Analytic {
   @@map("report_analytics")
 }
 
-model Compliance_DNC {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
-  @@map("compliance_dnc")
-}
 
 model System_Setting {
   id        String   @id @default(uuid())
@@ -478,26 +594,63 @@ model System_Setting {
   caller_id    CallerId[]
   callSettings CallSettings[]
   miscFields   MiscField[]
-
-  // Link to Action Plans
-  actionPlans ActionPlan[] // <--- ADDED THIS RELATION
-
-  // Lead Sheets
-  leadSheets LeadSheet[]
+  actionPlans  ActionPlan[]
+  leadSheets   LeadSheet[]
 
   dialerSetting       DialerSetting?
+  regulatorySetting   RegulatorySetting?
   appearance          Appearance?
   notificationSetting NotificationSetting?
   integrations        Integration[]
+  dispositions        Disposition[]
 
   @@map("system_settings")
+}
+
+model Disposition {
+  id              String         @id @default(cuid())
+  label           String
+  value           String
+  color           String         @default("blue")
+  icon            String         @default("Tag")
+  isSystem        Boolean        @default(false)
+  isActive        Boolean        @default(true)
+  order           Int            @default(0)
+
+  systemSettingId String
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("dispositions")
+}
+
+model RegulatorySetting {
+  id String @id @default(uuid())
+
+  // TCPA Settings
+  tcpaFrom        String  @default("08:00")
+  tcpaTo          String  @default("20:00")
+  tcpaAutodialing Boolean @default(false)
+
+  // GDPR Settings
+  gdprRetentionDays Int     @default(30)
+  gdprDeleteRelated Boolean @default(true)
+
+  systemSettingId String         @unique
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("regulatory_settings")
 }
 
 model LeadSheet {
   id    String @id @default(cuid())
   title String @unique
 
-  // Link to System Settings (and thus the User)
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
@@ -525,53 +678,65 @@ model LeadSheetQuestion {
   @@map("lead_sheet_questions")
 }
 
-// 3. The Integration Table
 model Integration {
   id String @id @default(uuid())
 
-  // Link to the Admin/Owner Settings
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  // Which Provider? (Twilio, Google, etc.)
-  provider IntegrationProvider
-
-  // Status for the Frontend UI
-  status IntegrationStatus @default(NEED_SETUP)
-
-  credentials Json?
-
-  // Error message if connection failed
+  provider     IntegrationProvider
+  status       IntegrationStatus   @default(NEED_SETUP)
+  credentials  Json?
   errorMessage String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Rule: One Admin can only have ONE connection per provider
   @@unique([systemSettingId, provider])
   @@map("integrations")
 }
 
-// NEW MODEL: Specific to the UI Screenshot
+model Notification {
+  id          String  @id @default(uuid())
+  title       String
+  description String
+  type        String? // 'event', 'meeting', 'success', 'error', etc.
+  isRead      Boolean @default(false)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("notifications")
+}
+
 model NotificationSetting {
   id              String         @id @default(uuid())
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  // Section 1: Appointment Reminder Emails
-  enableAppointmentReminders Boolean @default(false)
-  appointmentReminderEmail   String? // The "Send to" input
+  // System/Admin Reports
+  appointmentReminder      Boolean @default(false)
+  appointmentReminderEmail String?
 
-  // Section 2: Daily Call Reports
-  enableCallActivityReport    Boolean @default(false)
-  enableSessionSummaryReport  Boolean @default(false)
+  callActivityReport          Boolean @default(false)
+  sessionSummaryReport        Boolean @default(false)
   includeAgentsWithNoActivity Boolean @default(false)
-  dailyCallReportEmail        String? // The "Send to" input
+  dailyCallReportEmail        String?
 
-  // Section 3: In-App Notifications
-  enableAppointmentNotifications Boolean @default(false)
-  enableComplianceAlerts         Boolean @default(false)
+  appointmentNotification Boolean @default(false)
+  complianceAlert         Boolean @default(false)
 
+  // Agent Specific Preferences
+  emailChannel          Boolean @default(true)
+  inAppChannel          Boolean @default(true)
+  reminderMinutes       Int     @default(0)
+  followUpCallEvent     Boolean @default(true)
+  scheduledMeetingEvent Boolean @default(true)
+
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("notification_settings")
@@ -580,23 +745,19 @@ model NotificationSetting {
 model DialerSetting {
   id String @id @default(uuid())
 
-  // Time Shield Section
   useTimeShield       Boolean @default(false)
-  timeShieldStartTime String? // Format: "HH:mm"
-  timeShieldEndTime   String? // Format: "HH:mm"
+  timeShieldStartTime String?
+  timeShieldEndTime   String?
 
-  // Answer Notification Section
   useAnswerNotificationTone Boolean @default(false)
 
-  // Auto-Remove Section
   deleteDisconnectedNumbers Boolean @default(false)
   deleteFaxNumbers          Boolean @default(false)
 
-  // Call Session Timer Section
   useCallSessionTimer Boolean @default(false)
+  voicemailMode       String  @default("auto")
 
-  // Relationship
-  systemSettingId String         @unique // One dialer setting per system setting
+  systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
@@ -606,23 +767,22 @@ model DialerSetting {
 }
 
 model Billing {
-  id              String       @id @default(uuid())
-  userId          String
-  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  invoiceNumber   String       @unique
-  plan            Plan
-  amount          Int
-  date            DateTime
-  status          Status
-  billingCycle    BillingCycle @default(MONTHLY)
-  usersCount      Int          @default(1)
-  nextBillingDate DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-
-  // Relations
-  leadStore        LeadStore?
-  userSubscription UserSubscription?
+  id                  String            @id @default(uuid())
+  userId              String
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoiceNumber       String            @unique
+  plan                Plan
+  amount              Int
+  date                DateTime
+  status              Status
+  billingCycle        BillingCycle      @default(MONTHLY)
+  usersCount          Int               @default(1)
+  nextBillingDate     DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  zohooSubscriptionId String?
+  leadStore           LeadStore?
+  userSubscription    UserSubscription?
 
   @@map("billings")
 }
@@ -645,8 +805,8 @@ model LeadStore {
 
 model LeadStoreService {
   id          String   @id @default(uuid())
-  name        String // "Expired Data", "Neighborhood Search" etc.
-  price       Int // monthly price
+  name        String
+  price       Int
   description String?
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -656,14 +816,12 @@ model LeadStoreService {
 }
 
 enum LeadCallStatus {
-  // Existing
   PENDING
   CALLING
   CALLED
   FAILED
   BUSY
   NO_ANSWER
-  // New dispositions from frontend
   HOT
   WARM
   COLD
@@ -689,13 +847,14 @@ model Lead {
   zip       String
   phoneType String
   priority  Int            @default(0)
-  status    LeadCallStatus @default(PENDING)
+  status    String         @default("PENDING")
   userId    String
   user      User           @relation(fields: [userId], references: [id])
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
 
   callRecords CallRecord[]
+  emailLogs   EmailLog[]
 
   @@map("leads")
 }
@@ -707,16 +866,17 @@ model UserSubscription {
   plan   Plan
   status SubscriptionStatus @default(ACTIVE)
 
-  startDate    DateTime
-  endDate      DateTime?
-  usersCount   Int          @default(1)
-  billingCycle BillingCycle @default(MONTHLY)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  billingId    String?      @unique
-  billing      Billing?     @relation(fields: [billingId], references: [id])
+  startDate       DateTime
+  endDate         DateTime?
+  zohooCustomerId String?
+  amount          String?
+  usersCount      Int          @default(1)
+  billingCycle    BillingCycle @default(MONTHLY)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  billingId       String?      @unique
+  billing         Billing?     @relation(fields: [billingId], references: [id])
 
-  @@unique([userId, plan])
   @@map("user_subscriptions")
 }
 
@@ -746,33 +906,72 @@ model CallerId {
   createdAt       DateTime       @default(now())
   agents          User[]
   updatedAt       DateTime       @updatedAt
-  dialerType      DialerType?    @default(PREDICTIVE)
+  dialerType      DialerType?    @default(PREDICTIVE) 
   aiPacing        Boolean?       @default(false)
+  counter         Int            @default(0)
+  defaultForUsers User[]         @relation("DefaultCaller")
+  callRecords     CallRecord[]
+
+  callCount           Int       @default(0)
+  frozenAt            DateTime?
+  unfreezeAt          DateTime?
+  reputationStatus    String?
+  reputationScore     Int?
+  lastReputationCheck DateTime?
+
   @@map("caller_id")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL SETTINGS
+// The 4 recording slots now reference Recording rows via FK instead of
+// storing raw strings. onDelete: SetNull means if a recording is deleted,
+// the slot just becomes null — CallSettings row is never broken.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL SETTINGS
+// The 4 recording slots now reference Recording rows via FK instead of
+// storing raw strings. onDelete: SetNull means if a recording is deleted,
+// the slot just becomes null — CallSettings row is never broken.
+// ─────────────────────────────────────────────────────────────────────────────
+
 model CallSettings {
-  id                        String         @id @default(cuid())
-  label                     String
-  onHoldRecording1          String?
-  onHoldRecording2          String?
-  ivrRecording              String?
-  answeringMachineRecording String?
-  enableAutoPause           Boolean        @default(false)
-  enableRecording           Boolean        @default(false)
-  sendOutlookAppointment    Boolean        @default(false)
-  allowDncCalls             Boolean        @default(false)
-  callerId                  String?
-  countryCode               String
-  numberOfLines             Int            @default(1)
-  ringTime                  Int            @default(30)
-  callScriptId              String?
-  sendEmail                 Boolean        @default(false)
-  sendText                  Boolean        @default(false)
-  systemSettingId           String
-  systemSetting             System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
-  createdAt                 DateTime       @default(now())
-  updatedAt                 DateTime       @updatedAt
+  id    String @id @default(cuid())
+  label String
+
+  onHoldRecording1Id String?
+  onHoldRecording1   Recording? @relation("OnHoldRecording1", fields: [onHoldRecording1Id], references: [id], onDelete: SetNull)
+
+  onHoldRecording2Id String?
+  onHoldRecording2   Recording? @relation("OnHoldRecording2", fields: [onHoldRecording2Id], references: [id], onDelete: SetNull)
+
+  ivrRecordingId String?
+  ivrRecording   Recording? @relation("IvrRecording", fields: [ivrRecordingId], references: [id], onDelete: SetNull)
+
+  answeringMachineRecordingId String?
+  answeringMachineRecording   Recording? @relation("AnsweringMachineRecording", fields: [answeringMachineRecordingId], references: [id], onDelete: SetNull)
+  
+  busyRecordingId String?
+  busyRecording   Recording? @relation("BusyRecording", fields: [busyRecordingId], references: [id], onDelete: SetNull)
+
+  enableAutoPause             Boolean    @default(false)
+  enableRecording             Boolean    @default(false)
+  sendOutlookAppointment      Boolean    @default(false)
+  allowDncCalls               Boolean    @default(false)
+  callerId                    String?
+  countryCode                 String
+  numberOfLines               Int        @default(1)
+  ringTime                    Int        @default(30)
+  callScriptId                String?
+  sendEmail                   Boolean    @default(false)
+  sendText                    Boolean    @default(false)
+
+  systemSettingId String
+  systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("call_settings")
 }
@@ -804,6 +1003,8 @@ model MiscField {
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+  contact         Contact?       @relation(fields: [contactId], references: [id])
+  contactId       String?
 
   @@map("misc_fields")
 }
@@ -811,7 +1012,6 @@ model MiscField {
 model Appearance {
   id String @id @default(uuid())
 
-  // Dashboard Sections Visibility
   calendar               Boolean @default(true)
   hotlist                Boolean @default(true)
   callingGroupsWorkspace Boolean @default(true)
@@ -820,7 +1020,6 @@ model Appearance {
   foldersLists           Boolean @default(true)
   recentActivity         Boolean @default(true)
 
-  // AI & Intelligence Sections
   bestTimeToCall            Boolean @default(true)
   leadIntelligence          Boolean @default(true)
   aiCoachingCallAnalysis    Boolean @default(true)
@@ -831,15 +1030,8 @@ model Appearance {
   agentImprovementScores    Boolean @default(true)
   pipelineAccelerationIndex Boolean @default(true)
 
-  // Additional Options
-  lockGroups    Boolean @default(false)
-  birthdays     Boolean @default(false)
-  homeCloseDate Boolean @default(false)
 
-  // Time Zone
-  timeZone String @default("CST")
 
-  // Relation
   systemSettingId String         @unique
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
@@ -850,11 +1042,12 @@ model Appearance {
 }
 
 model Calendar {
-  id          String    @id @default(cuid())
+  id          String        @id @default(cuid())
   title       String
   description String
   color       String
   eventType   EventType
+  category    EventCategory @default(TASK)
   startDate   DateTime
   endDate     DateTime?
 
@@ -866,7 +1059,10 @@ model Calendar {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  status AppointmentStatus @default(SET)
+  status       AppointmentStatus @default(SET)
+  contact      Contact?          @relation(fields: [contactId], references: [id])
+  contactId    String?
+  reminderSent Boolean           @default(false)
 
   @@map("calendar")
 }
@@ -904,10 +1100,13 @@ model CallRecord {
   endTime     DateTime?
   duration    Int? // In seconds
   status      String // Twilio status: completed, failed, etc.
-  disposition LeadCallStatus?
+  disposition String?
 
   recordingUrl String?
   transcript   String? @db.Text
+
+  callerIdId String?
+  callerId   CallerId? @relation(fields: [callerIdId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -915,29 +1114,26 @@ model CallRecord {
   @@map("call_records")
 }
 
-// --- NEW ACTION PLAN MODELS ---
-
 model ActionPlan {
   id String @id @default(uuid())
 
-  // Link to System Settings (and thus the User)
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  name              String // Screen 2: Label
+  name              String
   schedulingType    ActionSchedType @default(FREQUENCY_BASED)
   schedulingLogic   ActionSchedType @default(FREQUENCY_BASED)
   weekendScheduling ActionSchedType @default(FREQUENCY_BASED)
 
-  // Trigger logic (Screen 4)
   triggerType         ActionTriggerType @default(NONE)
-  triggerSourceId     String? // ID of Calling List or Group
+  triggerSourceId     String?
   removeOnTriggerExit Boolean           @default(false)
 
-  // End logic (Screen 5)
   endLogic           ActionEndLogic @default(DO_NOTHING)
+  endLogicValue      String? // For storing repeat day or other values
+  nextPlanId         String?
   assignGroupEnabled Boolean        @default(false)
-  assignGroupId      String? // Selected Group ID from dropdown
+  assignGroupId      String?
 
   steps     ActionStep[]
   createdAt DateTime     @default(now())
@@ -948,10 +1144,10 @@ model ActionPlan {
 
 model ActionStep {
   id           String         @id @default(uuid())
-  order        Int // sequence: 1, 2, 3...
+  order        Int
   actionType   ActionStepType
-  contentValue String // Stores TemplateID, ScriptID, or Subject text (Screen 3)
-  dayOffset    Int            @default(0) // "Begin on Day"
+  contentValue String
+  dayOffset    Int            @default(0)
 
   planId String
   plan   ActionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
@@ -963,33 +1159,28 @@ model ActionStep {
 }
 
 model Company {
-  id              String @id @default(cuid())
-  companyName     String
-  defaultTimeZone String @default("UTC") // example: "Asia/Karachi"
-  defaultCurrency String @default("USD")
-  dateTimeFormat  String @default("MM/DD/YYYY - hh:mm A")
+  id              String  @id @default(cuid())
+  companyName     String?
+  defaultTimeZone String  @default("UTC")
+  defaultCurrency String  @default("USD")
+  dateTimeFormat  String  @default("MM/DD/YYYY - hh:mm A")
 
-  // Zoho Subscriptions Integration
   zohoSubscriptionsConnected Boolean   @default(false)
-  zohoApiKey                 String? // ← best practice: encrypt before saving
+  zohoApiKey                 String?
   zohoOrganizationId         String?
   zohoLastSyncedAt           DateTime?
 
-  // ── Notification Settings ──
   notifyFailedPayment     Boolean @default(true)
   notifyUpcomingRenewal   Boolean @default(true)
   notifyMaintenanceNotice Boolean @default(true)
   notifyCriticalError     Boolean @default(true)
 
-  emailDailySummary        Boolean @default(true)
-  emailWeeklyReport        Boolean @default(true)
-  emailNewUserSignups      Boolean @default(false)
-  emailSubscriptionChanges Boolean @default(true)
-  emailSecurityAlerts      Boolean @default(true)
+  email         String? // The email address where notifications will be sent
+  newUserSignup Boolean @default(false)
+  loginAlerts   Boolean @default(false)
 
-  // ── Security & Access Settings ──
   minPasswordLength   Int     @default(8)
-  passwordExpiryDays  Int?    @default(90) // null = no expiry
+  passwordExpiryDays  Int?    @default(90)
   requireSpecialChars Boolean @default(true)
   requireNumbers      Boolean @default(true)
   requireUppercase    Boolean @default(true)
@@ -999,17 +1190,12 @@ model Company {
   require2faForAdmins Boolean @default(false)
   allow2faForUsers    Boolean @default(true)
 
-  // ── System Preferences ──
+  defaultLanguage String @default("en")
 
-  // Default Language (dropdown/select)
-  defaultLanguage String @default("en") // "en" = English, "ur" = Urdu, "es" = Spanish etc. (ISO 639-1 codes best practice)
+  callLogRetentionDays          Int @default(365)
+  callRecordingRetentionDays    Int @default(90)
+  inactiveUserDataRetentionDays Int @default(180)
 
-  // Data Retention Policy (dropdowns with days/periods)
-  callLogRetentionDays          Int @default(365) // Call Logs → 1 year = 365 days
-  callRecordingRetentionDays    Int @default(90) // Call Recordings → 90 days (common default in telephony SaaS)
-  inactiveUserDataRetentionDays Int @default(180) // Inactive Users Data → 180 days
-
-  // timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1017,4 +1203,116 @@ model Company {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("companies")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  details   String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+model ImportContact {
+  id             String         @id @default(uuid())
+  fileName       String
+  type           String
+  contactListId  String?
+  contactList    ContactList?   @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+  keepOld        Boolean        @default(true)
+  contactsCount  Int            @default(0)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("import_contacts")
+}
+
+model ExportContact {
+  id         String   @id @default(uuid())
+  fieldNames String[] @default([])
+
+  contactListId String?
+  contactList   ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+
+  contactGroupId String?
+  contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+
+  contactsCount Int        @default(0)
+  exportType    ExportType // <- ye naya field, batayega LIST/GROUP/ALL_CONTACTS
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("export_contacts")
+}
+
+model BackupContacts {
+  id        String   @id @default(cuid())
+  contacts  Json // multiple contacts store honge
+  userId    String
+  deletedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("backup_contacts")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("push_subscriptions")
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+}
+
+model EmailLog {
+  id        String      @id @default(uuid())
+  to        String
+  from      String
+  subject   String
+  content   String      @db.Text
+  status    EmailStatus
+  error     String?     @db.Text
+  messageId String?     // SendGrid Message ID
+
+  // Relations
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  contactId String?
+  contact   Contact?    @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  leadId    String?
+  lead      Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  templateId String?
+  template   EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime    @default(now())
+
+  @@map("email_logs")
 }

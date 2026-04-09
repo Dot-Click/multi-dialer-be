@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ActionPlanController } from './controller';
+import { protectRoute } from '@/middlewares/auth.middleware';
 
 const router = Router();
 
@@ -9,8 +10,8 @@ const authorizeAdmin = (req: any, res: any, next: any) => {
   return res.status(403).json({ message: "Forbidden: Admins only" });
 };
 
-router.get('/', authorizeAdmin, ActionPlanController.list);
-router.get('/:id', authorizeAdmin, ActionPlanController.getOne);
+router.get('/', protectRoute, ActionPlanController.list);
+router.get('/:id', protectRoute, ActionPlanController.getOne);
 router.post('/', authorizeAdmin, ActionPlanController.create);
 router.put('/:id', authorizeAdmin, ActionPlanController.update);
 router.delete('/:id', authorizeAdmin, ActionPlanController.remove);

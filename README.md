@@ -1,5 +1,6 @@
 # CallScout Multi-Line Dialer Application — Backend
 
+
 ## Project Overview
 CallScout is a professional web-based SaaS Multi-Line Dialer & CRM platform designed to enhance outbound calling efficiency for sales teams, real estate professionals, and telemarketing agencies. 
 

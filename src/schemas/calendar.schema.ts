@@ -23,6 +23,8 @@ const optionalDate = parseDate.optional();
 
 export const calendarEventType = z.enum(["START_ONLY", "FROM_TO", "ALL_DAY"]);
 
+export const eventCategory = z.enum(["TASK", "APPOINTMENT", "FOLLOW_UP"]);
+
 export const appointmentStatus = z.enum(["SET", "MET", "CANCELLED"]);
 
 export const createCalendarEventSchema = z
@@ -31,9 +33,11 @@ export const createCalendarEventSchema = z
     description: z.string(),
     color: z.string(),
     eventType: calendarEventType,
+    category: eventCategory.optional(),
     startDate: parseDate,
     endDate: optionalDate,
     assignToId: z.string().optional(),
+    contactId: z.string().optional(),
     status: appointmentStatus.optional(),
   })
   .superRefine((data, ctx) => {
@@ -52,9 +56,11 @@ export const updateCalendarEventSchema = z
     description: z.string().optional(),
     color: z.string().optional(),
     eventType: calendarEventType.optional(),
+    category: eventCategory.optional(),
     startDate: parseDate.optional(),
     endDate: optionalDate,
     status: appointmentStatus.optional(),
+    contactId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.eventType === "FROM_TO" && !data.endDate) {

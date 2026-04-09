@@ -8,8 +8,12 @@ import { swaggerDocs } from "@/utils/handler";
 import { cloudinaryConfig, envConfig, sessionMiddleware } from "@/lib/config";
 import { connectDB } from "@/lib/prisma";
 import sgMail from "@sendgrid/mail";
+import { startRetentionJobs } from "@/services/retention.service";
+import { initJobs } from "@/jobs";
 
 connectDB();
+startRetentionJobs();
+initJobs();
 
 const app = express();
 const PORT = envConfig.PORT || 3000;
@@ -46,6 +50,31 @@ app.get("/", (_req: Request, res: Response) => {
 });
 
 app.use("/api", routes);
+
+// Global Error Handler
+app.use(async (err: any, req: Request, res: Response, next: any) => {
+  console.error("[Global Error Handler]", err);
+
+  // If it's a 500 error, notify admins via Web Push
+  if (!err.status || err.status === 500) {
+    try {
+      const { broadcastNotification } = await import('./routes/push/service.js');
+      await broadcastNotification({
+        title: "Critical System Error",
+        body: `A critical error occurred: ${err.message || 'Unknown error'}. Check server logs for details.`,
+        url: "/admin/logs" // Adjust to your actual logs page if any
+      });
+    } catch (pushErr) {
+      console.error("Failed to send critical error push notification:", pushErr);
+    }
+  }
+
+  const statusCode = err.status || 500;
+  res.status(statusCode).json({
+    success: false,
+    message: err.message || "Internal Server Error",
+  });
+});
 
 swaggerDocs(app);
 

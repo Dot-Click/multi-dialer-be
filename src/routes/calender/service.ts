@@ -15,6 +15,12 @@ export const calendarInclude = {
       email: true,
     },
   },
+  contact: {
+    select: {
+      id: true,
+      fullName: true,
+    },
+  },
 };
 
 export async function insertCalendarEventInDb(data: any) {
