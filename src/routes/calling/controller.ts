@@ -348,11 +348,15 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
   }
 
+  // DISABLED: Voice Intelligence (Transcription) can sometimes block media streams on certain accounts.
+  /*
   const start = twiml.start();
   start.transcription({
     track: "both_tracks",
     statusCallbackUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/transcription`,
   });
+  */
+
 
   const amRecordingUrl = req.query.amRecordingUrl as string;
   const AnsweredBy = body.AnsweredBy || body.answered_by;
@@ -477,10 +481,11 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     console.log(`[VoiceWebhook] Bridging Call ${currentCallSid} to Agent ${agentId} with CallerId ${caller}`);
 
     const dial = twiml.dial({
-      callerId: caller,
-      record: "record-from-answer-dual",
-      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
+      callerId: envConfig.TWILIO_PHONE_NUMBER, // Using verified Twilio number for tests
+      // record: "record-from-answer-dual",
+      // recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
+
 
     // Bridge to the specific agent identity safely
     const clientNode = dial.client(agentId); 
@@ -492,7 +497,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     // This prevents immediate hangup and gives we a chance to see what happened.
     twiml.say("Connecting you now, please stay on the line.");
     twiml.pause({ length: 3 });
-    twiml.redirect(`${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentId}&contactId=${contactId || ''}&retry=true`);
+    // twiml.redirect(`${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentId}&contactId=${contactId || ''}&retry=true`);
+
 
     console.log(`[VoiceWebhook] Generated TwiML for bridge: ${twiml.toString()}`);
 
