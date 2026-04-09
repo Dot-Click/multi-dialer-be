@@ -487,8 +487,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     });
 
 
-    // Bridge to the specific agent identity safely
-    const clientNode = dial.client(agentId); 
+    // Bridge to the specific agent identity safely via explicit Identity tag
+    const clientNode = dial.client(); 
+    clientNode.identity(agentId);
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
