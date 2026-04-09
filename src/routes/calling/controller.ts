@@ -472,7 +472,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       isBrowserCall: false
     });
 
-    twiml.say("Please wait while we connect you to an agent.");
+    // Removed: twiml.say("Please wait while we connect you to an agent.");
     const dial = twiml.dial({
       callerId: caller, // Keep the original caller ID
       record: "record-from-answer-dual",
