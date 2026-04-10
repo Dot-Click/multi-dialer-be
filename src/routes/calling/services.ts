@@ -261,15 +261,35 @@ export class DialerService {
 
       const { tcpaFrom, tcpaTo, tcpaAutodialing } = settings.regulatorySetting;
 
-      // Convert current time to string "HH:mm"
+      // Make timezone aware (defaults to UTC if no company found)
+      let timeZone = "UTC";
+      try {
+        const company = await prisma.company.findFirst();
+        if (company?.defaultTimeZone) {
+          timeZone = company.defaultTimeZone;
+        }
+      } catch (e) {}
+
       const now = new Date();
-      const currentStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      let currentStr = "";
+      try {
+        const formatter = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false });
+        const parts = formatter.formatToParts(now);
+        const hr = parts.find(p => p.type === 'hour')?.value || "00";
+        const mn = parts.find(p => p.type === 'minute')?.value || "00";
+        const adjustedHr = hr === '24' ? '00' : hr;
+        currentStr = `${adjustedHr}:${mn}`;
+      } catch (e) {
+        currentStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      }
+
       let isAllowed = true;
       if (tcpaFrom && tcpaTo) {
         isAllowed = tcpaFrom <= tcpaTo
           ? (currentStr >= tcpaFrom && currentStr <= tcpaTo)
           : (currentStr >= tcpaFrom || currentStr <= tcpaTo);
       }
+
 
       return { isAllowed, autodialingEnabled: tcpaAutodialing };
     } catch (error) {
