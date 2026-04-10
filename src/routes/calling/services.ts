@@ -75,8 +75,7 @@ export class DialerService {
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
-  private userCallerIdPrefs: Map<string, string[]> = new Map(); // userId -> callerIds[]
-  private userCallerIdIndex: Map<string, number> = new Map(); // userId -> lastUsedIndex
+  private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
 
   private constructor() { }
 
@@ -97,10 +96,9 @@ export class DialerService {
   /**
    * Add leads to queue and trigger processing for that user.
    */
-  async addLeadsToQueue(userId: string, leads: Lead[], callerIds?: string[]) {
-    if (callerIds && callerIds.length > 0) {
-      this.userCallerIdPrefs.set(userId, callerIds);
-      this.userCallerIdIndex.set(userId, 0); // Reset index for new batch
+  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string) {
+    if (callerId) {
+      this.userCallerIdPrefs.set(userId, callerId);
     }
 
     const queue = this.getOrCreateQueue(userId);
@@ -121,8 +119,6 @@ export class DialerService {
     this.agentBusyState.delete(userId);
     this.agentBridgedCallId.delete(userId);
     this.userActiveSessions.delete(userId);
-    this.userCallerIdPrefs.delete(userId);
-    this.userCallerIdIndex.delete(userId);
     for (const [sid, metadata] of this.activeCalls.entries()) {
       if (metadata.userId === userId) {
         this.activeCalls.delete(sid);
@@ -253,18 +249,8 @@ export class DialerService {
         include: { defaultCaller: true }
       });
 
-      const callerIds = this.userCallerIdPrefs.get(lead.userId);
-      let fromNumber: string;
-
-      if (callerIds && callerIds.length > 0) {
-        const index = this.userCallerIdIndex.get(lead.userId) || 0;
-        fromNumber = callerIds[index];
-        // Increment index for next call
-        this.userCallerIdIndex.set(lead.userId, (index + 1) % callerIds.length);
-      } else {
-        // @ts-ignore
-        fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
-      }
+      const preferredCallerId = this.userCallerIdPrefs.get(lead.userId);
+      const fromNumber = preferredCallerId || user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
 
       // Also fetch system settings to get answeringMachineRecordingUrl
       const settings = await prisma.system_Setting.findFirst({
@@ -348,7 +334,6 @@ export class DialerService {
       queueSize: queue?.size() || 0,
       activeCallsCount: userActiveCalls.length,
       currentQueue: queue?.getQueue() || [],
-      callStatuses: userActiveCalls.map(c => ({ contactId: c.contactId }))
     };
   }
 
@@ -398,22 +383,19 @@ export class DialerService {
       console.warn(`[handleCallStatusUpdate] No metadata and no providedAgentId for SID ${sid}. Cannot track status.`);
       return;
     }
-    let dbStatus: LeadCallStatus | null = null;
-    const terminalStatuses = ["failed", "busy", "no-answer", "completed", "canceled"];
+    let dbStatus: LeadCallStatus = LeadCallStatus.CALLED;
+    const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
 
     if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
     else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
-    else if (twilioStatus === "canceled") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "completed") {
       dbStatus = LeadCallStatus.CALLED;
       this.clearTranscriptionLogs(sid);
     }
-    // Note: 'answered' or 'in-progress' do not change the Lead status to CALLED yet.
 
-
-    if (leadId && dbStatus) {
+    if (leadId) {
       await this.updateLeadStatusInDB(leadId, dbStatus);
     }
 
@@ -430,7 +412,7 @@ export class DialerService {
           updateData.endTime = endTime;
           updateData.sessionId = metadata?.sessionId;
           updateData.duration = duration;
-          if (dbStatus) updateData.disposition = dbStatus;
+          updateData.disposition = dbStatus;
         }
 
         await (prisma.callRecord as any).update({
