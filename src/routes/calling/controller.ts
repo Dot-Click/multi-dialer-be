@@ -165,7 +165,7 @@ export const stopDialing: RequestHandler = async (req, res) => {
  */
 export const addLeadsToDialer: RequestHandler = async (req, res) => {
   try {
-    const { leads, callerId, callerIds }: { leads: any[], callerId?: string, callerIds?: string[] } = req.body;
+    const { leads, callerId }: { leads: any[], callerId?: string } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -259,7 +259,7 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         priority: l.priority,
         userId: userId,
       })),
-      callerIds || (callerId ? [callerId] : undefined) // Pass selected caller IDs to service
+      callerId // Pass selected caller ID to service
     );
 
     successResponse(res, 200, "Leads saved to DB and added to queue!", {
@@ -348,15 +348,11 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
   }
 
-  // DISABLED: Voice Intelligence (Transcription) can sometimes block media streams on certain accounts.
-  /*
   const start = twiml.start();
   start.transcription({
     track: "both_tracks",
     statusCallbackUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/transcription`,
   });
-  */
-
 
   const amRecordingUrl = req.query.amRecordingUrl as string;
   const AnsweredBy = body.AnsweredBy || body.answered_by;
@@ -470,39 +466,25 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     dialerService.setAgentBusy(agentId, true, currentCallSid);
     console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
 
-    const existingMetadata = (dialerService as any).activeCalls.get(currentCallSid) || {};
     (dialerService as any).activeCalls.set(currentCallSid, {
-      ...existingMetadata,
-      userId: agentId || (existingMetadata as any).userId,
+      userId: agentId,
+      sessionId: null,
       isBrowserCall: false
     });
 
-    // Removed: twiml.say("Please wait while we connect you to an agent.");
-    console.log(`[VoiceWebhook] Bridging Call ${currentCallSid} to Agent ${agentId} with CallerId ${caller}`);
-
+    twiml.say("Please wait while we connect you to an agent.");
     const dial = twiml.dial({
-      callerId: envConfig.TWILIO_PHONE_NUMBER, // Using verified Twilio number for tests
-      // record: "record-from-answer-dual",
-      // recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
+      callerId: caller, // Keep the original caller ID
+      record: "record-from-answer-dual",
+      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
 
-
-    // Bridge to the specific agent identity safely via explicit Identity tag
-    const clientNode = dial.client(); 
+    // Bridge to the specific agent identity safely via TwiML nested tags
+    const clientNode = dial.client();
     clientNode.identity(agentId);
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
-
-    // Fallback verbs in case the <Dial> fails to connect (e.g. agent offline)
-    // This prevents immediate hangup and gives we a chance to see what happened.
-    twiml.say("Connecting you now, please stay on the line.");
-    twiml.pause({ length: 3 });
-    // twiml.redirect(`${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentId}&contactId=${contactId || ''}&retry=true`);
-
-
-    console.log(`[VoiceWebhook] Generated TwiML for bridge: ${twiml.toString()}`);
-
 
   }
 
@@ -570,42 +552,22 @@ export const dropVoicemail: RequestHandler = async (req, res) => {
       return;
     }
 
-    console.log(`[DropVoicemail] Dropping voicemail for session related to ${callSid}`);
+    console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
 
-    // 1. Identify the entire call session (root parent and all legs)
-    const agentCall = await client.calls(callSid).fetch();
-    const rootSid = agentCall.parentCallSid || callSid;
-    
-    const childCalls = await client.calls.list({ parentCallSid: rootSid });
-    const rootCall = agentCall.parentCallSid ? await client.calls(rootSid).fetch() : agentCall;
-    
-    // Combine to see every leg in this bridge
-    const allLegsInSession = [rootCall, ...childCalls];
-    
-    // 2. Identify the Customer leg (The one that is NOT the agent leg provided by frontend)
-    const customerLeg = allLegsInSession.find(c => 
-      c.sid !== callSid && 
-      ['in-progress', 'ringing', 'answered', 'queued'].includes(c.status)
-    );
+    // Find the customer leg
+    const currentCall = await client.calls(callSid).fetch();
+    const childCalls = await client.calls.list({ parentCallSid: callSid });
+    const customerLeg = childCalls.find(c =>
+      ['in-progress', 'ringing', 'answered'].includes(c.status)
+    ) || currentCall;
 
-    if (!customerLeg) {
-      throw new Error("Could not identify an active customer leg for voicemail drop.");
-    }
-
-    console.log(`[DropVoicemail] Target Customer Leg: ${customerLeg.sid}, Agent Leg: ${callSid}`);
-
-    // 3. Update CUSTOMER leg with Voicemail TwiML
+    // Play voicemail to customer and hang up
     await client.calls(customerLeg.sid).update({
       twiml: `<Response>
                 <Play>${voicemailUrl}</Play>
                 <Hangup/>
             </Response>`
     });
-
-    // 4. Force-terminate the AGENT leg instantly to ensure they don't hear anything
-    if (['in-progress', 'answered'].includes(agentCall.status)) {
-      await client.calls(callSid).update({ status: 'completed' });
-    }
 
     successResponse(res, 200, "Voicemail dropped successfully", { callSid });
     return;
