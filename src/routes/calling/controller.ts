@@ -66,7 +66,8 @@ export const startCalling: RequestHandler = async (req, res) => {
           (dialerService as any).activeCalls.set(call.sid, {
             contactId: contact.id,
             userId,
-            sessionId: null
+            sessionId: null,
+            status: "initiated"
           });
 
           // Create the record. Cast to any in case schema isn't generated.
@@ -259,7 +260,7 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         priority: l.priority,
         userId: userId,
       })),
-      callerId // Pass selected caller ID to service
+      callerId // Pass selected caller IDs (array) or ID (string) to service
     );
 
     successResponse(res, 200, "Leads saved to DB and added to queue!", {
@@ -329,8 +330,11 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       // Register with dialerService for status tracking
       (dialerService as any).activeCalls.set(body.CallSid, {
         userId: agentId,
+        leadId: contactId,
+        contactId: contactId,
         sessionId: null,
-        isBrowserCall: true
+        isBrowserCall: true,
+        status: "initiated"
       });
 
       await prisma.callRecord.create({
@@ -466,10 +470,14 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     dialerService.setAgentBusy(agentId, true, currentCallSid);
     console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
 
+    // Set status to in-progress for the bridge
     (dialerService as any).activeCalls.set(currentCallSid, {
       userId: agentId,
+      leadId: contactId,
+      contactId: contactId,
       sessionId: null,
-      isBrowserCall: false
+      isBrowserCall: false,
+      status: "in-progress"
     });
 
     twiml.say("Please wait while we connect you to an agent.");

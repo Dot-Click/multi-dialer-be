@@ -71,7 +71,7 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
@@ -98,10 +98,17 @@ export class DialerService {
   /**
    * Add leads to queue and trigger processing for that user.
    */
-  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string) {
-    if (callerId) {
+  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string | string[]) {
+    if (callerId && !Array.isArray(callerId)) {
       this.userCallerIdPrefs.set(userId, callerId);
-      this.userCallerIdPools.delete(userId); // Explicit choice overrides rotation pool
+      this.userCallerIdPools.delete(userId); // Explicit single choice overrides rotation pool
+      console.log(`[DialerService] Set single preferred callerId for user ${userId}: ${callerId}`);
+    } else if (Array.isArray(callerId) && callerId.length > 0) {
+      // Explicit list of IDs to rotate through
+      this.userCallerIdPools.set(userId, callerId);
+      this.userCallerIdIndices.set(userId, 0);
+      this.userCallerIdPrefs.delete(userId);
+      console.log(`[DialerService] Initialized explicit rotation pool for user ${userId} with ${callerId.length} numbers.`);
     } else {
       // IF no specific callerId provided, fetch ALL available ones for rotation
       try {
@@ -125,8 +132,8 @@ export class DialerService {
           if (numbers.length > 0) {
             this.userCallerIdPools.set(userId, numbers);
             this.userCallerIdIndices.set(userId, 0);
-            this.userCallerIdPrefs.delete(userId); // Use pool instead
-            console.log(`[DialerService] Initialized rotation pool for user ${userId} with ${numbers.length} numbers.`);
+            this.userCallerIdPrefs.delete(userId);
+            console.log(`[DialerService] Initialized automatic rotation pool for user ${userId} with ${numbers.length} numbers.`);
           }
         }
       } catch (poolError) {
@@ -350,7 +357,13 @@ export class DialerService {
 
       console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}) from ${twilioFrom}. SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
-      this.activeCalls.set(call.sid, { leadId: lead.id, contactId: lead.id, userId: lead.userId, sessionId });
+      this.activeCalls.set(call.sid, { 
+        leadId: lead.id, 
+        contactId: lead.id, 
+        userId: lead.userId, 
+        sessionId,
+        status: "initiated" 
+      });
 
       // 3. Create CallRecord in DB immediately
       try {
@@ -404,10 +417,19 @@ export class DialerService {
       (c) => c.userId === userId
     );
 
+    const leadStatuses: Record<string, string> = {};
+    Array.from(this.activeCalls.values()).forEach(c => {
+      const lid = c.leadId || c.contactId;
+      if (c.userId === userId && lid) {
+        leadStatuses[lid] = c.status || "initiated";
+      }
+    });
+
     return {
       queueSize: queue?.size() || 0,
       activeCallsCount: userActiveCalls.length,
       currentQueue: queue?.getQueue() || [],
+      leadStatuses
     };
   }
 
@@ -442,6 +464,12 @@ export class DialerService {
 
   async handleCallStatusUpdate(sid: string, twilioStatus: string, isChildLeg: boolean = false, providedAgentId?: string) {
     const metadata = this.activeCalls.get(sid);
+    let userId = metadata?.userId || providedAgentId;
+
+    if (metadata) {
+      metadata.status = twilioStatus;
+      this.activeCalls.set(sid, metadata);
+    }
 
     // PROTECTION: For browser calls... (keep this or move below userId check?)
     // Actually, if metadata is missing we can't tell if it's a browser call.
@@ -450,7 +478,7 @@ export class DialerService {
       return;
     }
 
-    let { leadId, contactId, userId } = metadata || ({} as any);
+    let { leadId, contactId } = metadata || ({} as any);
     if (!userId) userId = providedAgentId;
 
     if (!userId) {

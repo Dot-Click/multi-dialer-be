@@ -62,6 +62,7 @@ router.post("/toggle-hold", protectRoute, toggleHold);
 router.post("/toggle-hold", protectRoute, toggleHold);
 router.post("/leads", protectRoute, addLeadsToDialer);
 router.post("/stop-dialing", protectRoute, stopDialing);
+router.get("/status", protectRoute, getDialerStatus);
 router.get("/status/:sid", protectRoute, getCallStatus);
 router.get("/getHistory", protectRoute, getHistory);
 router.get("/sentiments/:sid", protectRoute, getCallSummary);
