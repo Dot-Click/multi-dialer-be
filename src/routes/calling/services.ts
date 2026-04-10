@@ -170,50 +170,48 @@ export class DialerService {
   /**
    * Filling up available lines for the user
    */
+  // In processQueue — pre-assign caller IDs synchronously before async makeCall
   private async processQueue(userId: string) {
     const queue = this.userQueues.get(userId);
     if (!queue || queue.isEmpty()) return;
 
-    // 0. Check TCPA hours & Autodialing toggle
     const { isAllowed, autodialingEnabled } = await this.checkCompliance(userId);
-    if (!autodialingEnabled) {
-      console.log(`[processQueue] Autodialing is DISABLED for user ${userId}.`);
-      return;
-    }
-    if (!isAllowed) {
-      console.log(`[processQueue] User ${userId} is outside calling hours.`);
-      return;
-    }
+    if (!autodialingEnabled || !isAllowed) return;
 
-    // 1. Get user capacity (simultaneous lines)
     const capacity = await this.getUserCapacity(userId);
+    const currentActiveCount = Array.from(this.activeCalls.values())
+      .filter((call) => call.userId === userId).length;
 
-    // 2. Count current active calls for this user
-    const currentActiveCount = Array.from(this.activeCalls.values()).filter(
-      (call) => call.userId === userId
-    ).length;
+    if (this.isAgentBusy(userId)) return;
 
-    console.log(`User ${userId} capacity: ${capacity}, active: ${currentActiveCount}`);
-
-    // 3. While we have capacity and leads in queue, make calls
-    // But if agent is currently busy, do not originate NEW calls,
-    // to minimize the number of calls that connect while agent is occupied.
-    if (this.isAgentBusy(userId)) {
-      console.log(`[processQueue] Skipped dialing for user ${userId} because agent is currently busy.`);
-      return;
-    }
+    // Pre-fetch the pool once
+    const pool = this.userCallerIdPools.get(userId) || [];
 
     let inFlight = currentActiveCount;
+    const callBatch: { lead: Lead; assignedNumber: string | null }[] = [];
+
+    // 1. Synchronously assign numbers to all leads before any async work
     while (inFlight < capacity && !queue.isEmpty()) {
       const lead = queue.dequeue();
-      if (lead) {
-        inFlight++;
-        // Trigger call initiation with a slight stagger to prevent Twilio API Rate limit drops
-        this.makeCall(lead);
-        await new Promise(r => setTimeout(r, 250));
-      } else {
-        break;
+      if (!lead) break;
+
+      let assignedNumber: string | null = null;
+
+      if (pool.length > 0) {
+        // Round-robin: grab current index, increment immediately
+        let index = this.userCallerIdIndices.get(userId) || 0;
+        assignedNumber = pool[index % pool.length];
+        this.userCallerIdIndices.set(userId, (index + 1) % pool.length);
       }
+
+      callBatch.push({ lead, assignedNumber });
+      inFlight++;
+    }
+
+    // 2. Now fire calls with their pre-assigned numbers
+    for (const { lead, assignedNumber } of callBatch) {
+      this.makeCall(lead, assignedNumber);
+      await new Promise(r => setTimeout(r, 250));
     }
   }
 
@@ -261,15 +259,35 @@ export class DialerService {
 
       const { tcpaFrom, tcpaTo, tcpaAutodialing } = settings.regulatorySetting;
 
-      // Convert current time to string "HH:mm"
+      // Make timezone aware (defaults to UTC if no company found)
+      let timeZone = "UTC";
+      try {
+        const company = await prisma.company.findFirst();
+        if (company?.defaultTimeZone) {
+          timeZone = company.defaultTimeZone;
+        }
+      } catch (e) { }
+
       const now = new Date();
-      const currentStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      let currentStr = "";
+      try {
+        const formatter = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false });
+        const parts = formatter.formatToParts(now);
+        const hr = parts.find(p => p.type === 'hour')?.value || "00";
+        const mn = parts.find(p => p.type === 'minute')?.value || "00";
+        const adjustedHr = hr === '24' ? '00' : hr;
+        currentStr = `${adjustedHr}:${mn}`;
+      } catch (e) {
+        currentStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      }
+
       let isAllowed = true;
       if (tcpaFrom && tcpaTo) {
         isAllowed = tcpaFrom <= tcpaTo
           ? (currentStr >= tcpaFrom && currentStr <= tcpaTo)
           : (currentStr >= tcpaFrom || currentStr <= tcpaTo);
       }
+
 
       return { isAllowed, autodialingEnabled: tcpaAutodialing };
     } catch (error) {
@@ -278,19 +296,66 @@ export class DialerService {
     }
   }
 
-  private async makeCall(lead: Lead) {
+  private async makeCall(lead: Lead, preAssignedNumber?: string | null) {
     try {
+
+      await this.updateLeadStatusInDB(lead.id, "CALLING");
+
+      const pool = this.userCallerIdPools.get(lead.userId);
+      let fromNumber: string | undefined = preAssignedNumber || undefined;
+      let selectedCallerId: any = null;
+
+      // If a number was pre-assigned, look up its DB record for the callerIdId
+      if (fromNumber) {
+        selectedCallerId = await prisma.callerId.findFirst({
+          where: { twillioNumber: fromNumber }
+        });
+
+        // Check if it's frozen — if so, fall through to find another
+        const now = new Date();
+        if (selectedCallerId?.unfreezeAt && selectedCallerId.unfreezeAt > now) {
+          console.warn(`[makeCall] Pre-assigned number ${fromNumber} is frozen. Finding fallback.`);
+          fromNumber = undefined;
+          selectedCallerId = null;
+        }
+      }
+
+      // Fallback: iterate pool to find a non-frozen number (edge case)
+      if (!fromNumber && pool && pool.length > 0) {
+        for (const num of pool) {
+          const cidRecord = await prisma.callerId.findFirst({
+            where: { twillioNumber: num }
+          });
+          const now = new Date();
+          if (!cidRecord?.unfreezeAt || cidRecord.unfreezeAt <= now) {
+            fromNumber = num;
+            selectedCallerId = cidRecord;
+            break;
+          }
+        }
+      }
+
+      // Final fallback: user default
+      if (!fromNumber) {
+        const user = await prisma.user.findUnique({
+          where: { id: lead.userId },
+          include: { defaultCaller: true }
+        });
+        fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+        selectedCallerId = user?.defaultCaller;
+      }
+
       // 1. Update status to CALLING in DB
       await this.updateLeadStatusInDB(lead.id, "CALLING");
 
       // 2. Determine Caller ID (with Rotation Support)
-      const pool = this.userCallerIdPools.get(lead.userId);
-      let fromNumber = this.userCallerIdPrefs.get(lead.userId);
-      let selectedCallerId: any = null;
+      // const pool = this.userCallerIdPools.get(lead.userId);
+      // let fromNumber = this.userCallerIdPrefs.get(lead.userId);
+      // let selectedCallerId: any = null;
 
       if (pool && pool.length > 0) {
         let index = this.userCallerIdIndices.get(lead.userId) || 0;
-        
+
         // Try up to pool.length times to find a non-frozen ID
         let found = false;
         for (let i = 0; i < pool.length; i++) {
@@ -357,12 +422,12 @@ export class DialerService {
 
       console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}) from ${twilioFrom}. SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
-      this.activeCalls.set(call.sid, { 
-        leadId: lead.id, 
-        contactId: lead.id, 
-        userId: lead.userId, 
+      this.activeCalls.set(call.sid, {
+        leadId: lead.id,
+        contactId: lead.id,
+        userId: lead.userId,
         sessionId,
-        status: "initiated" 
+        status: "initiated"
       });
 
       // 3. Create CallRecord in DB immediately
