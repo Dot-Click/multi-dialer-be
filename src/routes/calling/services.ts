@@ -345,56 +345,6 @@ export class DialerService {
         selectedCallerId = user?.defaultCaller;
       }
 
-      // 1. Update status to CALLING in DB
-      await this.updateLeadStatusInDB(lead.id, "CALLING");
-
-      // 2. Determine Caller ID (with Rotation Support)
-      // const pool = this.userCallerIdPools.get(lead.userId);
-      // let fromNumber = this.userCallerIdPrefs.get(lead.userId);
-      // let selectedCallerId: any = null;
-
-      if (pool && pool.length > 0) {
-        let index = this.userCallerIdIndices.get(lead.userId) || 0;
-
-        // Try up to pool.length times to find a non-frozen ID
-        let found = false;
-        for (let i = 0; i < pool.length; i++) {
-          const currentNum = pool[index];
-          index = (index + 1) % pool.length;
-          this.userCallerIdIndices.set(lead.userId, index);
-
-          // Check if this number is frozen
-          const cidRecord = await prisma.callerId.findFirst({
-            where: { twillioNumber: currentNum }
-          });
-
-          const now = new Date();
-          const isFrozen = cidRecord?.unfreezeAt && cidRecord.unfreezeAt > now;
-
-          if (!isFrozen) {
-            fromNumber = currentNum;
-            selectedCallerId = cidRecord;
-            found = true;
-            console.log(`[DialerService] Rotation: Picked ${fromNumber} (Index: ${index}) for user ${lead.userId}`);
-            break;
-          } else {
-            console.log(`[DialerService] Rotation: Skipping frozen number ${currentNum} for user ${lead.userId}`);
-          }
-        }
-
-        if (!found) {
-          console.warn(`[DialerService] All numbers in pool for user ${lead.userId} are frozen! Using default.`);
-        }
-      }
-
-      if (!fromNumber) {
-        const user = await prisma.user.findUnique({
-          where: { id: lead.userId },
-          include: { defaultCaller: true }
-        });
-        fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
-        selectedCallerId = user?.defaultCaller;
-      }
 
       const twilioFrom = fromNumber?.startsWith('+') ? fromNumber : `+${fromNumber}`;
 
