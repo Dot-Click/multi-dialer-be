@@ -76,6 +76,8 @@ export class DialerService {
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
   private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
+  private userCallerIdPools: Map<string, string[]> = new Map(); // userId -> list of Twilio numbers
+  private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
 
   private constructor() { }
 
@@ -99,6 +101,37 @@ export class DialerService {
   async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string) {
     if (callerId) {
       this.userCallerIdPrefs.set(userId, callerId);
+      this.userCallerIdPools.delete(userId); // Explicit choice overrides rotation pool
+    } else {
+      // IF no specific callerId provided, fetch ALL available ones for rotation
+      try {
+        const settings = await prisma.system_Setting.findFirst({
+          where: { userId }
+        });
+
+        if (settings) {
+          const user = await prisma.user.findUnique({ where: { id: userId } });
+          const availableIds = await prisma.callerId.findMany({
+            where: user?.role === "AGENT"
+              ? { agents: { some: { id: userId } } }
+              : { systemSettingId: settings.id },
+            select: { twillioNumber: true }
+          });
+
+          const numbers = availableIds
+            .map(id => id.twillioNumber)
+            .filter((n): n is string => !!n);
+
+          if (numbers.length > 0) {
+            this.userCallerIdPools.set(userId, numbers);
+            this.userCallerIdIndices.set(userId, 0);
+            this.userCallerIdPrefs.delete(userId); // Use pool instead
+            console.log(`[DialerService] Initialized rotation pool for user ${userId} with ${numbers.length} numbers.`);
+          }
+        }
+      } catch (poolError) {
+        console.error(`[DialerService] Failed to initialize callerId pool for user ${userId}:`, poolError);
+      }
     }
 
     const queue = this.getOrCreateQueue(userId);
@@ -243,14 +276,55 @@ export class DialerService {
       // 1. Update status to CALLING in DB
       await this.updateLeadStatusInDB(lead.id, "CALLING");
 
-      // 2. Fetch User's default caller ID if exists
-      const user = await prisma.user.findUnique({
-        where: { id: lead.userId },
-        include: { defaultCaller: true }
-      });
+      // 2. Determine Caller ID (with Rotation Support)
+      const pool = this.userCallerIdPools.get(lead.userId);
+      let fromNumber = this.userCallerIdPrefs.get(lead.userId);
+      let selectedCallerId: any = null;
 
-      const preferredCallerId = this.userCallerIdPrefs.get(lead.userId);
-      const fromNumber = preferredCallerId || user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+      if (pool && pool.length > 0) {
+        let index = this.userCallerIdIndices.get(lead.userId) || 0;
+        
+        // Try up to pool.length times to find a non-frozen ID
+        let found = false;
+        for (let i = 0; i < pool.length; i++) {
+          const currentNum = pool[index];
+          index = (index + 1) % pool.length;
+          this.userCallerIdIndices.set(lead.userId, index);
+
+          // Check if this number is frozen
+          const cidRecord = await prisma.callerId.findFirst({
+            where: { twillioNumber: currentNum }
+          });
+
+          const now = new Date();
+          const isFrozen = cidRecord?.unfreezeAt && cidRecord.unfreezeAt > now;
+
+          if (!isFrozen) {
+            fromNumber = currentNum;
+            selectedCallerId = cidRecord;
+            found = true;
+            console.log(`[DialerService] Rotation: Picked ${fromNumber} (Index: ${index}) for user ${lead.userId}`);
+            break;
+          } else {
+            console.log(`[DialerService] Rotation: Skipping frozen number ${currentNum} for user ${lead.userId}`);
+          }
+        }
+
+        if (!found) {
+          console.warn(`[DialerService] All numbers in pool for user ${lead.userId} are frozen! Using default.`);
+        }
+      }
+
+      if (!fromNumber) {
+        const user = await prisma.user.findUnique({
+          where: { id: lead.userId },
+          include: { defaultCaller: true }
+        });
+        fromNumber = user?.defaultCaller?.twillioNumber || envConfig.TWILIO_PHONE_NUMBER;
+        selectedCallerId = user?.defaultCaller;
+      }
+
+      const twilioFrom = fromNumber?.startsWith('+') ? fromNumber : `+${fromNumber}`;
 
       // Also fetch system settings to get answeringMachineRecordingUrl
       const settings = await prisma.system_Setting.findFirst({
@@ -263,7 +337,7 @@ export class DialerService {
       // 3. Initiate Twilio Call
       const call = await client.calls.create({
         to: lead.phone,
-        from: fromNumber as string,
+        from: twilioFrom as string,
         url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&contactId=${lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
@@ -274,7 +348,7 @@ export class DialerService {
         asyncAmdStatusCallbackMethod: "POST",
       });
 
-      console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}). SID: ${call.sid}`);
+      console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}) from ${twilioFrom}. SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
       this.activeCalls.set(call.sid, { leadId: lead.id, contactId: lead.id, userId: lead.userId, sessionId });
 
@@ -287,12 +361,12 @@ export class DialerService {
             userId: lead.userId,
             sessionId: sessionId || null,
             // @ts-ignore - Prisma client needs regeneration
-            callerIdId: user?.defaultCaller?.id || null,
+            callerIdId: selectedCallerId?.id || null,
             status: "queued",
             startTime: new Date(),
           }
         });
-        console.log(`[makeCall] SUCCESS: CallRecord created for SID: ${call.sid}`);
+        console.log(`[makeCall] SUCCESS: CallRecord created for SID: ${call.sid} with CallerId: ${selectedCallerId?.id || 'DEFAULT'}`);
       } catch (dbError: any) {
         console.error(`[makeCall] ERROR: CallRecord creation failed: ${dbError.message}`);
       }
