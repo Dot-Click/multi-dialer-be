@@ -355,11 +355,12 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
   }
 
-  const start = twiml.start();
-  start.transcription({
-    track: "both_tracks",
-    statusCallbackUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/transcription`,
-  });
+  // Temporarily disable global start.transcription to prevent Audio stream overload on bridge connections
+  // const start = twiml.start();
+  // start.transcription({
+  //   track: "both_tracks",
+  //   statusCallbackUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/transcription`,
+  // });
 
   const amRecordingUrl = req.query.amRecordingUrl as string;
   const AnsweredBy = body.AnsweredBy || body.answered_by;
@@ -438,7 +439,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       twiml.hangup();
 
       if (contactId) {
-        dialerService.recycleLeadWithDelay(agentId, contactId);
+        const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
+        const actualLeadId = existingMeta?.leadId || contactId;
+        dialerService.recycleLeadWithDelay(agentId, actualLeadId, contactId);
       }
 
       res.type("text/xml");
@@ -462,7 +465,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       twiml.hangup();
 
       if (contactId) {
-        dialerService.recycleLeadWithDelay(agentId, contactId);
+        const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
+        const actualLeadId = existingMeta?.leadId || contactId;
+        dialerService.recycleLeadWithDelay(agentId, actualLeadId, contactId);
       }
 
       res.type("text/xml");
@@ -521,6 +526,14 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
     if (isMachine) {
       console.log(`[AMD] Machine detected for ${CallSid}.`);
+
+      // 🚨 CRITICAL FIX: Do not drop the call if the agent is already actively bridged to it!
+      const activeLockOwner = (dialerService as any).agentBridgedCallId.get(agentId);
+      if (activeLockOwner === CallSid) {
+          console.log(`[AMD] Bypassing automated Handup: Call ${CallSid} is already bridged to Agent ${agentId}.`);
+          res.sendStatus(200);
+          return;
+      }
 
       try {
         await (prisma.callRecord as any).update({

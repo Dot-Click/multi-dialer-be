@@ -79,6 +79,7 @@ export class DialerService {
   private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
   private userCallerIdPools: Map<string, string[]> = new Map(); // userId -> list of Twilio numbers
   private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
+  private userPendingRecycles: Map<string, number> = new Map(); // userId -> count of leads sleeping in recycleLeadWithDelay
 
   private constructor() { }
 
@@ -441,9 +442,12 @@ export class DialerService {
       }
     });
 
+    const pendingRecycles = this.userPendingRecycles.get(userId) || 0;
+
     return {
       queueSize: queue?.size() || 0,
       activeCallsCount: userActiveCalls.length,
+      pendingRecycles: pendingRecycles,
       currentQueue: queue?.getQueue() || [],
       leadStatuses
     };
@@ -549,15 +553,17 @@ export class DialerService {
       // Only release the agent busy lock if THIS call is the one that was holding it!
       if (this.agentBridgedCallId.get(userId!) === sid) {
         console.log(`[handleCallStatusUpdate] Call ${sid} was the active bridge. Releasing agent ${userId}.`);
+        // setAgentBusy(false) internally calls processQueue, so do NOT call it again after this.
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
       } else {
         console.log(`[handleCallStatusUpdate] Call ${sid} was not the active bridge. Skipping busy reset (Current lock: ${this.agentBridgedCallId.get(userId!)}).`);
+        // Only call processQueue explicitly if we didn't release the lock (setAgentBusy already does it)
+        this.processQueue(userId!);
       }
 
       this.activeCalls.delete(sid);
-      console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
-      this.processQueue(userId);
+      console.log(`Call ${sid} finished (${twilioStatus}).`);
     }
   }
 
@@ -580,19 +586,19 @@ export class DialerService {
 
       // console.log("sentimentAnalysis",sentimentAnalysis)
 
-      Promise.allSettled([
-        await prisma.callRecord.update({
+      await Promise.allSettled([
+        prisma.callRecord.update({
           where: { callSid: callSid },
           data: { recordingUrl: cloudinaryUrl },
         }),
-        await prisma.callAnalysis.upsert({
+        prisma.callAnalysis.upsert({
           where: { callSid: callSid },
           update: { recordingUrl: cloudinaryUrl },
           create: {
             callSid: callSid,
             leadId: "",
             recordingUrl: cloudinaryUrl,
-            sentiment: sentimentAnalysis?.sentiment || "", // Placeholder for now
+            sentiment: sentimentAnalysis?.sentiment || "",
             confidence: sentimentAnalysis?.confidence || 0,
             aiSummary: sentimentAnalysis?.summary || "",
             transcript: transcription.text
@@ -691,22 +697,34 @@ export class DialerService {
     return this.agentBusyState.get(userId) || false;
   }
 
-  recycleLeadWithDelay(userId: string, leadId: string) {
+  recycleLeadWithDelay(userId: string, leadId: string, originalContactId?: string) {
+    // Increment tracking of sleeping leads so frontend doesn't say "done"
+    const recylesCount = this.userPendingRecycles.get(userId) || 0;
+    this.userPendingRecycles.set(userId, recylesCount + 1);
+
     // Schedule lead to be requeued later or at lower priority
     setTimeout(async () => {
       try {
-        const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+        // Decrease count since it's waking up
+        const sleepCount = this.userPendingRecycles.get(userId) || 1;
+        this.userPendingRecycles.set(userId, sleepCount - 1);
+
+        // Actual leadId is now passed correctly from controller
+        let lead = await prisma.lead.findUnique({ where: { id: leadId } });
         if (lead) {
           const queue = this.getOrCreateQueue(userId);
           queue.enqueue({
             id: lead.id,
             fullName: lead.fullName,
             phone: lead.phone,
-            priority: 0, // Lower priority or just push to queue
-            userId: lead.userId
+            priority: 0, // Lower priority on recycle
+            userId: lead.userId,
+            originalContactId: originalContactId, // Preserve for UI sync
           });
-          console.log(`[DialerService] Recycled lead ${leadId} after breather.`);
+          console.log(`[DialerService] Recycled lead ${lead.id} (contact: ${originalContactId || 'N/A'}) after breather.`);
           this.processQueue(userId);
+        } else {
+          console.warn(`[DialerService] Could not find lead to recycle: ${leadId}`);
         }
       } catch (e) {
         console.error("Failed to recycle lead", e);
