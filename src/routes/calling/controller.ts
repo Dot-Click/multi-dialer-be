@@ -166,7 +166,7 @@ export const stopDialing: RequestHandler = async (req, res) => {
  */
 export const addLeadsToDialer: RequestHandler = async (req, res) => {
   try {
-    const { leads, callerId }: { leads: any[], callerId?: string } = req.body;
+    const { leads, callerId, callerIds }: { leads: any[], callerId?: string, callerIds?: string | string[] } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -260,7 +260,7 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         priority: l.priority,
         userId: userId,
       })),
-      callerId // Pass selected caller IDs (array) or ID (string) to service
+      callerIds || callerId // Pass selected caller IDs (array) or ID (string) to service
     );
 
     successResponse(res, 200, "Leads saved to DB and added to queue!", {
@@ -471,11 +471,12 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
 
     // Set status to in-progress for the bridge
+    const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
     (dialerService as any).activeCalls.set(currentCallSid, {
       userId: agentId,
       leadId: contactId,
       contactId: contactId,
-      sessionId: null,
+      sessionId: existingMeta?.sessionId || null,
       isBrowserCall: false,
       status: "in-progress"
     });
