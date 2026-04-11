@@ -79,6 +79,7 @@ export class DialerService {
   private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
   private userCallerIdPools: Map<string, string[]> = new Map(); // userId -> list of Twilio numbers
   private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
+  private userProcessingLocks: Map<string, boolean> = new Map(); // userId -> is currently processing queue
 
   private constructor() { }
 
@@ -173,46 +174,57 @@ export class DialerService {
    */
   // In processQueue — pre-assign caller IDs synchronously before async makeCall
   private async processQueue(userId: string) {
-    const queue = this.userQueues.get(userId);
-    if (!queue || queue.isEmpty()) return;
+    // Prevent concurrent processing for the same user (race condition guard)
+    if (this.userProcessingLocks.get(userId)) {
+      console.log(`[processQueue] Already processing for user ${userId}, skipping.`);
+      return;
+    }
+    this.userProcessingLocks.set(userId, true);
 
-    const { isAllowed, autodialingEnabled } = await this.checkCompliance(userId);
-    if (!autodialingEnabled || !isAllowed) return;
+    try {
+      const queue = this.userQueues.get(userId);
+      if (!queue || queue.isEmpty()) return;
 
-    const capacity = await this.getUserCapacity(userId);
-    const currentActiveCount = Array.from(this.activeCalls.values())
-      .filter((call) => call.userId === userId).length;
+      const { isAllowed, autodialingEnabled } = await this.checkCompliance(userId);
+      if (!autodialingEnabled || !isAllowed) return;
 
-    if (this.isAgentBusy(userId)) return;
+      const capacity = await this.getUserCapacity(userId);
+      const currentActiveCount = Array.from(this.activeCalls.values())
+        .filter((call) => call.userId === userId).length;
 
-    // Pre-fetch the pool once
-    const pool = this.userCallerIdPools.get(userId) || [];
+      if (this.isAgentBusy(userId)) return;
 
-    let inFlight = currentActiveCount;
-    const callBatch: { lead: Lead; assignedNumber: string | null }[] = [];
+      // Pre-fetch the pool once
+      const pool = this.userCallerIdPools.get(userId) || [];
 
-    // 1. Synchronously assign numbers to all leads before any async work
-    while (inFlight < capacity && !queue.isEmpty()) {
-      const lead = queue.dequeue();
-      if (!lead) break;
+      let inFlight = currentActiveCount;
+      const callBatch: { lead: Lead; assignedNumber: string | null }[] = [];
 
-      let assignedNumber: string | null = null;
+      // 1. Synchronously assign numbers to all leads before any async work
+      while (inFlight < capacity && !queue.isEmpty()) {
+        const lead = queue.dequeue();
+        if (!lead) break;
 
-      if (pool.length > 0) {
-        // Round-robin: grab current index, increment immediately
-        let index = this.userCallerIdIndices.get(userId) || 0;
-        assignedNumber = pool[index % pool.length];
-        this.userCallerIdIndices.set(userId, (index + 1) % pool.length);
+        let assignedNumber: string | null = null;
+
+        if (pool.length > 0) {
+          // Round-robin: grab current index, increment immediately
+          let index = this.userCallerIdIndices.get(userId) || 0;
+          assignedNumber = pool[index % pool.length];
+          this.userCallerIdIndices.set(userId, (index + 1) % pool.length);
+        }
+
+        callBatch.push({ lead, assignedNumber });
+        inFlight++;
       }
 
-      callBatch.push({ lead, assignedNumber });
-      inFlight++;
-    }
-
-    // 2. Now fire calls with their pre-assigned numbers
-    for (const { lead, assignedNumber } of callBatch) {
-      this.makeCall(lead, assignedNumber);
-      await new Promise(r => setTimeout(r, 250));
+      // 2. Now fire calls with their pre-assigned numbers
+      for (const { lead, assignedNumber } of callBatch) {
+        this.makeCall(lead, assignedNumber);
+        await new Promise(r => setTimeout(r, 250));
+      }
+    } finally {
+      this.userProcessingLocks.set(userId, false);
     }
   }
 
@@ -508,8 +520,10 @@ export class DialerService {
     if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
     else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
-    else if (twilioStatus === "completed") {
-      dbStatus = LeadCallStatus.CALLED;
+    else if (twilioStatus === "completed") dbStatus = LeadCallStatus.CALLED;
+
+    // Clear transcription logs for ALL terminal statuses to prevent memory leak
+    if (isTerminal) {
       this.clearTranscriptionLogs(sid);
     }
 

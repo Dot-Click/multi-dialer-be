@@ -22,12 +22,17 @@ export async function getRegulatorySettingFromDb(userId: string) {
     }
 
     if (!systemSetting.regulatorySetting) {
-        return await prisma.regulatorySetting.create({
+        const created = await prisma.regulatorySetting.create({
             data: { systemSettingId: systemSetting.id },
         });
+        // Include the company timezone for consistent TCPA checks on the frontend
+        const company = await prisma.company.findFirst({ where: { userId: targetUserId } });
+        return { ...created, companyTimeZone: company?.defaultTimeZone || "UTC" };
     }
 
-    return systemSetting.regulatorySetting;
+    // Include the company timezone for consistent TCPA checks on the frontend
+    const company = await prisma.company.findFirst({ where: { userId: targetUserId } });
+    return { ...systemSetting.regulatorySetting, companyTimeZone: company?.defaultTimeZone || "UTC" };
 }
 
 export async function updateRegulatorySettingInDb(userId: string, payload: any) {
