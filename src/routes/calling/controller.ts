@@ -491,9 +491,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
 
-    // Bridge to the specific agent identity safely via TwiML nested tags
-    const clientNode = dial.client();
-    clientNode.identity(agentId);
+    // Bridge to the specific agent identity safely
+    const clientNode = dial.client(agentId);
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
