@@ -26,6 +26,7 @@ export const envConfig =  {
         TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER,
         TWILIO_API_KEY: process.env.TWILIO_API_KEY,
         TWILIO_API_SECRET: process.env.TWILIO_API_SECRET,
+        TWILIO_TWIML_APP_SID: process.env.TWILIO_TWIML_APP_SID,
         ZOHOO_ACCESS_TOKEN: process.env.ZOHOO_ACCESS_TOKEN,
         ZOHOO_REFRESH_TOKEN: process.env.ZOHOO_REFRESH_TOKEN,
         ZOHOO_CLIENT_ID: process.env.ZOHOO_ID,

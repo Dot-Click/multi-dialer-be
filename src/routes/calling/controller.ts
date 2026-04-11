@@ -477,8 +477,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
     (dialerService as any).activeCalls.set(currentCallSid, {
       userId: agentId,
-      leadId: contactId,
-      contactId: contactId,
+      leadId: existingMeta?.leadId || contactId,
+      contactId: existingMeta?.contactId || contactId,
       sessionId: existingMeta?.sessionId || null,
       isBrowserCall: false,
       status: "in-progress"
@@ -799,8 +799,11 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
       { identity: identity }
     );
 
+    // Use the Twiml App SID from the environment to ensure tokens authorize for the current account
+    const twimlAppSid = envConfig.TWILIO_TWIML_APP_SID || "AP2dfe20dda942797074ca416be8142b9c";
+
     const grant = new VoiceGrant({
-      outgoingApplicationSid: "AP2dfe20dda942797074ca416be8142b9c",
+      outgoingApplicationSid: twimlAppSid,
       incomingAllow: true,
     });
     token.addGrant(grant);
