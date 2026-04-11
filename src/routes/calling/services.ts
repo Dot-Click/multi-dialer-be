@@ -33,6 +33,7 @@ export interface Lead {
   phone: string;
   priority: number;
   userId: string;
+  originalContactId?: string; // The frontend contact ID, used for UI sync
 }
 
 /**
@@ -360,7 +361,7 @@ export class DialerService {
       const call = await client.calls.create({
         to: lead.phone,
         from: twilioFrom as string,
-        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&contactId=${lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&contactId=${lead.originalContactId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",

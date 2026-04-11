@@ -251,6 +251,8 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
     }
 
     // 3. Add to Dialer Queue
+    // Map frontend contact IDs to leads via phone number for UI sync
+    const phoneToContactId = new Map(leads.map((l: any) => [l.phone, l.id]));
     await dialerService.addLeadsToQueue(
       userId,
       savedLeads.map((l) => ({
@@ -259,6 +261,7 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         phone: l.phone,
         priority: l.priority,
         userId: userId,
+        originalContactId: phoneToContactId.get(l.phone),
       })),
       callerIds || callerId // Pass selected caller IDs (array) or ID (string) to service
     );
