@@ -439,7 +439,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       twiml.hangup();
 
       if (contactId) {
-        dialerService.recycleLeadWithDelay(agentId, contactId);
+        const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
+        const actualLeadId = existingMeta?.leadId || contactId;
+        dialerService.recycleLeadWithDelay(agentId, actualLeadId, contactId);
       }
 
       res.type("text/xml");
@@ -463,7 +465,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       twiml.hangup();
 
       if (contactId) {
-        dialerService.recycleLeadWithDelay(agentId, contactId);
+        const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
+        const actualLeadId = existingMeta?.leadId || contactId;
+        dialerService.recycleLeadWithDelay(agentId, actualLeadId, contactId);
       }
 
       res.type("text/xml");
