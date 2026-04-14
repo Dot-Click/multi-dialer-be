@@ -558,15 +558,16 @@ export class DialerService {
     }
 
     if (isTerminal) {
-      console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}`);
+      const lockOwner = (this as any).agentBridgedCallId.get(userId!);
+      console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}. Current Lock Owner: ${lockOwner || 'NONE'}`);
 
       // Only release the agent busy lock if THIS call is the one that was holding it!
-      if (this.agentBridgedCallId.get(userId!) === sid) {
+      if (lockOwner === sid) {
         console.log(`[handleCallStatusUpdate] Call ${sid} was the active bridge. Releasing agent ${userId}.`);
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
       } else {
-        console.log(`[handleCallStatusUpdate] Call ${sid} was not the active bridge. Skipping busy reset (Current lock: ${this.agentBridgedCallId.get(userId!)}).`);
+        console.log(`[handleCallStatusUpdate] Call ${sid} was not the active bridge. Skipping busy reset (Lock held by: ${lockOwner}).`);
       }
 
       this.activeCalls.delete(sid);
