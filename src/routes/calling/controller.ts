@@ -501,6 +501,10 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     });
 
     twiml.say("Please wait while we connect you to an agent.");
+    
+    // Stability Delay: Allow agent device and backend state to settle
+    twiml.pause({ length: 1 }); // 1 second silent pause for Twilio side
+    
     const bridgeCallerId =
       (typeof fromValue === "string" && fromValue) ||
       (typeof callerValue === "string" && callerValue) ||

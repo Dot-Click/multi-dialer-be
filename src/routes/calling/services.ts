@@ -80,6 +80,7 @@ export class DialerService {
   private userCallerIdPools: Map<string, string[]> = new Map(); // userId -> list of Twilio numbers
   private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
   private userProcessingLocks: Map<string, boolean> = new Map(); // userId -> is currently processing queue
+  private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
 
   private constructor() { }
 
@@ -558,6 +559,18 @@ export class DialerService {
     }
 
     if (isTerminal) {
+      if (this.processedTerminalSids.has(sid)) {
+        console.log(`[handleCallStatusUpdate] Skipped redundant terminal trigger for SID ${sid}`);
+        this.activeCalls.delete(sid);
+        return;
+      }
+      this.processedTerminalSids.add(sid);
+      // Clean up old SIDs from tracking every 50 calls to prevent memory leak
+      if (this.processedTerminalSids.size > 100) {
+        const oldestSids = Array.from(this.processedTerminalSids).slice(0, 20);
+        oldestSids.forEach(s => this.processedTerminalSids.delete(s));
+      }
+
       const lockOwner = (this as any).agentBridgedCallId.get(userId!);
       console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}. Current Lock Owner: ${lockOwner || 'NONE'}`);
 
