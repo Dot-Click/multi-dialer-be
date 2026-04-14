@@ -305,30 +305,37 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
 
   // Robust parameter extraction
   const to = body.To || req.query.To;
-  const from = body.From || req.query.From;
+  const from = body.From || req.query.From || "";
   const caller = body.Caller || req.query.Caller || "";
+  const fromValue = Array.isArray(from) ? from[0] : from;
+  const callerValue = Array.isArray(caller) ? caller[0] : caller;
+  const browserIdentity = [callerValue, fromValue].find(
+    (value): value is string => typeof value === "string" && value.startsWith("client:")
+  ) || "";
+  const isBrowserOrigin = browserIdentity.startsWith("client:");
   let agentId = body.agentId || req.query.agentId || req.params.agentId;
   const contactId = body.contactId || req.query.contactId || req.params.contactId || "";
   const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
   const busyRecordingUrl = body.busyRecordingUrl || req.query.busyRecordingUrl || "";
 
-  if (!agentId && caller?.startsWith('client:')) {
-    agentId = caller.split(':')[1];
+  if (!agentId && isBrowserOrigin) {
+    agentId = browserIdentity.split(':')[1];
     console.log(`[VoiceWebhook] Extracted agentId ${agentId} from caller identity.`);
   }
 
 
   console.log("================= Voice Webhook Dispatcher ================");
-  console.log("Caller:", caller);
+  console.log("Caller:", callerValue);
   console.log("To:", to);
-  console.log("From:", from);
+  console.log("From:", fromValue);
+  console.log("BrowserIdentity:", browserIdentity || "<none>");
   console.log("AgentId:", agentId);
   console.log("ContactId:", contactId);
 
 
 
   // PERSISTENCE: Create CallRecord for browser-initiated calls if not present
-  if (caller.startsWith("client:") && agentId) {
+  if (isBrowserOrigin && agentId) {
     try {
       // Register with dialerService for status tracking
       (dialerService as any).activeCalls.set(body.CallSid, {
@@ -388,7 +395,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   }
 
   // CASE A: Standard Outbound (Client-to-PSTN)
-  if (caller?.startsWith("client:")) {
+  if (isBrowserOrigin) {
     console.log("[VoiceWebhook] Browser-to-PSTN Call detected");
 
     // Mark agent as busy for manual calls too, so the power dialer knows they are occupied!
@@ -411,6 +418,15 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   // We want to dial the Agent in the browser.
   else {
     console.log("[VoiceWebhook] PSTN-to-Browser (Bridge) Call detected");
+
+    if (!agentId) {
+      console.error("[VoiceWebhook] Missing agentId for PSTN-to-Browser bridge request.");
+      twiml.say("We are unable to connect you to an agent right now.");
+      twiml.hangup();
+      res.type("text/xml");
+      res.send(twiml.toString());
+      return;
+    }
 
     // Power Dialer Logic: Check if Agent is Busy
     const isBusyBoolean = dialerService.isAgentBusy(agentId);
@@ -485,14 +501,23 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     });
 
     twiml.say("Please wait while we connect you to an agent.");
+    const bridgeCallerId =
+      (typeof fromValue === "string" && fromValue) ||
+      (typeof callerValue === "string" && callerValue) ||
+      envConfig.TWILIO_PHONE_NUMBER;
     const dial = twiml.dial({
-      callerId: caller, // Keep the original caller ID
+      callerId: bridgeCallerId,
+      answerOnBridge: true,
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
 
     // Bridge to the specific agent identity safely
-    const clientNode = dial.client(agentId);
+    const clientNode = dial.client({
+      statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${agentId}`,
+      statusCallbackMethod: "POST",
+    }, agentId);
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
