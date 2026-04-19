@@ -2141,7 +2141,9 @@ export async function scheduleTemplateEmailInDb(contactId: string, templateId: s
   return true;
 }
 export const getDuplicateContactsFromDb = async () => {
-  // ── 1. Find Duplicate Phone Numbers ────────────────────────────────
+  // ── 1. Find Duplicate identifiers ───────────────────────────────
+  
+  // A. Phones
   const dupPhones = await prisma.contactPhone.groupBy({
     by: ['number'],
     _count: { number: true },
@@ -2149,7 +2151,7 @@ export const getDuplicateContactsFromDb = async () => {
   });
   const dupPhoneNumbers = dupPhones.map((p) => p.number);
 
-  // ── 2. Find Duplicate Emails ───────────────────────────────────────
+  // B. Emails
   const dupEmailsRaw = await prisma.contactEmail.groupBy({
     by: ['email'],
     _count: { email: true },
@@ -2157,14 +2159,49 @@ export const getDuplicateContactsFromDb = async () => {
   });
   const dupEmailAddresses = dupEmailsRaw.map((e) => e.email);
 
-  // ── 3. Fetch All Contacts with Duplicates ──────────────────────────
-  // Note: We use OR here to fetch any contact that has at least one duplicate identifier
+  // C. Property Addresses
+  const dupPropAddresses = await prisma.contact.groupBy({
+    by: ['address', 'city', 'state', 'zip'],
+    _count: { id: true },
+    having: { id: { _count: { gt: 1 } } },
+    where: { address: { not: null }, city: { not: null }, state: { not: null } }
+  });
+
+  // D. Mailing Addresses
+  const dupMailAddresses = await prisma.contact.groupBy({
+    by: ['mailingAddress', 'mailingCity', 'mailingState', 'mailingZip'],
+    _count: { id: true },
+    having: { id: { _count: { gt: 1 } } },
+    where: { mailingAddress: { not: null }, mailingCity: { not: null }, mailingState: { not: null } }
+  });
+
+  // ── 2. Fetch All Contacts with Duplicates ──────────────────────────
   const contacts = await prisma.contact.findMany({
     where: {
       OR: [
         { phones: { some: { number: { in: dupPhoneNumbers } } } },
         { emails: { some: { email: { in: dupEmailAddresses } } } },
-      ],
+        {
+          OR: dupPropAddresses.map(addr => ({
+            address: addr.address,
+            city: addr.city,
+            state: addr.state,
+            zip: addr.zip
+          }))
+        },
+        {
+          OR: dupMailAddresses.map(addr => ({
+            mailingAddress: addr.mailingAddress,
+            mailingCity: addr.mailingCity,
+            mailingState: addr.mailingState,
+            mailingZip: addr.mailingZip
+          }))
+        }
+      ].filter(cond => {
+        // Prevent empty OR arrays from crashing Prisma
+        if (Array.isArray((cond as any).OR) && (cond as any).OR.length === 0) return false;
+        return true;
+      }) as any
     },
     include: {
       phones: true,
@@ -2175,7 +2212,27 @@ export const getDuplicateContactsFromDb = async () => {
     },
   });
 
-  return contacts;
+  // ── 3. Tag with Reason ───────────────────────────────────────────
+  return contacts.map(c => {
+    const reasons: string[] = [];
+    if (c.phones.some(p => dupPhoneNumbers.includes(p.number))) reasons.push("Phone Match");
+    if (c.emails.some(e => dupEmailAddresses.includes(e.email))) reasons.push("Email Match");
+    
+    const isPropDup = dupPropAddresses.some(addr => 
+      addr.address === c.address && addr.city === c.city && addr.state === c.state && addr.zip === c.zip
+    );
+    if (isPropDup) reasons.push("Property Address Match");
+
+    const isMailDup = dupMailAddresses.some(addr => 
+      addr.mailingAddress === c.mailingAddress && addr.mailingCity === c.mailingCity && addr.mailingState === c.mailingState && addr.mailingZip === c.mailingZip
+    );
+    if (isMailDup) reasons.push("Mailing Address Match");
+
+    return {
+      ...c,
+      duplicateReason: reasons.join(", ")
+    };
+  });
 };
 
 // ---------------------------------------------------------------------------
