@@ -314,13 +314,15 @@ model Contact {
   id             String   @id @default(cuid())
   fullName       String
   address        String?
+  address2       String?
   city           String?
   state          String?
   zip            String?
-  mailingAddress String?
-  mailingCity    String?
-  mailingState   String?
-  mailingZip     String?
+  mailingAddress  String?
+  mailingAddress2 String?
+  mailingCity     String?
+  mailingState    String?
+  mailingZip      String?
   source         String?
   tags           String[] @default([])
   notes          String[] @default([])
