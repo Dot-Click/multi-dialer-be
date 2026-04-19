@@ -627,6 +627,11 @@ export class DialerService {
     try {
       console.log(`[Recording] Updating for ${callSid}: ${recordingUrl}`);
 
+      if (!envConfig.CLOUDINARY_CLOUD_NAME) {
+          console.warn("[Recording] Cloudinary not configured. Skipping recording sync.");
+          return;
+      }
+
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
 

@@ -500,14 +500,17 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       status: "in-progress"
     });
 
-    // USE MASTER TWILIO NUMBER for bridge callerId to avoid rotated-number identity conflicts on the client side
-    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER;
+    // FALLBACK: Use envConfig.TWILIO_PHONE_NUMBER if set, otherwise fallback to the originating number
+    // to ensure TwiML validity while still attempting to provide a stable identity.
+    const bridgeCallerId = 
+        envConfig.TWILIO_PHONE_NUMBER || 
+        (typeof fromValue === "string" ? fromValue : envConfig.TWILIO_PHONE_NUMBER) || 
+        body.To || // Last resort fallback
+        envConfig.TWILIO_PHONE_NUMBER;
     
-    // Stability Change: Remove twiml.pause and answerOnBridge=true to ensure
-    // the customer hears standard ringing instead of silence/ghost connection.
     const dial = twiml.dial({
       callerId: bridgeCallerId,
-      answerOnBridge: false,
+      answerOnBridge: true,
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
