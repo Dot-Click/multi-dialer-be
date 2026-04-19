@@ -500,18 +500,14 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       status: "in-progress"
     });
 
-    // twiml.say("Please wait while we connect you to an agent.");
+    // USE MASTER TWILIO NUMBER for bridge callerId to avoid rotated-number identity conflicts on the client side
+    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER;
     
-    // Stability Delay: Allow agent device and backend state to settle
-    twiml.pause({ length: 1 }); // 1 second silent pause for Twilio side
-    
-    const bridgeCallerId =
-      (typeof fromValue === "string" && fromValue) ||
-      (typeof callerValue === "string" && callerValue) ||
-      envConfig.TWILIO_PHONE_NUMBER;
+    // Stability Change: Remove twiml.pause and answerOnBridge=true to ensure
+    // the customer hears standard ringing instead of silence/ghost connection.
     const dial = twiml.dial({
       callerId: bridgeCallerId,
-      answerOnBridge: true,
+      answerOnBridge: false,
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
