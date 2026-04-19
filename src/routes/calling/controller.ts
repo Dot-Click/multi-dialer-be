@@ -526,6 +526,11 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
 
+    // Register initial association if we have currentCallSid
+    if (body.CallSid) {
+       // currentCallSid is the parent here
+    }
+
   }
 
   res.type("text/xml");
@@ -697,6 +702,11 @@ export const handleCallStatus: RequestHandler = async (req, res) => {
 
     // 🔥 ONLY propagate CHILD leg updates to parent
     if (ParentCallSid) {
+      // Logic association: ensures either leg can release the lock
+      if ((dialerService as any).sidToRootSid) {
+        (dialerService as any).sidToRootSid.set(CallSid, ParentCallSid);
+      }
+
       await dialerService.handleCallStatusUpdate(
         ParentCallSid,
         CallStatus,

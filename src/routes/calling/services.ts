@@ -81,6 +81,8 @@ export class DialerService {
   private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
   private userProcessingLocks: Map<string, boolean> = new Map(); // userId -> is currently processing queue
   private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
+  private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
+  private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
 
   private constructor() { }
 
@@ -162,9 +164,11 @@ export class DialerService {
     this.agentBusyState.delete(userId);
     this.agentBridgedCallId.delete(userId);
     this.userActiveSessions.delete(userId);
+    this.lastActivity.delete(userId);
     for (const [sid, metadata] of this.activeCalls.entries()) {
       if (metadata.userId === userId) {
         this.activeCalls.delete(sid);
+        this.sidToRootSid.delete(sid);
       }
     }
     console.log(`[DialerService] Hardware reset of stuck states for user ${userId} complete.`);
@@ -393,6 +397,7 @@ export class DialerService {
         sessionId,
         status: "initiated"
       });
+      this.lastActivity.set(lead.userId, Date.now());
 
       // 3. Create CallRecord in DB immediately
       try {
@@ -499,6 +504,10 @@ export class DialerService {
       metadata.status = twilioStatus;
       this.activeCalls.set(sid, metadata);
     }
+    
+    if (userId) {
+        this.lastActivity.set(userId, Date.now());
+    }
 
     // PROTECTION: For browser calls... (keep this or move below userId check?)
     // Actually, if metadata is missing we can't tell if it's a browser call.
@@ -571,19 +580,28 @@ export class DialerService {
         oldestSids.forEach(s => this.processedTerminalSids.delete(s));
       }
 
+      const rootSid = this.sidToRootSid.get(sid) || sid;
       const lockOwner = (this as any).agentBridgedCallId.get(userId!);
-      console.log(`[handleCallStatusUpdate] Call ${sid} (isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}. Current Lock Owner: ${lockOwner || 'NONE'}`);
 
-      // Only release the agent busy lock if THIS call is the one that was holding it!
-      if (lockOwner === sid) {
-        console.log(`[handleCallStatusUpdate] Call ${sid} was the active bridge. Releasing agent ${userId}.`);
+      console.log(`[handleCallStatusUpdate] Call ${sid} (root: ${rootSid}, isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}. Current Lock Owner: ${lockOwner || 'NONE'}`);
+
+      // Release agent busy lock if ROOT SID or CURRENT SID matches the lock owner
+      if (lockOwner === sid || lockOwner === rootSid) {
+        console.log(`[handleCallStatusUpdate] Releasing agent ${userId} (Identified via ${sid === lockOwner ? 'SID' : 'RootSid'}).`);
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
       } else {
-        console.log(`[handleCallStatusUpdate] Call ${sid} was not the active bridge. Skipping busy reset (Lock held by: ${lockOwner}).`);
+        console.log(`[handleCallStatusUpdate] Non-locking leg terminated. Checking if agent is orphaned...`);
+        // Additional protection: if this was the last active call for the agent, force release anyway
+        const hasOtherCalls = Array.from(this.activeCalls.values()).some(c => c.userId === userId && !terminalStatuses.includes(c.status || ""));
+        if (!hasOtherCalls && this.isAgentBusy(userId!)) {
+           console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Force releasing stuck lock.`);
+           this.setAgentBusy(userId!, false);
+        }
       }
 
       this.activeCalls.delete(sid);
+      this.sidToRootSid.delete(sid);
       console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
       this.processQueue(userId);
     }
@@ -596,7 +614,16 @@ export class DialerService {
       // 1. Download from Twilio and Upload to Cloudinary
       const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
 
-
+      // RESOLVE ROOT SID: If this recording is for a child leg, find the parent
+      let targetSid = callSid;
+      if (!(await prisma.callRecord.findUnique({ where: { callSid } }))) {
+        const root = this.sidToRootSid.get(callSid);
+        if (root) {
+          console.log(`[Recording] Resolving child SID ${callSid} to root ${root}`);
+          targetSid = root;
+        }
+      }
+      
       const transcription = await groq.audio.transcriptions.create({
         url: cloudinaryUrl,
         model: "whisper-large-v3",
@@ -608,25 +635,26 @@ export class DialerService {
 
       // console.log("sentimentAnalysis",sentimentAnalysis)
 
-      Promise.allSettled([
-        await prisma.callRecord.update({
-          where: { callSid: callSid },
+      // CORRECTED: Execute in parallel without nested await inside the array
+      await Promise.allSettled([
+        prisma.callRecord.update({
+          where: { callSid: targetSid },
           data: { recordingUrl: cloudinaryUrl },
         }),
-        await prisma.callAnalysis.upsert({
-          where: { callSid: callSid },
+        prisma.callAnalysis.upsert({
+          where: { callSid: targetSid },
           update: { recordingUrl: cloudinaryUrl },
           create: {
-            callSid: callSid,
+            callSid: targetSid,
             leadId: "",
             recordingUrl: cloudinaryUrl,
-            sentiment: sentimentAnalysis?.sentiment || "", // Placeholder for now
+            sentiment: sentimentAnalysis?.sentiment || "",
             confidence: sentimentAnalysis?.confidence || 0,
             aiSummary: sentimentAnalysis?.summary || "",
             transcript: transcription.text
           }
         })
-      ])
+      ]);
       console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
     } catch (error) {
       console.error("Failed to handle recording update:", error);
@@ -709,6 +737,9 @@ export class DialerService {
     }
 
     this.agentBusyState.set(userId, busy);
+    if (busy) {
+        this.lastActivity.set(userId, Date.now());
+    }
     console.log(`[AgentState] User ${userId} busy state set to: ${busy}`);
     if (!busy) {
       this.processQueue(userId);
@@ -716,7 +747,19 @@ export class DialerService {
   }
 
   isAgentBusy(userId: string): boolean {
-    return this.agentBusyState.get(userId) || false;
+    const isBusy = this.agentBusyState.get(userId) || false;
+    
+    // STALE LOCK PROTECTION: Release if no activity for 60 minutes
+    if (isBusy) {
+        const last = this.lastActivity.get(userId) || 0;
+        if (Date.now() - last > 60 * 60 * 1000) {
+            console.warn(`[DialerService] Detected STALE LOCK for user ${userId}. Force releasing.`);
+            this.setAgentBusy(userId, false);
+            return false;
+        }
+    }
+    
+    return isBusy;
   }
 
   recycleLeadWithDelay(userId: string, leadId: string) {
