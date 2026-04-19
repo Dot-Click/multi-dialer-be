@@ -11,6 +11,7 @@ import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
 import { sendEmail, newUserSignupTemp, loginAlertTemp } from "../utils/email";
+import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -338,10 +339,14 @@ export const auth = betterAuth({
             const settings = await prisma.system_Setting.findFirst({
               where: { userId: resp.user.id },
             });
-            if (!settings)
-              await prisma.system_Setting.create({
+            if (!settings) {
+              const newSettings = await prisma.system_Setting.create({
                 data: { userId: resp.user.id },
               });
+              await ensureDefaultMiscFields(newSettings.id);
+            } else {
+              await ensureDefaultMiscFields(settings.id);
+            }
           } catch (error) {
             console.error("User setup failed", error);
           }

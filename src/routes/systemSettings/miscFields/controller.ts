@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
-import { insertMiscFieldInDb } from "./service";
+import { insertMiscFieldInDb, ensureDefaultMiscFields, cleanupDuplicateMiscFields } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateMiscFieldSchema } from "../../../schemas/miscFields.schema";
 
@@ -31,6 +31,10 @@ export const getAllMiscFieldsOfSpecificUser = async (req: Request, res: Response
       return;
     }
 
+    // Ensure default MISC fields exist for this user without duplicates
+    await cleanupDuplicateMiscFields(systemSettings.id);
+    await ensureDefaultMiscFields(systemSettings.id);
+
     // Get all misc fields from user's systemSettings
     const miscFields = await prisma.miscField.findMany({
       where: {
@@ -50,7 +54,7 @@ export const getAllMiscFieldsOfSpecificUser = async (req: Request, res: Response
         },
       },
       orderBy: {
-        createdAt: "desc",
+        createdAt: "asc",
       },
     });
 

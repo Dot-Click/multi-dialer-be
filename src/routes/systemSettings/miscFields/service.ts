@@ -1,6 +1,61 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { createMiscFieldSchema } from "../../../schemas/miscFields.schema";
+import { DEFAULT_MISC_FIELDS } from "./defaults";
+
+export async function cleanupDuplicateMiscFields(systemSettingId: string) {
+  try {
+    const fields = await prisma.miscField.findMany({
+      where: { systemSettingId },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    const seen = new Set<string>();
+    const toDelete: string[] = [];
+
+    for (const field of fields) {
+      const normalizedName = field.fieldName.trim().toLowerCase();
+      if (seen.has(normalizedName)) {
+        toDelete.push(field.id);
+      } else {
+        seen.add(normalizedName);
+      }
+    }
+
+    if (toDelete.length > 0) {
+      await prisma.miscField.deleteMany({
+        where: { id: { in: toDelete } }
+      });
+      console.log(`[MiscFieldService] Cleaned up ${toDelete.length} duplicates for ${systemSettingId}`);
+    }
+  } catch (error) {
+    console.error(`[MiscFieldService] Cleanup failed:`, error);
+  }
+}
+
+export async function ensureDefaultMiscFields(systemSettingId: string) {
+  try {
+    const existingFields = await prisma.miscField.findMany({
+      where: { systemSettingId },
+      select: { fieldName: true }
+    });
+
+    const existingNames = new Set(existingFields.map(f => f.fieldName.trim().toLowerCase()));
+    const missingFields = DEFAULT_MISC_FIELDS.filter(f => !existingNames.has(f.fieldName.trim().toLowerCase()));
+
+    if (missingFields.length > 0) {
+      await prisma.miscField.createMany({
+        data: missingFields.map(f => ({
+          ...f,
+          systemSettingId,
+          options: []
+        }))
+      });
+    }
+  } catch (error) {
+    console.error(`[MiscFieldService] Failed to ensure defaults for ${systemSettingId}:`, error);
+  }
+}
 
 export async function insertMiscFieldInDb(payload: any, userId: string) {
   try {
