@@ -84,7 +84,19 @@ export class DialerService {
   private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
   private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
 
-  private constructor() { }
+  private constructor() {
+    // Start cleanup loop for stale associations every 30 minutes
+    setInterval(() => {
+        const now = Date.now();
+        const thirtyMins = 30 * 60 * 1000;
+        
+        // Cleanup sidToRootSid entries that are no longer in activeCalls (approximate)
+        if (this.sidToRootSid.size > 500) {
+            this.sidToRootSid.clear(); 
+        }
+        
+    }, 30 * 60 * 1000);
+  }
 
   public static getInstance(): DialerService {
     if (!DialerService.instance) {
@@ -523,7 +535,7 @@ export class DialerService {
       console.warn(`[handleCallStatusUpdate] No metadata and no providedAgentId for SID ${sid}. Cannot track status.`);
       return;
     }
-    let dbStatus: LeadCallStatus = LeadCallStatus.CALLED;
+    let dbStatus: LeadCallStatus = LeadCallStatus.CALLING;
     const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
 
@@ -531,6 +543,9 @@ export class DialerService {
     else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
     else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
     else if (twilioStatus === "completed") dbStatus = LeadCallStatus.CALLED;
+    else if (twilioStatus === "ringing" || twilioStatus === "initiated" || twilioStatus === "in-progress") {
+        dbStatus = LeadCallStatus.CALLING;
+    }
 
     // Clear transcription logs for ALL terminal statuses to prevent memory leak
     if (isTerminal) {
@@ -601,7 +616,8 @@ export class DialerService {
       }
 
       this.activeCalls.delete(sid);
-      this.sidToRootSid.delete(sid);
+      // sidToRootSid is NOT deleted here anymore — it's cleaned up by the interval/pool
+      // to ensure recordings find their root Sid even if they arrive late.
       console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
       this.processQueue(userId);
     }
