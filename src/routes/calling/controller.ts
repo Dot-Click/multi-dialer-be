@@ -189,8 +189,29 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
       return;
     }
 
-    // 1. Separate leads into those that exist and those that don't
-    const phones = leads.map((l) => l.phone);
+    // 1. Mandatory DNC Filter: Exclude any numbers that belong to a DNC contact or DNC system folder
+    const incomingPhones = leads.map((l) => l.phone);
+    const dncContacts = await prisma.contact.findMany({
+      where: {
+        phones: { some: { number: { in: incomingPhones } } },
+        OR: [
+          { status: "DO_NOT_CALL" },
+          { folder: { name: "Do Not Call", isSystem: true } }
+        ]
+      },
+      select: { phones: { select: { number: true } } }
+    });
+
+    const dncPhones = new Set(dncContacts.flatMap(c => c.phones.map(p => p.number)));
+    const filteredLeads = leads.filter(l => !dncPhones.has(l.phone));
+
+    if (filteredLeads.length === 0 && leads.length > 0) {
+      errorResponse(res, { message: "All provided leads are on the Do Not Call list and were skipped." }, 403);
+      return;
+    }
+
+    // 2. Separate leads into those that exist and those that don't
+    const phones = filteredLeads.map((l) => l.phone);
     const existingLeads = await prisma.lead.findMany({
       where: {
         userId,

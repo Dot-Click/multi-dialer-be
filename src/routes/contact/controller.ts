@@ -23,6 +23,7 @@ import {
   getAllContactListsFromDb,
   updateContactFolderInDb,
   updateContactListInDb,
+  ensureDncFolder,
   updateContactGroupInDb,
   deleteContactListFromDb,
   deleteContactFolderFromDb,
@@ -142,7 +143,8 @@ export const updateContact = async (
       return;
     }
 
-    const updated = await updateContactInDb(id, result.data);
+    const userId = (req as any).user.id;
+    const updated = await updateContactInDb(id, result.data, userId);
     successResponse(res, 200, "Contact updated", updated);
   } catch (error: any) {
     errorResponse(
@@ -561,10 +563,13 @@ export const getAllContactFolders = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const contactFolders = await getAllContactFoldersFromDb(
-      (req as any).user.id,
-      (req as any).user.role,
-    );
+    const userId = (req as any).user.id;
+    const role = (req as any).user.role;
+
+    // Lazy load system DNC folder
+    await ensureDncFolder(userId);
+
+    const contactFolders = await getAllContactFoldersFromDb(userId, role);
     successResponse(res, 200, "Contact folders fetched", contactFolders);
   } catch (error: any) {
     errorResponse(
@@ -874,9 +879,9 @@ export const importContactCsv = async (
       dupFields: dupFieldsRaw,
       dupHandling,
     } = req.body;
- 
+
     const file = req.file;
- 
+
     if (!contactListId && !contactGroupId) {
       errorResponse(res, "List or Group ID not provided", 400);
       return;
@@ -885,7 +890,7 @@ export const importContactCsv = async (
       errorResponse(res, "CSV file is required", 400);
       return;
     }
- 
+
     // ── Parse fieldMappings (primary fields) ──────────────────────────────────
     let fieldMappings: Record<string, string> = {};
     try {
@@ -897,7 +902,7 @@ export const importContactCsv = async (
       errorResponse(res, "Invalid fieldMappings format", 400);
       return;
     }
- 
+
     // ── Parse miscMappings { "<MiscField.id>": "<csvColumnHeader>" } ──────────
     let miscMappings: Record<string, string> = {};
     try {
@@ -908,18 +913,18 @@ export const importContactCsv = async (
     } catch {
       // non-critical
     }
- 
+
     // ── Parse duplicate settings ──────────────────────────────────────────────
-    let dupScope: string[]  = ["Entire Database", "File Import"];
+    let dupScope: string[] = ["Entire Database", "File Import"];
     let dupFields: string[] = ["Phone"];
     try {
-      if (dupScopeRaw)  dupScope  = typeof dupScopeRaw  === "string" ? JSON.parse(dupScopeRaw)  : dupScopeRaw;
+      if (dupScopeRaw) dupScope = typeof dupScopeRaw === "string" ? JSON.parse(dupScopeRaw) : dupScopeRaw;
       if (dupFieldsRaw) dupFields = typeof dupFieldsRaw === "string" ? JSON.parse(dupFieldsRaw) : dupFieldsRaw;
     } catch { /* use defaults */ }
- 
+
     const normalizedDupHandling = dupHandling || "Keep Old";
     const keepOld = normalizedDupHandling === "Keep Old";
- 
+
     // ── Parse CSV ─────────────────────────────────────────────────────────────
     const fileContent = fs.readFileSync(file.path, "utf-8");
     const records: Record<string, string>[] = parse(fileContent, {
@@ -927,18 +932,18 @@ export const importContactCsv = async (
       skip_empty_lines: true,
       trim: true,
     });
- 
+
     try { fs.unlinkSync(file.path); } catch (e) { console.error("Temp file cleanup error:", e); }
- 
+
     // ── Helpers ───────────────────────────────────────────────────────────────
- 
+
     // Resolve a primary field value: fieldMappings["Name"] = "full_name" → record["full_name"]
     const resolve = (record: Record<string, string>, systemField: string): string => {
       const csvCol = fieldMappings[systemField];
       if (!csvCol) return "";
       return (record[csvCol] || "").trim();
     };
- 
+
     // ── Map records → contacts ────────────────────────────────────────────────
     const contacts = records
       .filter((r) => {
@@ -955,20 +960,20 @@ export const importContactCsv = async (
             if (trimmed) emails.push({ email: trimmed, isPrimary: idx === 0 });
           });
         }
- 
+
         // Phones
         const phones: { number: string; type: string }[] = [];
         const phoneVal = resolve(r, "Phone");
         if (phoneVal) {
           phones.push({ number: phoneVal.toString(), type: "MOBILE" });
         }
- 
+
         // Tags
         const tagsVal = resolve(r, "Tags");
         const tags = tagsVal
           ? tagsVal.split(",").map((t) => t.trim()).filter(Boolean)
           : [];
- 
+
         // ── Misc values — keyed by MiscField.id ──────────────────────────────
         // miscMappings = { "3ccbf011-...": "dob_column", "ab12cd-...": "notes_col" }
         // We read the CSV column value for each mapped misc field
@@ -978,15 +983,15 @@ export const importContactCsv = async (
           if (val) miscValues[miscFieldId] = val;
           // Result: { "3ccbf011-416f-4716-8934-3cb5fbf75490": "1990-01-01" }
         }
- 
+
         return {
           fullName: resolve(r, "Name") || "Unnamed",
-          address:  "",
-          city:     "",
-          state:    "",
-          zip:      "",
-          source:   "CSV Import",
-          notes:    "",
+          address: "",
+          city: "",
+          state: "",
+          zip: "",
+          source: "CSV Import",
+          notes: "",
           tags,
           emails,
           phones,
@@ -994,7 +999,7 @@ export const importContactCsv = async (
           miscValues: Object.keys(miscValues).length > 0 ? miscValues : undefined,
         };
       });
- 
+
     // ── Call service ──────────────────────────────────────────────────────────
     const result = await importContactsFromCsvInDb({
       userId: (req as any).user.id,
@@ -1008,13 +1013,13 @@ export const importContactCsv = async (
           ? undefined : contactGroupId,
       keepOld,
       duplicateConfig: {
-        scope:    dupScope,
-        fields:   dupFields,
+        scope: dupScope,
+        fields: dupFields,
         handling: normalizedDupHandling,
       },
       contacts,
     });
- 
+
     successResponse(res, 201, "Contacts imported successfully", result);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);

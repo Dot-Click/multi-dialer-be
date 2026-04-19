@@ -20,12 +20,12 @@ export const markAsRead: RequestHandler = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user!.id;
-    
+
     await prisma.notification.updateMany({
       where: { id, userId },
       data: { isRead: true }
     });
-    
+
     successResponse(res, 200, "Notification marked as read", null);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
@@ -35,12 +35,12 @@ export const markAsRead: RequestHandler = async (req, res) => {
 export const markAllAsRead: RequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
-    
+
     await prisma.notification.updateMany({
       where: { userId, isRead: false },
       data: { isRead: true }
     });
-    
+
     successResponse(res, 200, "All notifications marked as read", null);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);

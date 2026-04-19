@@ -261,12 +261,22 @@ export async function updateContactInDb(
     timeline: boolean;
     agent: boolean;
   }>,
+  userId: string,
 ) {
   const existing = await prisma.contact.findUnique({
     where: { id },
     select: { id: true },
   });
   if (!existing) throwHttp(404, "Contact not found");
+
+  const newStatus = payload.status || payload.disposition;
+  let folderIdToSet = undefined;
+
+  // If moving to DNC, ensure we have the folder ID
+  if (newStatus === "DO_NOT_CALL") {
+    const dncFolder = await ensureDncFolder(userId);
+    folderIdToSet = dncFolder?.id || null;
+  }
 
   return prisma.contact.update({
     where: { id },
@@ -292,7 +302,8 @@ export async function updateContactInDb(
       timeline: payload.timeline,
       agent: payload.agent,
       dataDialerId: payload.dataDialerId,
-      status: payload.status || payload.disposition,
+      status: newStatus,
+      folderId: folderIdToSet,
       emails: payload.emails
         ? {
           deleteMany: {},
@@ -319,54 +330,7 @@ export async function updateContactInDb(
   });
 }
 
-/* BACKUP:
-export async function deleteContactFromDb(id: string, userId: string) {
-  const existing = await prisma.contact.findUnique({
-    where: { id },
-    select: { id: true, fullName: true },
-  });
-  if (!existing) throwHttp(404, "Contact not found");
 
-  await prisma.$transaction(async (tx) => {
-    // Scrub contactId from any ContactList.contactIds arrays
-    const lists = await tx.contactList.findMany({
-      where: { contactIds: { has: id } },
-      select: { id: true, contactIds: true },
-    });
-    for (const l of lists) {
-      await tx.contactList.update({
-        where: { id: l.id },
-        data: { contactIds: l.contactIds.filter((cid) => cid !== id) },
-      });
-    }
-
-    // Scrub from ContactGroups as well
-    const groups = await tx.contactGroups.findMany({
-      where: { contactIds: { has: id } },
-      select: { id: true, contactIds: true },
-    });
-    for (const g of groups) {
-      await tx.contactGroups.update({
-        where: { id: g.id },
-        data: { contactIds: g.contactIds.filter((cid) => cid !== id) },
-      });
-    }
-
-    // Create Audit Log
-    await tx.auditLog.create({
-      data: {
-        userId,
-        action: `Deleted contact: ${existing.fullName}`,
-        details: `ID: ${id}`,
-      }
-    });
-
-    await tx.contact.delete({ where: { id } });
-  });
-
-  return true;
-}
-*/
 
 export async function deleteContactFromDb(id: string, userId: string) {
   // 1. Fetch the full contact data including emails, phones, attachments
@@ -616,9 +580,11 @@ export async function getContactsByFolderFromDb(
 ) {
   const folder = await prisma.contactFolder.findUnique({
     where: { id: folderId },
-    select: { userId: true },
+    select: { userId: true, isSystem: true, name: true },
   });
   if (!folder) throwHttp(404, "Folder not found");
+
+  const isDncFolder = folder.isSystem && folder.name === "Do Not Call";
 
   // ADMIN: folder must belong to them or one of their agents
   if (role === "ADMIN") {
@@ -640,7 +606,9 @@ export async function getContactsByFolderFromDb(
   return prisma.contact.findMany({
     where: {
       folderId,
-      status: { not: "DO_NOT_CALL" },
+      // If it's NOT the DNC folder, hide DNC contacts. 
+      // If it IS the DNC folder, we ONLY want DNC contacts (or at least definitely want to see them).
+      ...(isDncFolder ? { status: "DO_NOT_CALL" } : { status: { not: "DO_NOT_CALL" } }),
     },
     include: {
       emails: true,
@@ -701,6 +669,37 @@ export async function assignContactToListInDb(
 // CONTACT FOLDERS
 // ---------------------------------------------------------------------------
 
+export async function ensureDncFolder(userId: string, tx?: any) {
+  const client = tx || prisma;
+  try {
+    const dncFolder = await client.contactFolder.findFirst({
+      where: {
+        userId,
+        isSystem: true,
+        name: "Do Not Call"
+      }
+    });
+
+    if (!dncFolder) {
+      const newFolder = await client.contactFolder.create({
+        data: {
+          name: "Do Not Call",
+          isSystem: true,
+          userId,
+          listIds: [],
+          contactIds: []
+        }
+      });
+      console.log(`[ContactService] Initialized DNC system folder for user ${userId}`);
+      return newFolder;
+    }
+    return dncFolder;
+  } catch (error) {
+    console.error(`[ContactService] Failed to ensure DNC folder for ${userId}:`, error);
+    return null;
+  }
+}
+
 export async function createContactFolderInDb(
   payload: { name: string; listIds: string[]; contactIds?: string[]; parentId?: string },
   userId: string,
@@ -708,6 +707,7 @@ export async function createContactFolderInDb(
   return prisma.contactFolder.create({
     data: {
       name: payload.name,
+      isSystem: false, // User created folders are never system
       listIds: payload.listIds,
       contactIds: payload.contactIds,
       parentId: payload.parentId,
@@ -732,6 +732,15 @@ export async function updateContactFolderInDb(
 }
 
 export async function deleteContactFolderFromDb(id: string) {
+  const folder = await prisma.contactFolder.findUnique({
+    where: { id },
+    select: { isSystem: true }
+  });
+
+  if (folder?.isSystem) {
+    throwHttp(403, "System folders cannot be deleted");
+  }
+
   return prisma.contactFolder.delete({ where: { id } });
 }
 
@@ -762,7 +771,12 @@ export async function getAllContactFoldersFromDb(
     const listIds = assignedLists.map((l) => l.id);
 
     return prisma.contactFolder.findMany({
-      where: { listIds: { hasSome: listIds } },
+      where: {
+        OR: [
+          { listIds: { hasSome: listIds } },
+          { userId: userId, isSystem: true } // Agents see their own system folders (DNC)
+        ]
+      },
       orderBy: { createdAt: "desc" },
     });
   }
@@ -982,10 +996,15 @@ export async function moveToDncInDb(
 
     if (!contact) throwHttp(404, "Contact not found");
 
-    // 1. Mark contact as DO_NOT_CALL
+    // 1. Mark contact as DO_NOT_CALL and move to system DNC folder
+    const dncFolder = await ensureDncFolder(userId);
+
     await tx.contact.update({
       where: { id: contactId },
-      data: { status: "DO_NOT_CALL" },
+      data: {
+        status: "DO_NOT_CALL",
+        folderId: dncFolder?.id || null
+      },
     });
 
     // 3. Create Audit Log
@@ -1108,18 +1127,40 @@ export async function bulkMoveToDncInDb(
   contactIds: string[],
   userId: string,
 ) {
+  // Use a longer timeout for bulk operations to prevent 'Transaction already closed' errors
   return prisma.$transaction(async (tx) => {
     const contacts = await tx.contact.findMany({
       where: { id: { in: contactIds } },
       include: { phones: true },
     });
 
+    // Pass the transaction client 'tx' to ensureDncFolder
+    const dncFolder = await ensureDncFolder(userId, tx);
+
     for (const contact of contacts) {
-      // 1. Mark contact as DO_NOT_CALL
+      // 1. Mark contact as DO_NOT_CALL and move to DNC folder
       await tx.contact.update({
         where: { id: contact.id },
-        data: { status: "DO_NOT_CALL" },
+        data: {
+          status: "DO_NOT_CALL",
+          folderId: dncFolder?.id || null
+        },
       });
+
+      // 2. Clear from any lists (This ensures DNC contacts don't stay in active lists)
+      const contactLists = await tx.contactList.findMany({
+        where: { contactIds: { has: contact.id } },
+        select: { id: true, contactIds: true }
+      });
+
+      for (const list of contactLists) {
+        await tx.contactList.update({
+          where: { id: list.id },
+          data: {
+            contactIds: list.contactIds.filter(id => id !== contact.id)
+          }
+        });
+      }
 
       // 3. Create Audit Log
       const phoneNumbers = contact.phones.map((p) => p.number).join(", ");
@@ -1159,10 +1200,12 @@ export async function bulkMoveToDncInDb(
         }
       }
     } catch (notifErr) {
-      console.error("Failed to send DNC compliance alert:", notifErr);
+      console.error("Failed to send DNC compliance alert (non-fatal):", notifErr);
     }
 
     return { success: true };
+  }, {
+    timeout: 20000 // 20 seconds
   });
 }
 
@@ -2068,39 +2111,39 @@ export async function scheduleTemplateEmailInDb(contactId: string, templateId: s
   return true;
 }
 export const getDuplicateContactsFromDb = async () => {
-    // ── 1. Find Duplicate Phone Numbers ────────────────────────────────
-    const dupPhones = await prisma.contactPhone.groupBy({
-        by: ['number'],
-        _count: { number: true },
-        having: { number: { _count: { gt: 1 } } },
-    });
-    const dupPhoneNumbers = dupPhones.map((p) => p.number);
+  // ── 1. Find Duplicate Phone Numbers ────────────────────────────────
+  const dupPhones = await prisma.contactPhone.groupBy({
+    by: ['number'],
+    _count: { number: true },
+    having: { number: { _count: { gt: 1 } } },
+  });
+  const dupPhoneNumbers = dupPhones.map((p) => p.number);
 
-    // ── 2. Find Duplicate Emails ───────────────────────────────────────
-    const dupEmailsRaw = await prisma.contactEmail.groupBy({
-        by: ['email'],
-        _count: { email: true },
-        having: { email: { _count: { gt: 1 } } },
-    });
-    const dupEmailAddresses = dupEmailsRaw.map((e) => e.email);
+  // ── 2. Find Duplicate Emails ───────────────────────────────────────
+  const dupEmailsRaw = await prisma.contactEmail.groupBy({
+    by: ['email'],
+    _count: { email: true },
+    having: { email: { _count: { gt: 1 } } },
+  });
+  const dupEmailAddresses = dupEmailsRaw.map((e) => e.email);
 
-    // ── 3. Fetch All Contacts with Duplicates ──────────────────────────
-    // Note: We use OR here to fetch any contact that has at least one duplicate identifier
-    const contacts = await prisma.contact.findMany({
-        where: {
-            OR: [
-                { phones: { some: { number: { in: dupPhoneNumbers } } } },
-                { emails: { some: { email: { in: dupEmailAddresses } } } },
-            ],
-        },
-        include: {
-            phones: true,
-            emails: true,
-        },
-        orderBy: {
-            fullName: 'asc',
-        },
-    });
+  // ── 3. Fetch All Contacts with Duplicates ──────────────────────────
+  // Note: We use OR here to fetch any contact that has at least one duplicate identifier
+  const contacts = await prisma.contact.findMany({
+    where: {
+      OR: [
+        { phones: { some: { number: { in: dupPhoneNumbers } } } },
+        { emails: { some: { email: { in: dupEmailAddresses } } } },
+      ],
+    },
+    include: {
+      phones: true,
+      emails: true,
+    },
+    orderBy: {
+      fullName: 'asc',
+    },
+  });
 
-    return contacts;
+  return contacts;
 };

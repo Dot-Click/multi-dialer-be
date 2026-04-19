@@ -7,6 +7,7 @@ import os from "os";
 import { cloudinaryUploader } from "@/utils/handler";
 import { envConfig } from "@/lib/config";
 import Groq from "groq-sdk";
+import { moveToDncInDb } from "../contact/service";
 
 
 enum LeadCallStatus {

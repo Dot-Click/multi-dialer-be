@@ -12,6 +12,7 @@ import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
 import { sendEmail, newUserSignupTemp, loginAlertTemp } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
+import { ensureDncFolder } from "../routes/contact/service";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -344,8 +345,10 @@ export const auth = betterAuth({
                 data: { userId: resp.user.id },
               });
               await ensureDefaultMiscFields(newSettings.id);
+              await ensureDncFolder(resp.user.id);
             } else {
               await ensureDefaultMiscFields(settings.id);
+              await ensureDncFolder(resp.user.id);
             }
           } catch (error) {
             console.error("User setup failed", error);

@@ -277,6 +277,7 @@ model ContactList {
 model ContactFolder {
   id        String   @id @default(cuid())
   name      String
+  isSystem  Boolean  @default(false)
   listIds   String[] @default([])
   contactIds String[] @default([])
   createdAt DateTime @default(now())
