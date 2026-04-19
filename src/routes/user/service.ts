@@ -33,8 +33,9 @@ export async function createUserInDb(payload: any) {
     });
 }
 
-export async function getAllUsersFromDb() {
+export async function getAllUsersFromDb(where: any = {}) {
     return prisma.user.findMany({
+        where,
         orderBy: { createdAt: "desc" },
         select: {
             id: true,
@@ -46,6 +47,7 @@ export async function getAllUsersFromDb() {
             createdAt: true,
             updatedAt: true,
             defaultCallerId: true,
+            createdById: true,
             createdBy: {
                 select: {
                     id: true,

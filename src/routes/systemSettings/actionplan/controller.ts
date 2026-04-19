@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
 import { ActionPlanService } from './service';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../../../lib/prisma';
 
 export const ActionPlanController = {
   // Screen 1: List Table
@@ -67,6 +65,19 @@ export const ActionPlanController = {
       await ActionPlanService.delete(req.params.id);
       res.status(200).json({ success: true, message: "Deleted successfully" });
     } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  },
+
+  assign: async (req: any, res: Response) => {
+    try {
+      const result = await ActionPlanService.assignToContact({
+        ...req.body,
+        creatorId: req.user.id
+      });
+      res.status(200).json(result);
+    } catch (error: any) {
+      console.log("Assign Plan Error:", error);
       res.status(400).json({ success: false, message: error.message });
     }
   }

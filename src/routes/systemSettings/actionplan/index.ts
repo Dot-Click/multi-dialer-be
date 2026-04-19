@@ -13,6 +13,7 @@ const authorizeAdmin = (req: any, res: any, next: any) => {
 router.get('/', protectRoute, ActionPlanController.list);
 router.get('/:id', protectRoute, ActionPlanController.getOne);
 router.post('/', authorizeAdmin, ActionPlanController.create);
+router.post('/assign', protectRoute, ActionPlanController.assign);
 router.put('/:id', authorizeAdmin, ActionPlanController.update);
 router.delete('/:id', authorizeAdmin, ActionPlanController.remove);
 

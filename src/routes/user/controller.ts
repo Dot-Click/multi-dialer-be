@@ -38,7 +38,38 @@ export const createUser = async (req: Request, res: Response): Promise<void> => 
 
 export const getAllUsers = async (req: Request, res: Response): Promise<void> => {
     try {
-        const users = await getAllUsersFromDb();
+        const currentUser = (req as any).user;
+        let where: any = {};
+
+        if (currentUser.role === "ADMIN" || currentUser.role === "OWNER") {
+            // Show users created by this admin, and include the admin themselves
+            where = {
+                OR: [
+                    { id: currentUser.id },
+                    { createdById: currentUser.id }
+                ]
+            };
+        } else if (currentUser.role === "AGENT") {
+            // Show users who share the same creator as this agent
+            const agentDetails = await prisma?.user.findUnique({
+                where: { id: currentUser.id },
+                select: { createdById: true }
+            });
+
+            if (agentDetails?.createdById) {
+                where = {
+                    OR: [
+                        { id: agentDetails.createdById },
+                        { createdById: agentDetails.createdById }
+                    ]
+                };
+            } else {
+                // Orphan agent? Just show themselves
+                where = { id: currentUser.id };
+            }
+        }
+
+        const users = await getAllUsersFromDb(where);
         successResponse(res, 200, "Users fetched successfully", users);
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
