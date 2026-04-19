@@ -53,6 +53,8 @@ import {
   bulkMoveToDncInDb,
   assignContactToFolderInDb,
   getContactsByFolderFromDb,
+  bulkDeleteContactsInDb,
+  bulkAssignContactsToFolderInDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -216,26 +218,43 @@ export const deleteContact = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { restore, delete: deleteQuery } = req.query;
+    let { restore, delete: deleteQuery, folderId, listId } = req.query;
 
     if (!id) {
       errorResponse(res, "Contact id is required", 400);
       return;
     }
 
+    const userId = (req as any).user.id;
+    const referer = req.headers.referer;
+
+    // Smart Context Inference: If folderId is missing, try to get it from the URL
+    if (!folderId && referer) {
+      const match = referer.match(/\/contacts-folder\/([^\/\s\?]+)/);
+      if (match) folderId = match[1];
+    }
+
     if (restore === "true") {
-      await restoreContactFromDb(id, (req as any).user.id);
+      await restoreContactFromDb(id, userId);
       successResponse(res, 200, "Contact restored successfully", null);
     } else if (deleteQuery === "true") {
-      await permanentlyDeleteContactFromDb(id, (req as any).user.id);
+      await permanentlyDeleteContactFromDb(id, userId);
       successResponse(
         res,
         200,
         "Contact permanently deleted successfully",
         null,
       );
+    } else if (folderId || listId) {
+      // Contextual Removal: use the bulk logic for a single ID
+      await bulkDeleteContactsInDb(userId, [id], {
+        folderId: folderId as string,
+        listId: listId as string,
+        hardDelete: false
+      });
+      successResponse(res, 200, "Contact removed from folder/list successfully", null);
     } else {
-      await deleteContactFromDb(id, (req as any).user.id);
+      await deleteContactFromDb(id, userId);
       successResponse(res, 200, "Contact deleted successfully", null);
     }
   } catch (error: any) {
@@ -785,16 +804,17 @@ export const bulkAssignContactsToFolder = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { contactIds, folderId } = req.body;
+    const { contactIds, folderId, mode = "add" } = req.body;
     if (!contactIds || !Array.isArray(contactIds)) {
       errorResponse(res, "Contact IDs (array) are required", 400);
       return;
     }
-
-    // folderId can be null to move to Root
-    for (const id of contactIds) {
-      await assignContactToFolderInDb(id, folderId || null);
+    if (!folderId) {
+      errorResponse(res, "Folder ID is required", 400);
+      return;
     }
+
+    await bulkAssignContactsToFolderInDb(contactIds, folderId, mode);
 
     successResponse(res, 200, "Contacts assigned to folder successfully", { success: true });
   } catch (error: any) {
@@ -1153,5 +1173,39 @@ export const scheduleTemplateEmail = async (req: Request, res: Response) => {
     successResponse(res, 200, "Email scheduled successfully", null);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const bulkDeleteContacts = async (req: Request, res: Response) => {
+  try {
+    let { contactIds, folderId, listId, hardDelete } = req.body;
+
+    if (!contactIds || !Array.isArray(contactIds)) {
+      errorResponse(res, "contactIds (array) is required", 400);
+      return;
+    }
+
+    const userId = (req as any).user.id;
+    const referer = req.headers.referer;
+
+    // Smart Context Inference: Fallback to Referer for bulk delete bar
+    if (!folderId && referer) {
+      const match = referer.match(/\/contacts-folder\/([^\/\s\?]+)/);
+      if (match) folderId = match[1];
+    }
+
+    const result = await bulkDeleteContactsInDb(userId, contactIds, {
+      folderId,
+      listId,
+      hardDelete: hardDelete === true || hardDelete === "true"
+    });
+
+    successResponse(res, 200, "Bulk operation completed successfully", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500
+    );
   }
 };

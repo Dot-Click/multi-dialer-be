@@ -290,7 +290,6 @@ model ContactFolder {
   parent     ContactFolder?  @relation("SubFolders", fields: [parentId], references: [id])
   subFolders ContactFolder[] @relation("SubFolders")
   lists      ContactList[]
-  contacts    Contact[]
 
   @@map("folders")
 }
@@ -347,8 +346,7 @@ model Contact {
   calendar Calendar[]
   emailLogs EmailLog[]
 
-  folderId     String?
-  folder       ContactFolder? @relation(fields: [folderId], references: [id])
+  folderIds    String[]       @default([])
 
   // Lead Sheet / Qualification Fields
   permission Boolean @default(false)
@@ -359,7 +357,7 @@ model Contact {
   agent      Boolean @default(false)
 
   @@index([dataDialerId])
-  @@index([folderId])
+  @@index([folderIds])
   @@map("contacts")
 }
 

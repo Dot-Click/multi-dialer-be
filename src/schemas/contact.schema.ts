@@ -35,6 +35,7 @@ export const createContactSchema = z.object({
   statusQuo: z.boolean().optional(),
   timeline: z.boolean().optional(),
   agent: z.boolean().optional(),
+  folderIds: z.array(z.string()).optional(),
 });
 
 export const updateContactSchema = z.object({

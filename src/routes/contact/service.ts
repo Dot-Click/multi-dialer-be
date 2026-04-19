@@ -260,6 +260,7 @@ export async function updateContactInDb(
     statusQuo: boolean;
     timeline: boolean;
     agent: boolean;
+    folderIds: string[];
   }>,
   userId: string,
 ) {
@@ -270,12 +271,16 @@ export async function updateContactInDb(
   if (!existing) throwHttp(404, "Contact not found");
 
   const newStatus = payload.status || payload.disposition;
-  let folderIdToSet = undefined;
+  let folderIdsUpdate = undefined;
 
-  // If moving to DNC, ensure we have the folder ID
+  // If moving to DNC, ensure we have the folder ID and push it
   if (newStatus === "DO_NOT_CALL") {
     const dncFolder = await ensureDncFolder(userId);
-    folderIdToSet = dncFolder?.id || null;
+    if (dncFolder) {
+      folderIdsUpdate = { push: dncFolder.id };
+    }
+  } else if (payload.folderIds) {
+    folderIdsUpdate = payload.folderIds;
   }
 
   return prisma.contact.update({
@@ -303,7 +308,7 @@ export async function updateContactInDb(
       agent: payload.agent,
       dataDialerId: payload.dataDialerId,
       status: newStatus,
-      folderId: folderIdToSet,
+      folderIds: folderIdsUpdate,
       emails: payload.emails
         ? {
           deleteMany: {},
@@ -605,7 +610,7 @@ export async function getContactsByFolderFromDb(
 
   return prisma.contact.findMany({
     where: {
-      folderId,
+      folderIds: { has: folderId },
       // If it's NOT the DNC folder, hide DNC contacts. 
       // If it IS the DNC folder, we ONLY want DNC contacts (or at least definitely want to see them).
       ...(isDncFolder ? { status: "DO_NOT_CALL" } : { status: { not: "DO_NOT_CALL" } }),
@@ -790,10 +795,35 @@ export async function getAllContactFoldersFromDb(
 export async function assignContactToFolderInDb(
   contactId: string,
   folderId: string | null,
+  mode: "add" | "replace" = "add"
 ) {
+  if (!folderId) {
+    return prisma.contact.update({
+      where: { id: contactId },
+      data: { folderIds: [] },
+    });
+  }
+
+  if (mode === "replace") {
+    return prisma.contact.update({
+      where: { id: contactId },
+      data: { folderIds: [folderId] },
+    });
+  }
+
+  // ADD mode: fetch existing and push if not present
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { folderIds: true }
+  });
+
+  if (!contact) throwHttp(404, "Contact not found");
+
+  const newFolderIds = Array.from(new Set([...contact.folderIds, folderId]));
+
   return prisma.contact.update({
     where: { id: contactId },
-    data: { folderId },
+    data: { folderIds: newFolderIds },
   });
 }
 
@@ -1003,7 +1033,7 @@ export async function moveToDncInDb(
       where: { id: contactId },
       data: {
         status: "DO_NOT_CALL",
-        folderId: dncFolder?.id || null
+        folderIds: { push: dncFolder?.id || undefined }
       },
     });
 
@@ -1143,7 +1173,7 @@ export async function bulkMoveToDncInDb(
         where: { id: contact.id },
         data: {
           status: "DO_NOT_CALL",
-          folderId: dncFolder?.id || null
+          folderIds: { push: dncFolder?.id || undefined }
         },
       });
 
@@ -2147,3 +2177,237 @@ export const getDuplicateContactsFromDb = async () => {
 
   return contacts;
 };
+
+// ---------------------------------------------------------------------------
+// BULK OPERATIONS
+// ---------------------------------------------------------------------------
+
+/**
+ * High-performance bulk deletion and isolation.
+ * 
+ * If context (folderId or listId) is provided, it performs a 'Contextual Removal'
+ * which keeps the contact in the system but removes it from that specific container.
+ * 
+ * If hardDelete is true, it performs a global purge with optimized batching.
+ */
+export async function bulkDeleteContactsInDb(
+  userId: string,
+  contactIds: string[],
+  options: { 
+    folderId?: string; 
+    listId?: string; 
+    hardDelete?: boolean 
+  } = {}
+) {
+  const { folderId, listId, hardDelete } = options;
+
+  // Use a transaction for consistency and performance
+  return prisma.$transaction(async (tx) => {
+    
+    // ── CASE 1: Contextual Removal from Folder ──────────────────────────────────
+    if (folderId && !hardDelete) {
+      // 1. Fetch contacts and remove the specific folderId from their arrays
+      const contacts = await tx.contact.findMany({
+        where: { id: { in: contactIds }, folderIds: { has: folderId } },
+        select: { id: true, folderIds: true }
+      });
+
+      for (const contact of contacts) {
+        await tx.contact.update({
+          where: { id: contact.id },
+          data: {
+            folderIds: contact.folderIds.filter(id => id !== folderId)
+          }
+        });
+      }
+      
+      // 2. Clear from folder.contactIds array as well
+      const folder = await tx.contactFolder.findUnique({
+        where: { id: folderId },
+        select: { id: true, contactIds: true }
+      });
+      if (folder) {
+        await tx.contactFolder.update({
+          where: { id: folderId },
+          data: {
+            contactIds: folder.contactIds.filter(id => !contactIds.includes(id))
+          }
+        });
+      }
+      
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: `Bulk removed ${contactIds.length} contacts from folder`,
+          details: `Folder ID: ${folderId}`
+        }
+      });
+      
+      return { success: true, count: contactIds.length, mode: 'removed_from_folder' };
+    }
+
+    // ── CASE 2: Contextual Removal from List ────────────────────────────────────
+    if (listId && !hardDelete) {
+      const list = await tx.contactList.findUnique({
+        where: { id: listId },
+        select: { id: true, contactIds: true }
+      });
+      
+      if (list) {
+        await tx.contactList.update({
+          where: { id: listId },
+          data: {
+            contactIds: list.contactIds.filter(id => !contactIds.includes(id))
+          }
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: `Bulk removed ${contactIds.length} contacts from list`,
+          details: `List ID: ${listId}`
+        }
+      });
+
+      return { success: true, count: contactIds.length, mode: 'removed_from_list' };
+    }
+
+    // ── CASE 3: Hard Delete or Smart Safe-Unlink ────────────────────────────────
+    if (!hardDelete) {
+      // SMART SAFE-UNLINK: If no folderId was provided, remove from ALL folders
+      // but keep the contact record. This prevents accidental global purge.
+      const contacts = await tx.contact.findMany({
+        where: { id: { in: contactIds } },
+        select: { id: true, folderIds: true }
+      });
+
+      for (const contact of contacts) {
+        await tx.contact.update({
+          where: { id: contact.id },
+          data: { folderIds: [] } // Unassign from all folders
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: `Bulk safe-unassigned ${contactIds.length} contacts from all folders`,
+        }
+      });
+
+      return { success: true, count: contactIds.length, mode: 'safe_unassign' };
+    }
+
+    // ── CASE 4: Explicit Hard Delete (Global Purge) ──────────────────────────────
+    // 1. Fetch contacts for backup
+    const contactsToPurge = await tx.contact.findMany({
+      where: { id: { in: contactIds } },
+      include: { emails: true, phones: true, attachments: true }
+    });
+
+    // 2. Perform single bulk backup
+    await tx.backupContacts.create({
+      data: {
+        userId,
+        contacts: contactsToPurge as any
+      }
+    });
+
+    // 3. Batch scrub from ALL lists that contain any of these contacts
+    const listsToScrub = await tx.contactList.findMany({
+      where: { contactIds: { hasSome: contactIds } },
+      select: { id: true, contactIds: true }
+    });
+
+    for (const l of listsToScrub) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: {
+          contactIds: l.contactIds.filter(id => !contactIds.includes(id))
+        }
+      });
+    }
+
+    // 4. Batch scrub from ALL groups as well
+    const groupsToScrub = await tx.contactGroups.findMany({
+      where: { contactIds: { hasSome: contactIds } },
+      select: { id: true, contactIds: true }
+    });
+
+    for (const g of groupsToScrub) {
+      await tx.contactGroups.update({
+        where: { id: g.id },
+        data: {
+          contactIds: g.contactIds.filter(id => !contactIds.includes(id))
+        }
+      });
+    }
+
+    // 5. Delete all contact records
+    await tx.contact.deleteMany({
+      where: { id: { in: contactIds } }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Bulk hard deleted ${contactIds.length} contacts`,
+        details: `IDs: ${contactIds.slice(0, 5).join(', ')}...`
+      }
+    });
+
+    return { success: true, count: contactIds.length, mode: 'hard_delete' };
+
+  }, {
+    timeout: 30000 // 30 seconds for massive batches
+  });
+}
+
+export async function bulkAssignContactsToFolderInDb(
+  contactIds: string[],
+  folderId: string,
+  mode: "add" | "replace" = "add"
+) {
+  return prisma.$transaction(async (tx) => {
+    if (mode === "replace") {
+      await tx.contact.updateMany({
+        where: { id: { in: contactIds } },
+        data: { folderIds: [folderId] }
+      });
+    } else {
+      // ADD mode: requires per-contact update because updateMany doesn't support array push
+      for (const id of contactIds) {
+        const contact = await tx.contact.findUnique({
+          where: { id },
+          select: { folderIds: true }
+        });
+        if (contact) {
+          const freshFolderIds = Array.from(new Set([...contact.folderIds, folderId]));
+          await tx.contact.update({
+            where: { id },
+            data: { folderIds: freshFolderIds }
+          });
+        }
+      }
+    }
+
+    // Sync redundant folder.contactIds array
+    const folder = await tx.contactFolder.findUnique({
+      where: { id: folderId },
+      select: { contactIds: true }
+    });
+
+    if (folder) {
+      const mergedIds = Array.from(new Set([...folder.contactIds, ...contactIds]));
+      await tx.contactFolder.update({
+        where: { id: folderId },
+        data: { contactIds: mergedIds }
+      });
+    }
+
+    return { success: true };
+  }, {
+    timeout: 20000
+  });
+}
