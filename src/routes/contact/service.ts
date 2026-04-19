@@ -1,3 +1,4 @@
+import { PhoneType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
 import path from "path";
@@ -2198,7 +2199,6 @@ export const getDuplicateContactsFromDb = async () => {
           }))
         }
       ].filter(cond => {
-        // Prevent empty OR arrays from crashing Prisma
         if (Array.isArray((cond as any).OR) && (cond as any).OR.length === 0) return false;
         return true;
       }) as any
@@ -2212,7 +2212,22 @@ export const getDuplicateContactsFromDb = async () => {
     },
   });
 
-  // ── 3. Tag with Reason ───────────────────────────────────────────
+  // ── 2.5 Fetch Context Metadata (Folders and Lists) ────────────────
+  const allFolderIdsForContacts = Array.from(new Set(contacts.flatMap(c => c.folderIds)));
+  const contactIdsFound = contacts.map(c => c.id);
+
+  const [foldersFound, listsFound] = await Promise.all([
+    prisma.contactFolder.findMany({
+      where: { id: { in: allFolderIdsForContacts } },
+      select: { id: true, name: true }
+    }),
+    prisma.contactList.findMany({
+      where: { contactIds: { hasSome: contactIdsFound } },
+      select: { id: true, name: true, contactIds: true }
+    })
+  ]);
+
+  // ── 3. Tag with Reason and Locations ───────────────────────────────────────────
   return contacts.map(c => {
     const reasons: string[] = [];
     if (c.phones.some(p => dupPhoneNumbers.includes(p.number))) reasons.push("Phone Match");
@@ -2228,9 +2243,20 @@ export const getDuplicateContactsFromDb = async () => {
     );
     if (isMailDup) reasons.push("Mailing Address Match");
 
+    // Map Folder names
+    const folderNames = foldersFound
+      .filter(f => c.folderIds.includes(f.id))
+      .map(f => f.name);
+
+    // Map List names
+    const listNames = listsFound
+      .filter(l => l.contactIds.includes(c.id))
+      .map(l => l.name);
+
     return {
       ...c,
-      duplicateReason: reasons.join(", ")
+      duplicateReason: reasons.join(", "),
+      locationContext: [...folderNames.map(n => `Folder: ${n}`), ...listNames.map(n => `List: ${n}`)].join(", ")
     };
   });
 };
@@ -2466,5 +2492,144 @@ export async function bulkAssignContactsToFolderInDb(
     return { success: true };
   }, {
     timeout: 20000
+  });
+}
+
+/**
+ * Merges multiple duplicate contacts into a single Master contact.
+ * Aggregates unique phones, emails, tags, and notes.
+ * Re-links call records and attachments to the master contact.
+ */
+export async function mergeContactsInDb(
+  userId: string,
+  masterId: string,
+  duplicateIds: string[],
+  targetFolderId: string,
+  targetListId: string
+) {
+  return prisma.$transaction(async (tx) => {
+    // 1. Fetch all involved contacts
+    const allIds = [masterId, ...duplicateIds];
+    const contacts = await tx.contact.findMany({
+      where: { id: { in: allIds } },
+      include: {
+        emails: true,
+        phones: true,
+        attachments: true,
+        callRecords: true,
+      }
+    });
+
+    const master = contacts.find(c => c.id === masterId);
+    if (!master) throwHttp(404, "Master contact not found");
+
+    const duplicates = contacts.filter(c => c.id !== masterId);
+    if (duplicates.length === 0) return master;
+
+    // 2. Aggregate Data
+    // PHONES: Unique by number
+    const allPhonesMap = new Map<string, { number: string; type: PhoneType }>();
+    contacts.forEach(c => {
+      c.phones.forEach(p => {
+        if (!allPhonesMap.has(p.number)) {
+          allPhonesMap.set(p.number, { number: p.number, type: p.type as PhoneType });
+        }
+      });
+    });
+
+    // EMAILS: Unique by email
+    const allEmailsMap = new Map<string, { email: string; isPrimary: boolean }>();
+    contacts.forEach(c => {
+      c.emails.forEach(e => {
+        const normalized = e.email.toLowerCase().trim();
+        if (!allEmailsMap.has(normalized)) {
+          allEmailsMap.set(normalized, { email: e.email, isPrimary: e.isPrimary });
+        }
+      });
+    });
+
+    // ARRAYS: Tags, Notes
+    const allTags = Array.from(new Set(contacts.flatMap(c => c.tags || [])));
+    const allNotes = contacts.flatMap(c => c.notes || []);
+
+    // 3. Re-link relations
+    // Call Records
+    await tx.callRecord.updateMany({
+      where: { contactId: { in: duplicateIds } },
+      data: { contactId: masterId }
+    });
+
+    // Attachments
+    await tx.attachment.updateMany({
+      where: { contactId: { in: duplicateIds } },
+      data: { contactId: masterId }
+    });
+
+    // 4. Update Master Record & Location Cleanup
+    // Exclusive Move: Remove from ALL lists first
+    const affectedLists = await tx.contactList.findMany({
+      where: { contactIds: { hasSome: allIds } },
+      select: { id: true, contactIds: true }
+    });
+
+    for (const list of affectedLists) {
+      const newContactIds = list.contactIds.filter(id => !allIds.includes(id));
+      await tx.contactList.update({
+        where: { id: list.id },
+        data: { contactIds: newContactIds }
+      });
+    }
+
+    // Add to target list
+    const targetList = await tx.contactList.findUnique({
+      where: { id: targetListId },
+      select: { contactIds: true }
+    });
+    if (targetList) {
+      await tx.contactList.update({
+        where: { id: targetListId },
+        data: { contactIds: Array.from(new Set([...targetList.contactIds, masterId])) }
+      });
+    }
+
+    // Final merge update
+    const updatedMaster = await tx.contact.update({
+      where: { id: masterId },
+      data: {
+        phones: {
+          deleteMany: {},
+          create: Array.from(allPhonesMap.values())
+        },
+        emails: {
+          deleteMany: {},
+          create: Array.from(allEmailsMap.values())
+        },
+        tags: allTags,
+        notes: allNotes,
+        folderIds: [targetFolderId], // Exclusive Move
+      },
+      include: {
+        phones: true,
+        emails: true,
+      }
+    });
+
+    // 5. Cleanup Duplicates
+    await tx.contact.deleteMany({
+      where: { id: { in: duplicateIds } }
+    });
+
+    // 6. Audit Log
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: "Merged contacts (Targeted)",
+        details: `Master: ${masterId}. Target Folder: ${targetFolderId}. Target List: ${targetListId}.`
+      }
+    });
+
+    return updatedMaster;
+  }, {
+    timeout: 35000 
   });
 }

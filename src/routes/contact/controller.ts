@@ -55,6 +55,7 @@ import {
   getContactsByFolderFromDb,
   bulkDeleteContactsInDb,
   bulkAssignContactsToFolderInDb,
+  mergeContactsInDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -1201,6 +1202,27 @@ export const bulkDeleteContacts = async (req: Request, res: Response) => {
     });
 
     successResponse(res, 200, "Bulk operation completed successfully", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500
+    );
+  }
+};
+
+export const mergeContacts = async (req: Request, res: Response) => {
+  try {
+    const { masterId, duplicateIds, targetFolderId, targetListId } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!masterId || !duplicateIds || !Array.isArray(duplicateIds) || (!targetFolderId && !targetListId)) {
+      errorResponse(res, "masterId, duplicateIds (array), and at least one destination (targetFolderId or targetListId) are required", 400);
+      return;
+    }
+
+    const result = await mergeContactsInDb(userId, masterId, duplicateIds, targetFolderId, targetListId);
+    successResponse(res, 200, "Contacts merged and moved successfully", result);
   } catch (error: any) {
     errorResponse(
       res,

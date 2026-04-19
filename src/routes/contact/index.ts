@@ -43,6 +43,7 @@ import {
   getDuplicateContacts,
   getContactsByFolder,
   bulkDeleteContacts,
+  mergeContacts,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -100,6 +101,7 @@ router.post("/bulk-assign-list", bulkAssignContactsToList);
 router.patch("/bulk-assign-folder", bulkAssignContactsToFolder);
 router.post("/bulk-move-to-dnc", bulkMoveToDnc);
 router.post("/bulk-delete", bulkDeleteContacts);
+router.post("/merge", mergeContacts);
 router.get("/contacts-folder/:fid", getContactsByFolder);
 
 export default router;
