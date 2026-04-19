@@ -1248,12 +1248,13 @@ export async function getDncListFromDb() {
   });
 }
 
-export async function importContactsFromCsvInDb(args: {
+export async function importContactsInDb(args: {
   userId: string;
   fileName: string;
   type: string;
   contactListId?: string;
   contactGroupId?: string;
+  contactFolderId?: string;
   keepOld: boolean;
   duplicateConfig?: {
     scope: string[];   // ["Entire Database", "File Import"]
@@ -1268,6 +1269,7 @@ export async function importContactsFromCsvInDb(args: {
     type,
     contactListId,
     contactGroupId,
+    contactFolderId,
     keepOld,
     duplicateConfig,
     contacts,
@@ -1522,6 +1524,32 @@ export async function importContactsFromCsvInDb(args: {
             data: { contactIds: { push: toAdd } },
           });
         }
+      } else if (contactFolderId && allContactIds.length > 0) {
+        const folder = await tx.contactFolder.findUnique({
+          where: { id: contactFolderId },
+        });
+        if (!folder) throwHttp(404, "Contact folder not found");
+
+        const existing = new Set(folder.contactIds);
+        const toAdd = allContactIds.filter((id) => !existing.has(id));
+
+        if (toAdd.length > 0) {
+          await tx.contactFolder.update({
+            where: { id: contactFolderId },
+            data: { contactIds: { push: toAdd } },
+          });
+        }
+
+        // Also update individual contacts with this folderId
+        for (const cid of allContactIds) {
+          const contact = await tx.contact.findUnique({ where: { id: cid }, select: { folderIds: true } });
+          if (contact && !contact.folderIds.includes(contactFolderId)) {
+            await tx.contact.update({
+              where: { id: cid },
+              data: { folderIds: { push: contactFolderId } },
+            });
+          }
+        }
       }
 
       // ── Step 6: Record the import ─────────────────────────────────────────
@@ -1532,6 +1560,7 @@ export async function importContactsFromCsvInDb(args: {
           type,
           contactListId,
           contactGroupId,
+          contactFolderId,
           keepOld,
           contactsCount: allContactIds.length,
           userId,
@@ -1553,6 +1582,9 @@ export async function getAllImportContactsFromDb(userId: string) {
       contactGroup: {
         select: { name: true },
       },
+      contactFolder: {
+        select: { name: true },
+      },
       user: {
         select: {
           fullName: true,
@@ -1569,10 +1601,11 @@ export async function exportContactsInDb(args: {
   fieldNames: string[];
   contactListId?: string;
   contactGroupId?: string;
+  contactFolderId?: string;
 }) {
-  const { userId, fieldNames, contactListId, contactGroupId } = args;
+  const { userId, fieldNames, contactListId, contactGroupId, contactFolderId } = args;
 
-  let exportType: "LIST" | "GROUP" | "ALL_CONTACTS" = "ALL_CONTACTS";
+  let exportType: "LIST" | "GROUP" | "FOLDER" | "ALL_CONTACTS" = "ALL_CONTACTS";
   let contactsCount = 0;
 
   if (contactListId) {
@@ -1591,6 +1624,14 @@ export async function exportContactsInDb(args: {
     });
     if (!group) throwHttp(404, "Contact group not found");
     contactsCount = group.contactIds.length;
+  } else if (contactFolderId) {
+    exportType = "FOLDER";
+    const folder = await prisma.contactFolder.findUnique({
+      where: { id: contactFolderId },
+      select: { contactIds: true },
+    });
+    if (!folder) throwHttp(404, "Contact folder not found");
+    contactsCount = folder.contactIds.length;
   } else {
     exportType = "ALL_CONTACTS";
     contactsCount = await prisma.contact.count();
@@ -1602,6 +1643,7 @@ export async function exportContactsInDb(args: {
       fieldNames,
       contactListId: contactListId || null,
       contactGroupId: contactGroupId || null,
+      contactFolderId: contactFolderId || null,
       contactsCount: contactsCount - 1,
       exportType,
     },
@@ -1616,6 +1658,9 @@ export async function exportContactsInDb(args: {
         select: { name: true },
       },
       contactGroup: {
+        select: { name: true },
+      },
+      contactFolder: {
         select: { name: true },
       },
     },
@@ -1638,6 +1683,9 @@ export async function getAllExportContactsFromDb(userId: string) {
         select: { name: true },
       },
       contactGroup: {
+        select: { name: true },
+      },
+      contactFolder: {
         select: { name: true },
       },
     },

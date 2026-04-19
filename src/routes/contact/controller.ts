@@ -42,7 +42,7 @@ import {
   getAllExportContactsFromDb,
   exportContactsInDb,
   getAllImportContactsFromDb,
-  importContactsFromCsvInDb,
+  importContactsInDb,
   getAllBackupContactsFromDb,
   restoreContactFromDb,
   permanentlyDeleteContactFromDb,
@@ -63,6 +63,7 @@ import {
 } from "../../schemas/contactlist.schema";
 import { parse } from "csv-parse/sync";
 import fs from "fs";
+import * as xlsx from "xlsx";
 
 export const createContact = async (
   req: Request,
@@ -886,7 +887,7 @@ export const getDncList = async (
   }
 };
 
-export const importContactCsv = async (
+export const importContacts = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
@@ -894,8 +895,9 @@ export const importContactCsv = async (
     const {
       contactListId,
       contactGroupId,
+      contactFolderId,
       fieldMappings: fieldMappingsRaw,
-      miscMappings: miscMappingsRaw,       // ← NEW
+      miscMappings: miscMappingsRaw,
       dupScope: dupScopeRaw,
       dupFields: dupFieldsRaw,
       dupHandling,
@@ -903,16 +905,16 @@ export const importContactCsv = async (
 
     const file = req.file;
 
-    if (!contactListId && !contactGroupId) {
-      errorResponse(res, "List or Group ID not provided", 400);
+    if (!contactListId && !contactGroupId && !contactFolderId) {
+      errorResponse(res, "List, Group, or Folder ID not provided", 400);
       return;
     }
     if (!file) {
-      errorResponse(res, "CSV file is required", 400);
+      errorResponse(res, "File is required", 400);
       return;
     }
 
-    // ── Parse fieldMappings (primary fields) ──────────────────────────────────
+    // ── Parse fieldMappings
     let fieldMappings: Record<string, string> = {};
     try {
       fieldMappings =
@@ -924,18 +926,16 @@ export const importContactCsv = async (
       return;
     }
 
-    // ── Parse miscMappings { "<MiscField.id>": "<csvColumnHeader>" } ──────────
+    // ── Parse miscMappings
     let miscMappings: Record<string, string> = {};
     try {
       miscMappings =
         typeof miscMappingsRaw === "string"
           ? JSON.parse(miscMappingsRaw)
           : miscMappingsRaw || {};
-    } catch {
-      // non-critical
-    }
+    } catch { /* non-critical */ }
 
-    // ── Parse duplicate settings ──────────────────────────────────────────────
+    // ── Parse duplicate settings
     let dupScope: string[] = ["Entire Database", "File Import"];
     let dupFields: string[] = ["Phone"];
     try {
@@ -946,33 +946,56 @@ export const importContactCsv = async (
     const normalizedDupHandling = dupHandling || "Keep Old";
     const keepOld = normalizedDupHandling === "Keep Old";
 
-    // ── Parse CSV ─────────────────────────────────────────────────────────────
-    const fileContent = fs.readFileSync(file.path, "utf-8");
-    const records: Record<string, string>[] = parse(fileContent, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
+    // ── Parse File (CSV or Excel) ─────────────────────────────────────────────
+    let records: any[] = [];
+    const fileExtension = file.originalname.split(".").pop()?.toLowerCase();
+
+    if (fileExtension === "csv") {
+      const fileContent = fs.readFileSync(file.path, "utf-8");
+      records = parse(fileContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
+    } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+      const workbook = xlsx.readFile(file.path);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      
+      // Find the first non-empty row to use as the header row
+      const allRows = xlsx.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+      const headerRowIndex = allRows.findIndex(row => 
+        row && Array.isArray(row) && row.some(cell => cell !== null && cell !== undefined && cell.toString().trim() !== "")
+      );
+
+      if (headerRowIndex === -1) {
+        errorResponse(res, "No data found in the Excel file.", 400);
+        return;
+      }
+
+      // Use the detected header row index as the starting point (range)
+      records = xlsx.utils.sheet_to_json(sheet, { range: headerRowIndex });
+    } else {
+      errorResponse(res, "Unsupported file format. Please upload CSV or Excel.", 400);
+      return;
+    }
 
     try { fs.unlinkSync(file.path); } catch (e) { console.error("Temp file cleanup error:", e); }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    // Resolve a primary field value: fieldMappings["Name"] = "full_name" → record["full_name"]
-    const resolve = (record: Record<string, string>, systemField: string): string => {
+    // ── Helpers
+    const resolve = (record: any, systemField: string): string => {
       const csvCol = fieldMappings[systemField];
       if (!csvCol) return "";
-      return (record[csvCol] || "").trim();
+      return (record[csvCol]?.toString() || "").trim();
     };
 
-    // ── Map records → contacts ────────────────────────────────────────────────
+    // ── Map records → contacts
     const contacts = records
       .filter((r) => {
         const name = resolve(r, "Name").toLowerCase();
         return name !== "fullname" && name !== "full name" && name !== "name" && name !== "";
       })
       .map((r) => {
-        // Emails
         const emails: { email: string; isPrimary: boolean }[] = [];
         const emailVal = resolve(r, "Email");
         if (emailVal) {
@@ -982,27 +1005,21 @@ export const importContactCsv = async (
           });
         }
 
-        // Phones
         const phones: { number: string; type: string }[] = [];
         const phoneVal = resolve(r, "Phone");
         if (phoneVal) {
           phones.push({ number: phoneVal.toString(), type: "MOBILE" });
         }
 
-        // Tags
         const tagsVal = resolve(r, "Tags");
         const tags = tagsVal
-          ? tagsVal.split(",").map((t) => t.trim()).filter(Boolean)
+          ? tagsVal.split(",").map((t: string) => t.trim()).filter(Boolean)
           : [];
 
-        // ── Misc values — keyed by MiscField.id ──────────────────────────────
-        // miscMappings = { "3ccbf011-...": "dob_column", "ab12cd-...": "notes_col" }
-        // We read the CSV column value for each mapped misc field
         const miscValues: Record<string, string> = {};
         for (const [miscFieldId, csvCol] of Object.entries(miscMappings)) {
-          const val = (r[csvCol] || "").trim();
+          const val = (r[csvCol]?.toString() || "").trim();
           if (val) miscValues[miscFieldId] = val;
-          // Result: { "3ccbf011-416f-4716-8934-3cb5fbf75490": "1990-01-01" }
         }
 
         return {
@@ -1011,27 +1028,29 @@ export const importContactCsv = async (
           city: "",
           state: "",
           zip: "",
-          source: "CSV Import",
+          source: fileExtension?.toUpperCase() + " Import",
           notes: "",
           tags,
           emails,
           phones,
-          // Only set miscValues if there's actually something to save
           miscValues: Object.keys(miscValues).length > 0 ? miscValues : undefined,
         };
       });
 
-    // ── Call service ──────────────────────────────────────────────────────────
-    const result = await importContactsFromCsvInDb({
+    // ── Call service
+    const result = await importContactsInDb({
       userId: (req as any).user.id,
       fileName: file.originalname,
-      type: "CSV",
+      type: fileExtension?.toUpperCase() || "FILE",
       contactListId:
         !contactListId || contactListId === "null" || contactListId === "undefined"
           ? undefined : contactListId,
       contactGroupId:
         !contactGroupId || contactGroupId === "null" || contactGroupId === "undefined"
           ? undefined : contactGroupId,
+      contactFolderId:
+        !contactFolderId || contactFolderId === "null" || contactFolderId === "undefined"
+          ? undefined : contactFolderId,
       keepOld,
       duplicateConfig: {
         scope: dupScope,

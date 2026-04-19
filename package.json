@@ -53,6 +53,7 @@
     "swagger-ui-express": "^5.0.0",
     "twilio": "^5.11.1",
     "web-push": "^3.6.7",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.11"
   },
   "devDependencies": {

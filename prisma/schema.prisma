@@ -159,6 +159,7 @@ enum RecordingSlot {
 enum ExportType {
   LIST
   GROUP
+  FOLDER
   ALL_CONTACTS
 }
 
@@ -290,6 +291,8 @@ model ContactFolder {
   parent     ContactFolder?  @relation("SubFolders", fields: [parentId], references: [id])
   subFolders ContactFolder[] @relation("SubFolders")
   lists      ContactList[]
+  importContacts ImportContact[]
+  exportContacts ExportContact[]
 
   @@map("folders")
 }
@@ -1225,6 +1228,8 @@ model ImportContact {
   contactList    ContactList?   @relation(fields: [contactListId], references: [id], onDelete: SetNull)
   contactGroupId String?
   contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+  contactFolderId String?
+  contactFolder   ContactFolder? @relation(fields: [contactFolderId], references: [id], onDelete: SetNull)
   keepOld        Boolean        @default(true)
   contactsCount  Int            @default(0)
 
@@ -1246,6 +1251,9 @@ model ExportContact {
 
   contactGroupId String?
   contactGroup   ContactGroups? @relation(fields: [contactGroupId], references: [id], onDelete: SetNull)
+
+  contactFolderId String?
+  contactFolder   ContactFolder? @relation(fields: [contactFolderId], references: [id], onDelete: SetNull)
 
   contactsCount Int        @default(0)
   exportType    ExportType // <- ye naya field, batayega LIST/GROUP/ALL_CONTACTS

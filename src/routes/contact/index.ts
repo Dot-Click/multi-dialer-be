@@ -29,7 +29,7 @@ import {
   removeFromDnc,
   getDncList,
   getAllImportContacts,
-  importContactCsv,
+  importContacts,
   exportContactCsv,
   getAllExportContacts,
   getAllBackupContacts,
@@ -55,7 +55,8 @@ router.get("/backup-contacts", getAllBackupContacts);
 
 router.get("/import-contacts", getAllImportContacts);
 router.get("/duplicates", getDuplicateContacts);
-router.post("/import-csv", singleUpload("file"), importContactCsv);
+router.post("/import", singleUpload("file"), importContacts);
+router.post("/import-csv", singleUpload("file"), importContacts); // Alias for backward compatibility
 router.post("/export-csv", exportContactCsv);
 router.get("/export-csv", getAllExportContacts);
 
