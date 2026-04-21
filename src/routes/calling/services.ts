@@ -544,16 +544,18 @@ export class DialerService {
       console.warn(`[handleCallStatusUpdate] No metadata and no providedAgentId for SID ${sid}. Cannot track status.`);
       return;
     }
-    let dbStatus: LeadCallStatus = LeadCallStatus.CALLING;
-    const terminalStatuses = ["failed", "busy", "no-answer", "completed"];
+    // Terminal statuses that should release locks and potentially trigger next calls
+    const terminalStatuses = ["failed", "busy", "no-answer", "completed", "canceled"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
 
+    let dbStatus: LeadCallStatus = LeadCallStatus.CALLING;
     if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
     else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
+    else if (twilioStatus === "canceled") dbStatus = LeadCallStatus.PENDING;
     else if (twilioStatus === "completed") dbStatus = LeadCallStatus.CALLED;
-    else if (twilioStatus === "ringing" || twilioStatus === "initiated" || twilioStatus === "in-progress") {
-      dbStatus = LeadCallStatus.CALLING;
+    else if (twilioStatus === "ringing" || twilioStatus === "initiated" || twilioStatus === "in-progress" || twilioStatus === "answered") {
+        dbStatus = LeadCallStatus.CALLING;
     }
 
     // Clear transcription logs for ALL terminal statuses to prevent memory leak
@@ -598,37 +600,44 @@ export class DialerService {
         return;
       }
       this.processedTerminalSids.add(sid);
-      // Clean up old SIDs from tracking every 50 calls to prevent memory leak
-      if (this.processedTerminalSids.size > 100) {
-        const oldestSids = Array.from(this.processedTerminalSids).slice(0, 20);
+      
+      // Clean up old SIDs from tracking every 100 calls to prevent memory leak
+      if (this.processedTerminalSids.size > 200) {
+        const oldestSids = Array.from(this.processedTerminalSids).slice(0, 50);
         oldestSids.forEach(s => this.processedTerminalSids.delete(s));
       }
 
       const rootSid = this.sidToRootSid.get(sid) || sid;
       const lockOwner = (this as any).agentBridgedCallId.get(userId!);
 
-      console.log(`[handleCallStatusUpdate] Call ${sid} (root: ${rootSid}, isChild: ${isChildLeg}) reached terminal status: ${twilioStatus}. Current Lock Owner: ${lockOwner || 'NONE'}`);
+      console.log(`[handleCallStatusUpdate] Call ${sid} (root: ${rootSid}, isChild: ${isChildLeg}) terminal: ${twilioStatus}. Lock Owner: ${lockOwner || 'NONE'}`);
 
-      // Release agent busy lock if ROOT SID or CURRENT SID matches the lock owner
-      if (lockOwner === sid || lockOwner === rootSid) {
-        console.log(`[handleCallStatusUpdate] Releasing agent ${userId} (Identified via ${sid === lockOwner ? 'SID' : 'RootSid'}).`);
+      // Release agent busy lock ONLY if this specific SID or its ROOT is the lock owner
+      if (lockOwner && (lockOwner === sid || lockOwner === rootSid)) {
+        console.log(`[handleCallStatusUpdate] Releasing agent ${userId} lock owner match: ${lockOwner}.`);
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
+        
+        // Only trigger processQueue if we actually released the lock for the current agent
+        this.processQueue(userId);
       } else {
-        console.log(`[handleCallStatusUpdate] Non-locking leg terminated. Checking if agent is orphaned...`);
-        // Additional protection: if this was the last active call for the agent, force release anyway
-        const hasOtherCalls = Array.from(this.activeCalls.values()).some(c => c.userId === userId && !terminalStatuses.includes(c.status || ""));
-        if (!hasOtherCalls && this.isAgentBusy(userId!)) {
-          console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Force releasing stuck lock.`);
-          this.setAgentBusy(userId!, false);
+        console.log(`[handleCallStatusUpdate] Non-locking leg terminated. Checking for orphaned lock...`);
+        const hasOtherCalls = Array.from(this.activeCalls.entries()).some(([callSid, metadata]) => 
+          metadata.userId === userId && 
+          callSid !== sid &&
+          metadata.status && 
+          !terminalStatuses.includes(metadata.status)
+        );
+        
+        if (!hasOtherCalls && userId && this.isAgentBusy(userId)) {
+           console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Clearing stuck lock.`);
+           this.setAgentBusy(userId, false);
+           this.agentBridgedCallId.delete(userId);
+           this.processQueue(userId);
         }
       }
 
       this.activeCalls.delete(sid);
-      // sidToRootSid is NOT deleted here anymore — it's cleaned up by the interval/pool
-      // to ensure recordings find their root Sid even if they arrive late.
-      console.log(`Call ${sid} finished (${twilioStatus}). Triggering next in queue for ${userId}`);
-      this.processQueue(userId);
     }
   }
 
