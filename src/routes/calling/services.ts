@@ -387,6 +387,13 @@ export class DialerService {
       const amRecordingUrl = settings?.callSettings[0]?.answeringMachineRecording?.url || "";
       const busyRecordingUrl = settings?.callSettings[0]?.busyRecording?.url || "";
 
+      // Guard: Check if lead.userId is missing, empty, "undefined", or "null"
+      if (!lead.userId || lead.userId === 'undefined' || lead.userId === 'null') {
+        console.error(`[makeCall] ERROR: Missing or invalid userId for lead ${lead.id}`);
+        await this.updateLeadStatusInDB(lead.id, "FAILED");
+        return;
+      }
+
       // 3. Initiate Twilio Call
       const call = await client.calls.create({
         to: lead.phone,

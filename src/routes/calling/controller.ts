@@ -343,7 +343,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
   const busyRecordingUrl = body.busyRecordingUrl || req.query.busyRecordingUrl || "";
 
-  if (!agentId && isBrowserOrigin) {
+  if ((!agentId || agentId === 'undefined' || agentId === 'null') && isBrowserOrigin) {
     agentId = browserIdentity.split(':')[1];
     console.log(`[VoiceWebhook] Extracted agentId ${agentId} from caller identity.`);
   }
@@ -397,12 +397,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const AnsweredBy = body.AnsweredBy || body.answered_by;
   const currentCallSid = body.CallSid || body.call_sid || req.query.CallSid;
 
-  console.log(`[VoiceWebhook] Processing ${currentCallSid} (AnsweredBy: ${AnsweredBy || 'none'})`);
-
   // 0. Handle Synchronous AMD if active
   if (AnsweredBy) {
-    const answeredByStr = String(AnsweredBy).toLowerCase();
-    const isMachine = answeredByStr.startsWith('machine') || answeredByStr === 'fax';
+    const isMachine = AnsweredBy.startsWith('machine') || AnsweredBy === 'fax';
     if (isMachine) {
       console.log(`[VoiceWebhook] Machine detected for ${currentCallSid}. Playing voicemail.`);
       try {
@@ -442,12 +439,13 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       statusCallbackMethod: "POST",
     }, to);
   }
-  // CASE B: Bridged Call or Inbound
+  // CASE B: Bridged Call or Inbound (Server-side startCalling or Direct Inbound)
+  // We want to dial the Agent in the browser.
   else {
-    console.log(`[VoiceWebhook] Bridge request for ${currentCallSid} -> Agent ${agentId}`);
+    console.log("[VoiceWebhook] PSTN-to-Browser (Bridge) Call detected");
 
-    if (!agentId) {
-      console.error("[VoiceWebhook] Missing agentId for bridge request.");
+    if (!agentId || agentId === 'undefined' || agentId === 'null') {
+      console.error("[VoiceWebhook] Missing agentId for PSTN-to-Browser bridge request.");
       twiml.say("We are unable to connect you to an agent right now.");
       twiml.hangup();
       res.type("text/xml");
@@ -455,18 +453,28 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       return;
     }
 
+    // Power Dialer Logic: Check if Agent is Busy
     const isBusyBoolean = dialerService.isAgentBusy(agentId);
     const activeLockOwner = (dialerService as any).agentBridgedCallId.get(agentId);
+
+    // STALE LOCK PROTECTION: If the lock owner SID is NOT in our activeCalls Map, 
+    // it probably finished without clearing. We should ignore the busy state.
     const isLockOwnerStale = activeLockOwner && !(dialerService as any).activeCalls.has(activeLockOwner);
 
     const isActuallyBusy = isBusyBoolean && activeLockOwner && activeLockOwner !== currentCallSid && !isLockOwnerStale;
 
+    console.log("isActuallyBusy", isActuallyBusy);
+    console.log("isBusyBoolean", isBusyBoolean);
+    console.log("activeLockOwner", activeLockOwner);
+    console.log("currentCallSid", currentCallSid);
+    console.log("isLockOwnerStale", isLockOwnerStale);
+
     if (isActuallyBusy) {
-      console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Hanging up ${currentCallSid}.`);
+      console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Rescheduling ${currentCallSid}.`);
       if (busyRecordingUrl) {
         twiml.play(busyRecordingUrl);
       } else {
-        twiml.say("Agent busy. Please wait.");
+        twiml.say("Please hold on, our agent is currently busy with another customer. We will contact you soon.");
       }
       twiml.hangup();
 
@@ -479,9 +487,34 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       return;
     }
 
-    // Acquire lock and update active call metadata
+    // Mark agent as busy now that we're routing a live person to them
+    // Only acquire lock if not already held by another call
+    const existingLock = (dialerService as any).agentBridgedCallId.get(agentId);
+
+    if (existingLock && existingLock !== currentCallSid) {
+      // Lock already held — treat this call as busy
+      console.log(`[VoiceWebhook] Lock already held by ${existingLock}, rejecting ${currentCallSid}`);
+
+      if (busyRecordingUrl) {
+        twiml.play(busyRecordingUrl);
+      } else {
+        twiml.say("Please hold on, our agent is currently busy. We will contact you soon.");
+      }
+      twiml.hangup();
+
+      if (contactId) {
+        dialerService.recycleLeadWithDelay(agentId, contactId);
+      }
+
+      res.type("text/xml");
+      res.send(twiml.toString());
+      return;
+    }
+
     dialerService.setAgentBusy(agentId, true, currentCallSid);
-    
+    console.log(`[VoiceWebhook] Lock ACQUIRED for Agent ${agentId} by Call ${currentCallSid}`);
+
+    // Set status to in-progress for the bridge
     const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
     (dialerService as any).activeCalls.set(currentCallSid, {
       userId: agentId,
@@ -492,25 +525,36 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       status: "in-progress"
     });
 
-    // Use current From or config number for the bridge
-    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER || body.From || body.To;
-    
+    // FALLBACK: Use envConfig.TWILIO_PHONE_NUMBER if set, otherwise fallback to the originating number
+    // to ensure TwiML validity while still attempting to provide a stable identity.
+    const bridgeCallerId =
+      envConfig.TWILIO_PHONE_NUMBER ||
+      (typeof fromValue === "string" ? fromValue : envConfig.TWILIO_PHONE_NUMBER) ||
+      body.To || // Last resort fallback
+      envConfig.TWILIO_PHONE_NUMBER;
+
     const dial = twiml.dial({
       callerId: bridgeCallerId,
-      answerOnBridge: true, // Customer is answered now, bridge to agent
+      answerOnBridge: true,
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
 
+    // Bridge to the specific agent identity safely
     const clientNode = dial.client({
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
       statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${agentId}`,
       statusCallbackMethod: "POST",
     }, agentId);
-    
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
+
+    // Register initial association if we have currentCallSid
+    if (body.CallSid) {
+      // currentCallSid is the parent here
+    }
+
   }
 
   res.type("text/xml");
