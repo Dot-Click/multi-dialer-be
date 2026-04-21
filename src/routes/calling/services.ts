@@ -405,7 +405,7 @@ export class DialerService {
       const sessionId = this.userActiveSessions.get(lead.userId);
       this.activeCalls.set(call.sid, {
         leadId: lead.id,
-        contactId: lead.id,
+        contactId: lead.originalContactId || lead.id,
         userId: lead.userId,
         sessionId,
         status: "initiated"
@@ -418,6 +418,7 @@ export class DialerService {
           data: {
             callSid: call.sid,
             leadId: lead.id,
+            contactId: lead.originalContactId || null,
             userId: lead.userId,
             sessionId: sessionId || null,
             // @ts-ignore - Prisma client needs regeneration
@@ -466,7 +467,7 @@ export class DialerService {
 
     const leadStatuses: Record<string, string> = {};
     Array.from(this.activeCalls.values()).forEach(c => {
-      const lid = c.leadId || c.contactId;
+      const lid = c.contactId || c.leadId;
       if (c.userId === userId && lid) {
         leadStatuses[lid] = c.status || "initiated";
       }
