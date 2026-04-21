@@ -88,14 +88,14 @@ export class DialerService {
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
     setInterval(() => {
-        const now = Date.now();
-        const thirtyMins = 30 * 60 * 1000;
-        
-        // Cleanup sidToRootSid entries that are no longer in activeCalls (approximate)
-        if (this.sidToRootSid.size > 500) {
-            this.sidToRootSid.clear(); 
-        }
-        
+      const now = Date.now();
+      const thirtyMins = 30 * 60 * 1000;
+
+      // Cleanup sidToRootSid entries that are no longer in activeCalls (approximate)
+      if (this.sidToRootSid.size > 500) {
+        this.sidToRootSid.clear();
+      }
+
     }, 30 * 60 * 1000);
   }
 
@@ -518,9 +518,9 @@ export class DialerService {
       metadata.status = twilioStatus;
       this.activeCalls.set(sid, metadata);
     }
-    
+
     if (userId) {
-        this.lastActivity.set(userId, Date.now());
+      this.lastActivity.set(userId, Date.now());
     }
 
     // PROTECTION: For browser calls... (keep this or move below userId check?)
@@ -546,7 +546,7 @@ export class DialerService {
     else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
     else if (twilioStatus === "completed") dbStatus = LeadCallStatus.CALLED;
     else if (twilioStatus === "ringing" || twilioStatus === "initiated" || twilioStatus === "in-progress") {
-        dbStatus = LeadCallStatus.CALLING;
+      dbStatus = LeadCallStatus.CALLING;
     }
 
     // Clear transcription logs for ALL terminal statuses to prevent memory leak
@@ -612,8 +612,8 @@ export class DialerService {
         // Additional protection: if this was the last active call for the agent, force release anyway
         const hasOtherCalls = Array.from(this.activeCalls.values()).some(c => c.userId === userId && !terminalStatuses.includes(c.status || ""));
         if (!hasOtherCalls && this.isAgentBusy(userId!)) {
-           console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Force releasing stuck lock.`);
-           this.setAgentBusy(userId!, false);
+          console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Force releasing stuck lock.`);
+          this.setAgentBusy(userId!, false);
         }
       }
 
@@ -630,8 +630,8 @@ export class DialerService {
       console.log(`[Recording] Updating for ${callSid}: ${recordingUrl}`);
 
       if (!envConfig.CLOUDINARY_CLOUD_NAME) {
-          console.warn("[Recording] Cloudinary not configured. Skipping recording sync.");
-          return;
+        console.warn("[Recording] Cloudinary not configured. Skipping recording sync.");
+        return;
       }
 
       // 1. Download from Twilio and Upload to Cloudinary
@@ -646,7 +646,7 @@ export class DialerService {
           targetSid = root;
         }
       }
-      
+
       const transcription = await groq.audio.transcriptions.create({
         url: cloudinaryUrl,
         model: "whisper-large-v3",
@@ -761,7 +761,7 @@ export class DialerService {
 
     this.agentBusyState.set(userId, busy);
     if (busy) {
-        this.lastActivity.set(userId, Date.now());
+      this.lastActivity.set(userId, Date.now());
     }
     console.log(`[AgentState] User ${userId} busy state set to: ${busy}`);
     if (!busy) {
@@ -771,17 +771,17 @@ export class DialerService {
 
   isAgentBusy(userId: string): boolean {
     const isBusy = this.agentBusyState.get(userId) || false;
-    
+
     // STALE LOCK PROTECTION: Release if no activity for 60 minutes
     if (isBusy) {
-        const last = this.lastActivity.get(userId) || 0;
-        if (Date.now() - last > 60 * 60 * 1000) {
-            console.warn(`[DialerService] Detected STALE LOCK for user ${userId}. Force releasing.`);
-            this.setAgentBusy(userId, false);
-            return false;
-        }
+      const last = this.lastActivity.get(userId) || 0;
+      if (Date.now() - last > 60 * 60 * 1000) {
+        console.warn(`[DialerService] Detected STALE LOCK for user ${userId}. Force releasing.`);
+        this.setAgentBusy(userId, false);
+        return false;
+      }
     }
-    
+
     return isBusy;
   }
 
