@@ -558,8 +558,14 @@ export class DialerService {
     let userId = metadata?.userId || providedAgentId;
 
     if (metadata) {
-      metadata.status = twilioStatus;
-      this.activeCalls.set(sid, metadata);
+      // PROTECTION: If this call is already marked as 'callback' (overflow),
+      // do not let Twilio's 'answered' or 'in-progress' events turn it back to Green.
+      if (metadata.status === 'callback' && (twilioStatus === 'answered' || twilioStatus === 'in-progress')) {
+        console.log(`[handleCallStatusUpdate] Protecting 'callback' status for SID ${sid}. Ignoring '${twilioStatus}'.`);
+      } else {
+        metadata.status = twilioStatus;
+        this.activeCalls.set(sid, metadata);
+      }
     }
 
     if (userId) {

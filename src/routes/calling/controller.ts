@@ -492,7 +492,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
 
     // Acquire lock and update active call metadata
     dialerService.setAgentBusy(agentId, true, currentCallSid);
-    
+
     const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
     (dialerService as any).activeCalls.set(currentCallSid, {
       userId: agentId,
@@ -508,7 +508,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     // body.To    = the customer's PSTN number (e.g. +923152557056)                   ❌
     // Prefer the explicit env var; fall back to body.From which is always a Twilio number.
     const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER || body.From;
-    
+
     const dial = twiml.dial({
       callerId: bridgeCallerId,
       answerOnBridge: true, // Customer is answered now, bridge to agent
@@ -521,7 +521,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${agentId}`,
       statusCallbackMethod: "POST",
     }, agentId);
-    
+
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
