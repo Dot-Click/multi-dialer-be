@@ -503,11 +503,11 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       status: "in-progress"
     });
 
-    // FIX: bridgeCallerId must always be a verified Twilio number.
-    // Using body.From (the customer's number) or body.To (the dialed number)
-    // can fail if Twilio's security rules block PSTN numbers as callerId for
-    // Client legs. We always prefer the env default.
-    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER || body.To;
+    // bridgeCallerId must be a verified Twilio number so the agent browser leg is accepted.
+    // body.From  = the Twilio number we used to dial the customer (e.g. +18782061927) ✅
+    // body.To    = the customer's PSTN number (e.g. +923152557056)                   ❌
+    // Prefer the explicit env var; fall back to body.From which is always a Twilio number.
+    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER || body.From;
     
     const dial = twiml.dial({
       callerId: bridgeCallerId,
