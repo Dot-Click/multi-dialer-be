@@ -464,19 +464,24 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     if (isActuallyBusy) {
       console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Putting ${currentCallSid} on hold.`);
 
+      // ── POWER DIALER: Mark as callback in metadata so the UI shows Amber instead of Green ──
+      const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);
+      if (existingMeta) {
+        existingMeta.status = "callback";
+        (dialerService as any).activeCalls.set(currentCallSid, existingMeta);
+      }
+
       // ── POWER DIALER: Play on-hold audio instead of hanging up immediately ───
       const defaultHoldMusic = "https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
       const holdUrl = busyRecordingUrl || defaultHoldMusic;
 
       // Use <Play loop="1"> so the customer hears music for ~10 seconds,
       // then we hang up and schedule a redial via requeueLeadForRedial.
-      // Twilio will end the call after the audio plays (no loop = plays once).
       twiml.play(holdUrl);
       twiml.hangup();
 
       // Schedule automatic redial once hold audio finishes
       if (contactId) {
-        // requeueLeadForRedial uses the sticky Caller ID automatically
         dialerService.requeueLeadForRedial(agentId, contactId, 5_000);
       }
 
