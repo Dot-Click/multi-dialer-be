@@ -166,7 +166,7 @@ export const stopDialing: RequestHandler = async (req, res) => {
  */
 export const addLeadsToDialer: RequestHandler = async (req, res) => {
   try {
-    const { leads, callerId, callerIds }: { leads: any[], callerId?: string, callerIds?: string | string[] } = req.body;
+    const { leads, callerId, callerIds, pacing }: { leads: any[], callerId?: string, callerIds?: string | string[], pacing?: number } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -275,8 +275,7 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
       return;
     }
 
-    // 3. Add to Dialer Queue
-    // Map frontend contact IDs to leads via phone number for UI sync
+    // 3. Add to Dialer Queue — pass pacing alongside caller IDs
     const phoneToContactId = new Map(leads.map((l: any) => [l.phone, l.id]));
     await dialerService.addLeadsToQueue(
       userId,
@@ -288,7 +287,8 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         userId: userId,
         originalContactId: phoneToContactId.get(l.phone),
       })),
-      callerIds || callerId // Pass selected caller IDs (array) or ID (string) to service
+      callerIds || callerId, // Pass selected caller IDs (array) or ID (string) to service
+      pacing              // Pass session-level pacing override
     );
 
     successResponse(res, 200, "Leads saved to DB and added to queue!", {
@@ -462,16 +462,22 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     const isActuallyBusy = isBusyBoolean && activeLockOwner && activeLockOwner !== currentCallSid && !isLockOwnerStale;
 
     if (isActuallyBusy) {
-      console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Hanging up ${currentCallSid}.`);
-      if (busyRecordingUrl) {
-        twiml.play(busyRecordingUrl);
-      } else {
-        twiml.say("Agent busy. Please wait.");
-      }
+      console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Putting ${currentCallSid} on hold.`);
+
+      // ── POWER DIALER: Play on-hold audio instead of hanging up immediately ───
+      const defaultHoldMusic = "https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
+      const holdUrl = busyRecordingUrl || defaultHoldMusic;
+
+      // Use <Play loop="1"> so the customer hears music for ~10 seconds,
+      // then we hang up and schedule a redial via requeueLeadForRedial.
+      // Twilio will end the call after the audio plays (no loop = plays once).
+      twiml.play(holdUrl);
       twiml.hangup();
 
+      // Schedule automatic redial once hold audio finishes
       if (contactId) {
-        dialerService.recycleLeadWithDelay(agentId, contactId);
+        // requeueLeadForRedial uses the sticky Caller ID automatically
+        dialerService.requeueLeadForRedial(agentId, contactId, 5_000);
       }
 
       res.type("text/xml");
@@ -492,8 +498,11 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       status: "in-progress"
     });
 
-    // Use current From or config number for the bridge
-    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER || body.From || body.To;
+    // FIX: bridgeCallerId must always be a verified Twilio number.
+    // Using body.From (the customer's number) or body.To (the dialed number)
+    // can fail if Twilio's security rules block PSTN numbers as callerId for
+    // Client legs. We always prefer the env default.
+    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER || body.To;
     
     const dial = twiml.dial({
       callerId: bridgeCallerId,

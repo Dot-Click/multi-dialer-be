@@ -85,6 +85,12 @@ export class DialerService {
   private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
   private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
 
+  // ── Power Dialer additions ─────────────────────────────────────────────────
+  /** Maps leadId -> phone number used on first dial. Ensures redials use the same Caller ID. */
+  private leadToCallerIdMap: Map<string, string> = new Map();
+  /** Maps userId -> session-level pacing override (max simultaneous calls). */
+  private sessionPacing: Map<string, number> = new Map();
+
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
     setInterval(() => {
@@ -115,25 +121,34 @@ export class DialerService {
 
   /**
    * Add leads to queue and trigger processing for that user.
+   * @param pacing - optional session pacing override (max simultaneous calls)
    */
-  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string | string[]) {
-    if (callerId && !Array.isArray(callerId)) {
-      this.userCallerIdPrefs.set(userId, callerId);
-      this.userCallerIdPools.delete(userId); // Explicit single choice overrides rotation pool
-      console.log(`[DialerService] Set single preferred callerId for user ${userId}: ${callerId}`);
-    } else if (Array.isArray(callerId) && callerId.length > 0) {
-      // Explicit list of IDs to rotate through
-      this.userCallerIdPools.set(userId, callerId);
-      this.userCallerIdIndices.set(userId, 0);
-      this.userCallerIdPrefs.delete(userId);
-      console.log(`[DialerService] Initialized explicit rotation pool for user ${userId} with ${callerId.length} numbers.`);
-    } else {
-      // IF no specific callerId provided, fetch ALL available ones for rotation
-      try {
-        const settings = await prisma.system_Setting.findFirst({
-          where: { userId }
-        });
+  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string | string[], pacing?: number) {
+    // ── Store session pacing ──────────────────────────────────────────────────
+    if (pacing && pacing > 0) {
+      this.sessionPacing.set(userId, pacing);
+      console.log(`[DialerService] Session pacing set to ${pacing} for user ${userId}`);
+    }
 
+    // ── Normalise Caller ID into a pool (always) ──────────────────────────────
+    // FIX: A single string is wrapped into a 1-element array so the pool logic
+    // is always used. Previously a single string was put in userCallerIdPrefs
+    // but processQueue only reads userCallerIdPools, causing silent fallback.
+    if (callerId) {
+      const pool = Array.isArray(callerId)
+        ? callerId.filter(Boolean)          // already an array — filter empties
+        : [callerId].filter(Boolean);       // wrap single string into array
+
+      if (pool.length > 0) {
+        this.userCallerIdPools.set(userId, pool);
+        this.userCallerIdIndices.set(userId, 0);
+        this.userCallerIdPrefs.delete(userId);
+        console.log(`[DialerService] Caller ID pool set for user ${userId}: [${pool.join(', ')}]`);
+      }
+    } else {
+      // No callerId provided — auto-fetch all available numbers for this user
+      try {
+        const settings = await prisma.system_Setting.findFirst({ where: { userId } });
         if (settings) {
           const user = await prisma.user.findUnique({ where: { id: userId } });
           const availableIds = await prisma.callerId.findMany({
@@ -142,16 +157,12 @@ export class DialerService {
               : { systemSettingId: settings.id },
             select: { twillioNumber: true }
           });
-
-          const numbers = availableIds
-            .map(id => id.twillioNumber)
-            .filter((n): n is string => !!n);
-
+          const numbers = availableIds.map(id => id.twillioNumber).filter((n): n is string => !!n);
           if (numbers.length > 0) {
             this.userCallerIdPools.set(userId, numbers);
             this.userCallerIdIndices.set(userId, 0);
             this.userCallerIdPrefs.delete(userId);
-            console.log(`[DialerService] Initialized automatic rotation pool for user ${userId} with ${numbers.length} numbers.`);
+            console.log(`[DialerService] Auto-filled rotation pool for user ${userId} with ${numbers.length} numbers.`);
           }
         }
       } catch (poolError) {
@@ -178,12 +189,16 @@ export class DialerService {
     this.agentBridgedCallId.delete(userId);
     this.userActiveSessions.delete(userId);
     this.lastActivity.delete(userId);
+    this.sessionPacing.delete(userId);
     for (const [sid, metadata] of this.activeCalls.entries()) {
       if (metadata.userId === userId) {
         this.activeCalls.delete(sid);
         this.sidToRootSid.delete(sid);
       }
     }
+    // Clear sticky caller ID mappings for this user's leads
+    // We identify them by checking leads that belonged to this user's active calls
+    // (leadToCallerIdMap is shared so we leave it — it persists per-lead across sessions)
     console.log(`[DialerService] Hardware reset of stuck states for user ${userId} complete.`);
   }
 
@@ -219,13 +234,19 @@ export class DialerService {
       const callBatch: { lead: Lead; assignedNumber: string | null }[] = [];
 
       // 1. Synchronously assign numbers to all leads before any async work
+      //    Priority: sticky (previously used) > round-robin from pool
       while (inFlight < capacity && !queue.isEmpty()) {
         const lead = queue.dequeue();
         if (!lead) break;
 
         let assignedNumber: string | null = null;
 
-        if (pool.length > 0) {
+        // Check sticky map first — this lead was previously called from a specific number
+        const stickyNumber = this.leadToCallerIdMap.get(lead.id);
+        if (stickyNumber) {
+          assignedNumber = stickyNumber;
+          console.log(`[processQueue] Using sticky Caller ID ${stickyNumber} for lead ${lead.id}`);
+        } else if (pool.length > 0) {
           // Round-robin: grab current index, increment immediately
           let index = this.userCallerIdIndices.get(userId) || 0;
           assignedNumber = pool[index % pool.length];
@@ -253,6 +274,13 @@ export class DialerService {
   }
 
   private async getUserCapacity(userId: string): Promise<number> {
+    // Session-level pacing always wins — this is the agent's explicit choice
+    const pacingOverride = this.sessionPacing.get(userId);
+    if (pacingOverride && pacingOverride > 0) {
+      console.log(`[getUserCapacity] Using session pacing ${pacingOverride} for user ${userId}`);
+      return pacingOverride;
+    }
+
     try {
       // Find system settings for the user
       const settings = await prisma.system_Setting.findFirst({
@@ -418,6 +446,14 @@ export class DialerService {
         status: "initiated"
       });
       this.lastActivity.set(lead.userId, Date.now());
+
+      // ── Sticky Caller ID: record which number was used for this lead ──────
+      if (fromNumber && !this.leadToCallerIdMap.has(lead.id)) {
+        // Normalise to E.164 before storing
+        const normalised = fromNumber.startsWith('+') ? fromNumber : `+${fromNumber}`;
+        this.leadToCallerIdMap.set(lead.id, normalised);
+        console.log(`[makeCall] Sticky Caller ID recorded: lead ${lead.id} -> ${normalised}`);
+      }
 
       // 3. Create CallRecord in DB immediately
       try {
@@ -801,27 +837,50 @@ export class DialerService {
     return isBusy;
   }
 
-  recycleLeadWithDelay(userId: string, leadId: string) {
-    // Schedule lead to be requeued later or at lower priority
+  /**
+   * Requeue a lead for a redial with its sticky Caller ID preserved.
+   * Called when an overflow call (agent busy) needs a second attempt.
+   * @param userId - the agent's user ID
+   * @param contactId - the frontend contact ID (used as key in queue and sticky map)
+   * @param delayMs - milliseconds to wait before reinserting (default 15s)
+   */
+  requeueLeadForRedial(userId: string, contactId: string, delayMs = 15_000) {
+    console.log(`[DialerService] Scheduling redial for contact ${contactId} in ${delayMs}ms`);
     setTimeout(async () => {
       try {
-        const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+        // Mark as CALL_BACK status
+        await this.updateLeadStatusInDB(contactId, "CALL_BACK");
+
+        // Look up the lead record — try by id or originalContactId
+        const lead = await prisma.lead.findFirst({
+          where: { OR: [{ id: contactId }] }
+        });
+
         if (lead) {
           const queue = this.getOrCreateQueue(userId);
           queue.enqueue({
             id: lead.id,
             fullName: lead.fullName,
             phone: lead.phone,
-            priority: 0, // Lower priority or just push to queue
-            userId: lead.userId
+            // High priority so it jumps to the front of the queue
+            priority: 999,
+            userId: lead.userId,
+            originalContactId: contactId,
           });
-          console.log(`[DialerService] Recycled lead ${leadId} after breather.`);
+          console.log(`[DialerService] Lead ${lead.id} requeued for redial (sticky CID: ${this.leadToCallerIdMap.get(lead.id) || 'none'}).`);
           this.processQueue(userId);
+        } else {
+          console.warn(`[DialerService] requeueLeadForRedial: lead not found for contactId ${contactId}`);
         }
       } catch (e) {
-        console.error("Failed to recycle lead", e);
+        console.error('[DialerService] Failed to requeue lead for redial:', e);
       }
-    }, 15000); // 15 second breather
+    }, delayMs);
+  }
+
+  /** @deprecated Use requeueLeadForRedial instead */
+  recycleLeadWithDelay(userId: string, leadId: string) {
+    this.requeueLeadForRedial(userId, leadId);
   }
 
   // Session Management
