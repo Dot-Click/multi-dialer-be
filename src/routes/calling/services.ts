@@ -493,11 +493,20 @@ export class DialerService {
 
   async updateLeadStatusInDB(leadId: string, status: string) {
     try {
-      await prisma.lead.update({
-        where: { id: leadId },
-        data: { status },
+      // Try to find the lead by ID
+      const lead = await prisma.lead.findFirst({
+        where: { id: leadId }
       });
-      console.log(`Lead ${leadId} status updated to ${status} in DB.`);
+
+      if (lead) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { status },
+        });
+        console.log(`Lead ${lead.id} status updated to ${status} in DB.`);
+      } else {
+        console.warn(`[updateLeadStatusInDB] Lead not found for ID: ${leadId}`);
+      }
     } catch (error: any) {
       console.error(`Error updating lead ${leadId} status in DB:`, error.message);
     }
@@ -592,16 +601,6 @@ export class DialerService {
     const terminalStatuses = ["failed", "busy", "no-answer", "completed", "canceled"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
 
-    // ── POWER DIALER: Handle hangup while in overflow ──
-    if (isTerminal && metadata?.status === 'callback') {
-      console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
-      if (userId && (leadId || contactId)) {
-        this.requeueLeadForRedial(userId, leadId || contactId, 2000);
-      }
-      // Keep status as 'callback' so frontend doesn't exit session
-      return; 
-    }
-
     let dbStatus: LeadCallStatus = LeadCallStatus.CALLING;
     if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
@@ -645,6 +644,16 @@ export class DialerService {
       }
     } catch (dbError: any) {
       console.error(`[handleCallStatusUpdate] ERROR: CallRecord update failed: ${dbError.message}`);
+    }
+
+    // ── POWER DIALER: Handle hangup while in overflow ──
+    if (isTerminal && metadata?.status === 'callback') {
+      console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
+      if (userId && (leadId || contactId)) {
+        this.requeueLeadForRedial(userId, leadId || contactId, 2000);
+      }
+      // Keep status as 'callback' so frontend doesn't exit session
+      return; 
     }
 
     if (isTerminal) {
@@ -877,9 +886,9 @@ export class DialerService {
         // Mark as CALL_BACK status
         await this.updateLeadStatusInDB(contactId, "CALL_BACK");
 
-        // Look up the lead record — try by id or originalContactId
-        const lead = await prisma.lead.findFirst({
-          where: { OR: [{ id: contactId }] }
+        // Look up the lead record
+        const lead = await prisma.lead.findUnique({
+          where: { id: contactId }
         });
 
         if (lead) {
