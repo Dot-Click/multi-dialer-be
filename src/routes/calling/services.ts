@@ -79,6 +79,7 @@ export class DialerService {
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
   private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
   private userCallerIdPools: Map<string, string[]> = new Map(); // userId -> list of Twilio numbers
+  private pendingRedials: Map<string, Set<string>> = new Map(); // userId -> Set of leadIds
   private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
   private userProcessingLocks: Map<string, boolean> = new Map(); // userId -> is currently processing queue
   private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
@@ -519,6 +520,7 @@ export class DialerService {
     return {
       queueSize: queue?.size() || 0,
       activeCallsCount: userActiveCalls.length,
+      pendingRedialsCount: this.pendingRedials.get(userId)?.size || 0,
       currentQueue: queue?.getQueue() || [],
       leadStatuses
     };
@@ -589,6 +591,16 @@ export class DialerService {
     // Terminal statuses that should release locks and potentially trigger next calls
     const terminalStatuses = ["failed", "busy", "no-answer", "completed", "canceled"];
     const isTerminal = terminalStatuses.includes(twilioStatus);
+
+    // ── POWER DIALER: Handle hangup while in overflow ──
+    if (isTerminal && metadata?.status === 'callback') {
+      console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
+      if (userId && (leadId || contactId)) {
+        this.requeueLeadForRedial(userId, leadId || contactId, 2000);
+      }
+      // Keep status as 'callback' so frontend doesn't exit session
+      return; 
+    }
 
     let dbStatus: LeadCallStatus = LeadCallStatus.CALLING;
     if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
@@ -852,8 +864,16 @@ export class DialerService {
    */
   requeueLeadForRedial(userId: string, contactId: string, delayMs = 15_000) {
     console.log(`[DialerService] Scheduling redial for contact ${contactId} in ${delayMs}ms`);
+    
+    // Add to pending redials guard
+    if (!this.pendingRedials.has(userId)) this.pendingRedials.set(userId, new Set());
+    this.pendingRedials.get(userId)?.add(contactId);
+
     setTimeout(async () => {
       try {
+        // Remove from guard
+        this.pendingRedials.get(userId)?.delete(contactId);
+
         // Mark as CALL_BACK status
         await this.updateLeadStatusInDB(contactId, "CALL_BACK");
 
