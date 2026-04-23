@@ -1237,11 +1237,18 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
 export const handleIncomingSms: RequestHandler = async (req: Request, res: Response) => {
   try {
     const { From, To, Body, MessageSid } = req.body;
-    console.log(`[Incoming SMS] From: ${From}, To: ${To}, Body: ${Body}`);
+    console.log(`[SMS Webhook] START - From: ${From}, To: ${To}, Body: ${Body}, SID: ${MessageSid}`);
+
+    if (!From || !To || !Body) {
+      console.warn("[SMS Webhook] Missing required fields in Twilio request body:", req.body);
+      res.sendStatus(400);
+      return;
+    }
 
     // Normalize phone number for lookup
     const digits = From.replace(/\D/g, "");
     const searchNumber = digits.length > 10 ? digits.slice(-10) : digits;
+    console.log(`[SMS Webhook] Normalized sender number: ${searchNumber}`);
 
     // 1. Find the contact by phone number
     const contactPhone = await prisma.contactPhone.findFirst({
@@ -1250,11 +1257,17 @@ export const handleIncomingSms: RequestHandler = async (req: Request, res: Respo
     });
 
     const contact = contactPhone?.contact;
+    if (contact) {
+      console.log(`[SMS Webhook] Found contact: ${contact.fullName} (ID: ${contact.id})`);
+    } else {
+      console.log(`[SMS Webhook] No contact found for number: ${searchNumber}`);
+    }
 
     // 2. Find the agent (User) who owns this number or contact
     let userId = contact?.userId;
 
     if (!userId) {
+      console.log(`[SMS Webhook] Searching for owner of Twilio number: ${To}`);
       // Fallback: Find which agent owns the 'To' number
       const callerId = await prisma.callerId.findFirst({
         where: { twillioNumber: To },
@@ -1264,6 +1277,7 @@ export const handleIncomingSms: RequestHandler = async (req: Request, res: Respo
     }
 
     if (userId) {
+      console.log(`[SMS Webhook] Associated message with User ID: ${userId}`);
       await prisma.smsLog.create({
         data: {
           to: To,
@@ -1275,11 +1289,14 @@ export const handleIncomingSms: RequestHandler = async (req: Request, res: Respo
           contactId: contact?.id
         }
       });
+      console.log(`[SMS Webhook] SUCCESS - Log entry created.`);
+    } else {
+      console.warn(`[SMS Webhook] FAILED - Could not determine owner (User ID) for message to ${To}`);
     }
 
     res.sendStatus(200);
   } catch (error) {
-    console.error("Handle incoming SMS failed:", error);
+    console.error("[SMS Webhook] CRITICAL ERROR:", error);
     res.sendStatus(500);
   }
 };
