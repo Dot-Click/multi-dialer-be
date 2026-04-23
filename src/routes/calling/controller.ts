@@ -853,24 +853,45 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
 
 
 export const sendSms: RequestHandler = async (req: Request, res: Response) => {
+  const startTime = Date.now();
   try {
-    const { to, message } = req.body;
+    const { to, message, from } = req.body;
     if (!to || !message) {
       errorResponse(res, { message: "Recipient number (to) and message are required" }, 400);
       return;
     }
 
+    // Normalize phone number immediately
+    const digits = to.replace(/\D/g, "");
+    const formattedTo = to.startsWith('+') ? to : (digits.length === 10 ? `+1${digits}` : `+${digits}`);
+    const senderNumber = from || fromNumber;
+
+    console.log(`[sendSms] Initiating send to ${formattedTo} from ${senderNumber}`);
+
+    // Call Twilio - this is the part that usually takes the most time
+    const twilioStart = Date.now();
     const service = await client.messages.create({
       body: message,
-      from: fromNumber,
-      to: to,
+      from: senderNumber,
+      to: formattedTo,
+      // Optional: Add status callback for background tracking without blocking the agent
+      statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/sms-status`,
+    });
+    const twilioEnd = Date.now();
+
+    console.log(`[sendSms] Twilio API Response: SID=${service.sid}, Time=${twilioEnd - twilioStart}ms`);
+    
+    successResponse(res, 200, "SMS sent successfully", {
+      sid: service.sid,
+      status: service.status,
+      duration: twilioEnd - twilioStart
     });
 
-    console.log(service.sid);
-    successResponse(res, 200, "SMS sent successfully", service);
+    const totalTime = Date.now() - startTime;
+    console.log(`[sendSms] Total request processing time: ${totalTime}ms`);
     return;
   } catch (error: any) {
-    console.error("Number buy failed:", error);
+    console.error(`[sendSms] FAILED after ${Date.now() - startTime}ms:`, error);
     errorResponse(res, { message: error.message });
     return;
   }

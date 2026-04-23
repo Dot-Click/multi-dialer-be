@@ -107,6 +107,10 @@ router.get("/token", protectRoute, getTwilioToken);
 
 // messagings
 router.post("/send-sms", protectRoute, sendSms);
+router.post("/webhooks/sms-status", (req, res) => {
+  console.log(`[SMS Webhook] Status: ${req.body.SmsStatus}, SID: ${req.body.SmsSid}`);
+  res.sendStatus(200);
+});
 
 // Number Management
 router.post("/available-numbers", protectRoute, getAvailableUsNumbers);
