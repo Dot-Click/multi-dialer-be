@@ -855,7 +855,7 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
 export const sendSms: RequestHandler = async (req: Request, res: Response) => {
   const startTime = Date.now();
   try {
-    const { to, message, from } = req.body;
+    const { to, message, from, contactId } = req.body;
     if (!to || !message) {
       errorResponse(res, { message: "Recipient number (to) and message are required" }, 400);
       return;
@@ -881,6 +881,38 @@ export const sendSms: RequestHandler = async (req: Request, res: Response) => {
 
     console.log(`[sendSms] Twilio API Response: SID=${service.sid}, Time=${twilioEnd - twilioStart}ms`);
     
+    // Log outgoing SMS to database
+    const userId = req.user?.id;
+    if (userId) {
+       try {
+         let finalContactId = contactId;
+
+         if (!finalContactId) {
+           const digits = formattedTo.replace(/\D/g, "");
+           const searchNumber = digits.length > 10 ? digits.slice(-10) : digits;
+           
+           const contactPhone = await prisma.contactPhone.findFirst({
+             where: { number: { contains: searchNumber } },
+           });
+           finalContactId = contactPhone?.contactId;
+         }
+
+         await prisma.smsLog.create({
+           data: {
+             to: formattedTo,
+             from: senderNumber,
+             content: message,
+             status: "SENT",
+             messageSid: service.sid,
+             userId,
+             contactId: finalContactId
+           }
+         });
+       } catch (logErr) {
+         console.warn("[sendSms] Failed to log SMS to DB:", logErr);
+       }
+    }
+
     successResponse(res, 200, "SMS sent successfully", {
       sid: service.sid,
       status: service.status,
@@ -1197,6 +1229,113 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
     successResponse(res, 200, hold ? "Customer on hold" : "Customer resumed", { customerLegSid: customerLeg.sid });
   } catch (error: any) {
     console.error("Toggle hold failed:", error);
+    errorResponse(res, { message: error.message });
+  }
+};
+
+// SMS Inbox & Webhooks
+export const handleIncomingSms: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { From, To, Body, MessageSid } = req.body;
+    console.log(`[Incoming SMS] From: ${From}, To: ${To}, Body: ${Body}`);
+
+    // Normalize phone number for lookup
+    const digits = From.replace(/\D/g, "");
+    const searchNumber = digits.length > 10 ? digits.slice(-10) : digits;
+
+    // 1. Find the contact by phone number
+    const contactPhone = await prisma.contactPhone.findFirst({
+      where: { number: { contains: searchNumber } },
+      include: { contact: true }
+    });
+
+    const contact = contactPhone?.contact;
+
+    // 2. Find the agent (User) who owns this number or contact
+    let userId = contact?.userId;
+
+    if (!userId) {
+      // Fallback: Find which agent owns the 'To' number
+      const callerId = await prisma.callerId.findFirst({
+        where: { twillioNumber: To },
+        include: { systemSetting: true }
+      });
+      userId = callerId?.systemSetting.userId;
+    }
+
+    if (userId) {
+      await prisma.smsLog.create({
+        data: {
+          to: To,
+          from: From,
+          content: Body,
+          status: "RECEIVED",
+          messageSid: MessageSid,
+          userId,
+          contactId: contact?.id
+        }
+      });
+    }
+
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Handle incoming SMS failed:", error);
+    res.sendStatus(500);
+  }
+};
+
+export const getSmsInbox: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+
+    // Get unique contacts who have had SMS history with this user
+    const conversations = await prisma.smsLog.groupBy({
+      by: ['contactId'],
+      where: { 
+        userId,
+        contactId: { not: null }
+      },
+      _max: { createdAt: true }
+    });
+
+    const contactIds = conversations.map(c => c.contactId as string);
+
+    const contacts = await prisma.contact.findMany({
+      where: { id: { in: contactIds } },
+      include: {
+        smsLogs: {
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        },
+        phones: true
+      }
+    });
+
+    // Sort by last message date
+    const sortedInbox = contacts.sort((a, b) => {
+      const dateA = a.smsLogs[0]?.createdAt.getTime() || 0;
+      const dateB = b.smsLogs[0]?.createdAt.getTime() || 0;
+      return dateB - dateA;
+    });
+
+    successResponse(res, 200, "Inbox fetched successfully", sortedInbox);
+  } catch (error: any) {
+    errorResponse(res, { message: error.message });
+  }
+};
+
+export const getSmsConversation: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { contactId } = req.params;
+
+    const messages = await prisma.smsLog.findMany({
+      where: { userId, contactId },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    successResponse(res, 200, "Conversation fetched successfully", messages);
+  } catch (error: any) {
     errorResponse(res, { message: error.message });
   }
 };

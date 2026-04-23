@@ -228,6 +228,7 @@ model User {
   pushSubscriptions PushSubscription[]
   notifications     Notification[]
   emailLogs         EmailLog[]
+  smsLogs           SmsLog[]
 
   @@map("users")
 }
@@ -350,6 +351,7 @@ model Contact {
 
   calendar Calendar[]
   emailLogs EmailLog[]
+  smsLogs   SmsLog[]
 
   folderIds    String[]       @default([])
 
@@ -1324,4 +1326,31 @@ model EmailLog {
   createdAt DateTime    @default(now())
 
   @@map("email_logs")
+}
+
+enum SmsStatus {
+  SENT
+  RECEIVED
+  FAILED
+}
+
+model SmsLog {
+  id        String    @id @default(uuid())
+  to        String
+  from      String
+  content   String    @db.Text
+  status    SmsStatus
+  error     String?   @db.Text
+  messageSid String?   // Twilio Message SID
+
+  // Relations
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  contactId String?
+  contact   Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+
+  @@map("sms_logs")
 }

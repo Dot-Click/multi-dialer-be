@@ -23,7 +23,10 @@ import {
   resumeCall,
   dropVoicemail,
   handleAmdStatus,
-  stopDialing
+  stopDialing,
+  handleIncomingSms,
+  getSmsInbox,
+  getSmsConversation
 } from "./controller";
 import {
   getAggregateStats,
@@ -105,12 +108,15 @@ router.get("/transcription-logs", getTranscriptionLogs);
 router.get("/token", protectRoute, getTwilioToken);
 router.get("/token", protectRoute, getTwilioToken);
 
-// messagings
+// SMS Inbox & Webhooks
 router.post("/send-sms", protectRoute, sendSms);
 router.post("/webhooks/sms-status", (req, res) => {
   console.log(`[SMS Webhook] Status: ${req.body.SmsStatus}, SID: ${req.body.SmsSid}`);
   res.sendStatus(200);
 });
+router.post("/webhooks/incoming-sms", handleIncomingSms);
+router.get("/sms/inbox", protectRoute, getSmsInbox);
+router.get("/sms/conversation/:contactId", protectRoute, getSmsConversation);
 
 // Number Management
 router.post("/available-numbers", protectRoute, getAvailableUsNumbers);
@@ -133,7 +139,7 @@ router.get('/callerIds', protectRoute, getCallerIds)
 
 
 // Answering Machine
-router.post("/webhooks/amd-status", handleAmdStatus);  
+router.post("/webhooks/amd-status", handleAmdStatus);
 router.post("/drop-voicemail", protectRoute, dropVoicemail);
 
 export default router;
