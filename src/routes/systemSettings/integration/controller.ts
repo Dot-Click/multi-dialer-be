@@ -145,4 +145,57 @@ export const integrationController = {
       res.status(500).json({ error: error?.response?.data?.error || "Failed to send direct mail via Stannp" });
     }
   },
+  
+  // GET /bombbomb/videos — fetches videos from BombBomb API
+  getBombBombVideos: async (req: any, res: Response) => {
+    try {
+      const userId = req.user.id;
+      const role = req.user.role;
+      const createdById = req.user.createdById;
+
+      // Use admin's integration if agent
+      const targetUserId = role === "AGENT" && createdById ? createdById : userId;
+      const systemSettingId = await integrationService.findSettingsId(targetUserId);
+
+      if (!systemSettingId) {
+        res.status(404).json({ error: "System settings not found." });
+        return;
+      }
+
+      const bombBombIntegration = await integrationService.getProviderIntegration(systemSettingId, "BOMB_BOMB" as IntegrationProvider);
+      if (!bombBombIntegration) {
+        res.status(404).json({ error: "BombBomb integration not configured. Please connect BombBomb from System Settings > Integrations." });
+        return;
+      }
+
+      const credentials = bombBombIntegration.credentials as any;
+      const apiKey = credentials?.apiKey || credentials?.accessToken;
+      
+      if (!apiKey) {
+        res.status(400).json({ error: "BombBomb API key or Access Token not found." });
+        return;
+      }
+
+      const axios = (await import("axios")).default;
+      const bbRes = await axios.get("https://api.bombbomb.com/v2/videos", {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+
+      // Transform BombBomb data to a cleaner format for our UI
+      const videos = (bbRes.data as any[]).map((v: any) => ({
+        id: v.id,
+        name: v.name || v.title || "Untitled Video",
+        thumbUrl: v.thumbUrl || v.thumbnail || "",
+        shortUrl: v.shortUrl || `https://bbemail.com/v/${v.id}`,
+        createdAt: v.createdAt
+      }));
+
+      res.status(200).json({ success: true, data: videos });
+    } catch (error: any) {
+      console.error("BombBomb fetch error:", error?.response?.data || error);
+      res.status(500).json({ error: error?.response?.data?.message || "Failed to fetch BombBomb videos" });
+    }
+  },
 };

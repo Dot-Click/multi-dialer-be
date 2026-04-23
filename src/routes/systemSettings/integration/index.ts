@@ -28,4 +28,7 @@ router.delete("/:id", (req: Request, res: Response) => integrationController.del
 // 7. Send Direct Mail via Stannp - POST /api/system-settings/integrations/send-direct-mail
 router.post("/send-direct-mail", (req: Request, res: Response) => integrationController.sendDirectMail(req, res));
 
+// 8. Fetch BombBomb Videos - GET /api/system-settings/integrations/bombbomb/videos
+router.get("/bombbomb/videos", (req: Request, res: Response) => integrationController.getBombBombVideos(req, res));
+
 export default router;
