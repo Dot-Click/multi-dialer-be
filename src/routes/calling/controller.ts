@@ -481,10 +481,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       twiml.play(holdUrl);
       twiml.hangup();
 
-      // Schedule automatic redial once hold audio finishes
-      if (leadId || contactId) {
-        dialerService.requeueLeadForRedial(agentId, leadId, contactId, 5_000);
-      }
+      // Redial is handled in services.ts when the call actually completes.
 
       res.type("text/xml");
       res.send(twiml.toString());

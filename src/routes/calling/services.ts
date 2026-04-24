@@ -35,6 +35,7 @@ export interface Lead {
   priority: number;
   userId: string;
   originalContactId?: string; // The frontend contact ID, used for UI sync
+  isRedial?: boolean;
 }
 
 /**
@@ -78,7 +79,7 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
@@ -253,10 +254,9 @@ export class DialerService {
           assignedNumber = stickyNumber;
           console.log(`[processQueue] Using sticky Caller ID ${stickyNumber} for lead ${lead.id}`);
         } else if (pool.length > 0) {
-          // Round-robin: grab current index, increment immediately
-          let index = this.userCallerIdIndices.get(userId) || 0;
-          assignedNumber = pool[index % pool.length];
-          this.userCallerIdIndices.set(userId, (index + 1) % pool.length);
+          // Use the first number in the pool (the active one highlighted by the frontend).
+          // If it gets frozen, makeCall handles falling back sequentially through the pool.
+          assignedNumber = pool[0];
         }
 
         callBatch.push({ lead, assignedNumber });
@@ -449,7 +449,8 @@ export class DialerService {
         contactId: lead.originalContactId || lead.id,
         userId: lead.userId,
         sessionId,
-        status: "initiated"
+        status: lead.isRedial ? "redialing" : "initiated",
+        isRedial: lead.isRedial
       });
       this.lastActivity.set(lead.userId, Date.now());
 
@@ -530,7 +531,11 @@ export class DialerService {
     Array.from(this.activeCalls.entries()).forEach(([sid, c]) => {
       const lid = c.contactId || c.leadId;
       if (c.userId === userId && lid) {
-        leadStatuses[lid] = c.status || "initiated";
+        if (c.isRedial && (c.status === "initiated" || c.status === "ringing")) {
+          leadStatuses[lid] = "redialing";
+        } else {
+          leadStatuses[lid] = c.status || "initiated";
+        }
         leadSids[lid] = sid;
       }
     });
@@ -928,6 +933,7 @@ export class DialerService {
             priority: 999,
             userId: lead.userId,
             originalContactId: contactId,
+            isRedial: true,
           });
           console.log(`[DialerService] Lead ${lead.id} requeued for redial (sticky CID: ${this.leadToCallerIdMap.get(lead.id) || 'none'}).`);
           this.processQueue(userId);
