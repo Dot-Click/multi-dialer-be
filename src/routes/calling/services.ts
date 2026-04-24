@@ -462,6 +462,11 @@ export class DialerService {
         isRedial: lead.isRedial,
         attempts: lead.attempts || 1
       });
+
+      // CLEANUP: Remove from pending redials guard ONLY after the call is active in memory.
+      // This prevents the "empty session" gap during makeCall's async setup.
+      const guardKey = lead.originalContactId || lead.id;
+      this.pendingRedials.get(lead.userId)?.delete(guardKey);
       this.lastActivity.set(lead.userId, Date.now());
 
       // ── Sticky Caller ID: record which number was used for this lead ──────
@@ -493,6 +498,11 @@ export class DialerService {
       }
     } catch (error: any) {
       console.error(`Failed to call lead ${lead.id}:`, error.message);
+      
+      // Cleanup on failure too
+      const guardKey = lead.originalContactId || lead.id;
+      this.pendingRedials.get(lead.userId)?.delete(guardKey);
+
       await this.updateLeadStatusInDB(lead.id, "FAILED");
 
       // If a call failed to initiate, try to process next in queue
@@ -595,7 +605,8 @@ export class DialerService {
     return JSON.parse(completion.choices[0].message.content!);
   }
 
-  async handleCallStatusUpdate(sid: string, twilioStatus: string, isChildLeg: boolean = false, providedAgentId?: string) {
+  async handleCallStatusUpdate(sid: string, twilioStatusRaw: string, isChildLeg: boolean = false, providedAgentId?: string) {
+    const twilioStatus = twilioStatusRaw.toLowerCase();
     const metadata = this.activeCalls.get(sid);
     let userId = metadata?.userId || providedAgentId;
 
@@ -957,12 +968,12 @@ export class DialerService {
           });
           console.log(`[DialerService] Lead ${lead.id} requeued for redial (Attempt ${attempts}).`);
           
-          // Remove from guard ONLY after it's back in the queue to prevent "empty session" gap
-          this.pendingRedials.get(userId)?.delete(guardKey);
+          // MOVED: Removal from guard now happens inside makeCall after the new call is active.
+          // This ensures pendingRedialsCount stays > 0 during the async gap of makeCall.
           
           this.processQueue(userId);
         } else {
-          // Still remove if lead is gone so we don't leak memory
+          // Lead is gone from DB, we MUST remove it now to avoid stale entry
           this.pendingRedials.get(userId)?.delete(guardKey);
           console.warn(`[DialerService] requeueLeadForRedial: lead not found for contactId ${contactId}`);
         }
