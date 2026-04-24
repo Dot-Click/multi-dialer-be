@@ -939,7 +939,7 @@ export class DialerService {
 
   /** @deprecated Use requeueLeadForRedial instead */
   recycleLeadWithDelay(userId: string, leadId: string) {
-    this.requeueLeadForRedial(userId, leadId);
+    this.requeueLeadForRedial(userId, leadId, leadId);
   }
 
   // Session Management
