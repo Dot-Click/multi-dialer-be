@@ -45,6 +45,11 @@ export class PriorityCallQueue {
   private queue: Lead[] = [];
 
   enqueue(lead: Lead) {
+    // Prevent duplicate entries for the same lead in the queue
+    if (this.queue.some(l => l.id === lead.id)) {
+      console.log(`[PriorityCallQueue] Lead ${lead.id} already in queue, skipping duplicate enqueue.`);
+      return;
+    }
     this.queue.push(lead);
     this.queue.sort((a, b) => b.priority - a.priority);
   }
@@ -519,11 +524,19 @@ export class DialerService {
     );
 
     const leadStatuses: Record<string, string> = {};
+    
+    // 1. Add active calls from memory
     Array.from(this.activeCalls.values()).forEach(c => {
       const lid = c.contactId || c.leadId;
       if (c.userId === userId && lid) {
         leadStatuses[lid] = c.status || "initiated";
       }
+    });
+
+    // 2. Add pending redials so the frontend sees them as 'Callback' (Amber) 
+    // even after the Twilio SID is deleted to free up capacity.
+    this.pendingRedials.get(userId)?.forEach(lid => {
+      leadStatuses[lid] = "callback";
     });
 
     return {
@@ -652,8 +665,8 @@ export class DialerService {
       if (userId && (leadId || contactId)) {
         this.requeueLeadForRedial(userId, leadId || contactId, 2000);
       }
-      // Keep status as 'callback' so frontend doesn't exit session
-      return; 
+      // FIX: Do NOT return early. We must fall through to activeCalls.delete(sid) 
+      // so this zombie call doesn't count against the agent's capacity.
     }
 
     if (isTerminal) {
@@ -872,11 +885,17 @@ export class DialerService {
    * @param delayMs - milliseconds to wait before reinserting (default 15s)
    */
   requeueLeadForRedial(userId: string, contactId: string, delayMs = 15_000) {
-    console.log(`[DialerService] Scheduling redial for contact ${contactId} in ${delayMs}ms`);
-    
     // Add to pending redials guard
     if (!this.pendingRedials.has(userId)) this.pendingRedials.set(userId, new Set());
-    this.pendingRedials.get(userId)?.add(contactId);
+    
+    const userRedials = this.pendingRedials.get(userId)!;
+    if (userRedials.has(contactId)) {
+      console.log(`[DialerService] Redial already pending for contact ${contactId}, skipping duplicate timer.`);
+      return;
+    }
+    
+    console.log(`[DialerService] Scheduling redial for contact ${contactId} in ${delayMs}ms`);
+    userRedials.add(contactId);
 
     setTimeout(async () => {
       try {
