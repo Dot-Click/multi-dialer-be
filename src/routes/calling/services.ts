@@ -547,12 +547,19 @@ export class DialerService {
     }
   }
 
-  getStatus(userId: string) {
+  getStatus(userIdRaw: string) {
+    const userId = userIdRaw?.toString().trim();
+    if (!userId) {
+      console.warn("[DialerService] getStatus called without userId");
+      return { queueSize: 0, activeCallsCount: 0, pendingRedialsCount: 0, leadStatuses: {}, leadSids: {} };
+    }
+
     const queue = this.userQueues.get(userId);
     const inFlightCount = this.leadsInFlight.get(userId)?.size || 0;
     
+    // Filter active calls with normalization
     const userActiveCalls = Array.from(this.activeCalls.values()).filter(
-      (c) => c.userId === userId
+      (c) => c.userId?.toString().trim() === userId
     );
 
     const leadStatuses: Record<string, string> = {};
@@ -561,7 +568,9 @@ export class DialerService {
     // 1. Add active calls from memory
     Array.from(this.activeCalls.entries()).forEach(([sid, c]) => {
       const lid = c.contactId || c.leadId;
-      if (c.userId === userId && lid) {
+      const cUserId = c.userId?.toString().trim();
+      
+      if (cUserId === userId && lid) {
         if (c.isRedial && (c.status === "initiated" || c.status === "ringing")) {
           leadStatuses[lid] = "redialing";
         } else {
@@ -572,16 +581,23 @@ export class DialerService {
     });
 
     // 2. Add pending redials so the frontend sees them as 'Callback' (Amber) 
-    // even after the Twilio SID is deleted to free up capacity.
     this.pendingRedials.get(userId)?.forEach(lid => {
       leadStatuses[lid] = "callback";
     });
 
+    const activeCount = userActiveCalls.length + inFlightCount;
+    const pendingRedialsCount = this.pendingRedials.get(userId)?.size || 0;
+    const queueSize = queue?.size() || 0;
+
+    if (activeCount === 0 && pendingRedialsCount === 0 && queueSize === 0) {
+        console.log(`[getStatus] REPORTING EMPTY for ${userId}. activeCalls: ${userActiveCalls.length}, inFlight: ${inFlightCount}, pending: ${pendingRedialsCount}, queue: ${queueSize}`);
+    }
+
     return {
-      queueSize: queue?.size() || 0,
-      activeCallsCount: userActiveCalls.length + inFlightCount, // Combine in-flight with active to prevent session end
-      pendingRedialsCount: this.pendingRedials.get(userId)?.size || 0,
-      inFlightCount, // Also return separately just in case
+      queueSize,
+      activeCallsCount: activeCount,
+      pendingRedialsCount,
+      inFlightCount,
       currentQueue: queue?.getQueue() || [],
       leadStatuses,
       leadSids
@@ -617,10 +633,11 @@ export class DialerService {
     return JSON.parse(completion.choices[0].message.content!);
   }
 
-  async handleCallStatusUpdate(sid: string, twilioStatusRaw: string, isChildLeg: boolean = false, providedAgentId?: string) {
+  async handleCallStatusUpdate(sid: string, twilioStatusRaw: string, isChildLeg: boolean = false, providedAgentIdRaw?: string) {
     const twilioStatus = twilioStatusRaw.toLowerCase();
+    const providedAgentId = providedAgentIdRaw?.toString().trim();
     const metadata = this.activeCalls.get(sid);
-    let userId = metadata?.userId || providedAgentId;
+    let userId = metadata?.userId?.toString().trim() || providedAgentId;
 
     if (metadata) {
       // PROTECTION: If this call is already marked as 'callback' (overflow),
