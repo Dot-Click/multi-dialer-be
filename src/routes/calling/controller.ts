@@ -340,6 +340,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const isBrowserOrigin = browserIdentity.startsWith("client:");
   let agentId = body.agentId || req.query.agentId || req.params.agentId;
   const contactId = body.contactId || req.query.contactId || req.params.contactId || "";
+  const leadId = body.leadId || req.query.leadId || req.params.leadId || "";
   const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
   const busyRecordingUrl = body.busyRecordingUrl || req.query.busyRecordingUrl || "";
 
@@ -481,8 +482,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       twiml.hangup();
 
       // Schedule automatic redial once hold audio finishes
-      if (contactId) {
-        dialerService.requeueLeadForRedial(agentId, contactId, 5_000);
+      if (leadId || contactId) {
+        dialerService.requeueLeadForRedial(agentId, leadId, contactId, 5_000);
       }
 
       res.type("text/xml");

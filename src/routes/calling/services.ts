@@ -432,7 +432,7 @@ export class DialerService {
       const call = await client.calls.create({
         to: lead.phone,
         from: twilioFrom as string,
-        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&contactId=${lead.originalContactId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&leadId=${lead.id}&contactId=${lead.originalContactId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
@@ -663,7 +663,7 @@ export class DialerService {
     if (isTerminal && metadata?.status === 'callback') {
       console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
       if (userId && (leadId || contactId)) {
-        this.requeueLeadForRedial(userId, leadId || contactId, 2000);
+        this.requeueLeadForRedial(userId, leadId, contactId, 2000);
       }
       // FIX: Do NOT return early. We must fall through to activeCalls.delete(sid) 
       // so this zombie call doesn't count against the agent's capacity.
@@ -693,8 +693,8 @@ export class DialerService {
         console.log(`[handleCallStatusUpdate] Releasing agent ${userId} lock owner match: ${lockOwner}.`);
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
-        
-        // Only trigger processQueue if we actually released the lock for the current agent
+        // Delete SID BEFORE processing queue so capacity is accurate
+        this.activeCalls.delete(sid);
         this.processQueue(userId);
       } else {
         console.log(`[handleCallStatusUpdate] Non-locking leg terminated. Checking for orphaned lock...`);
@@ -709,11 +709,14 @@ export class DialerService {
            console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Clearing stuck lock.`);
            this.setAgentBusy(userId, false);
            this.agentBridgedCallId.delete(userId);
+           // Delete SID BEFORE processing queue so capacity is accurate
+           this.activeCalls.delete(sid);
            this.processQueue(userId);
+        } else {
+           // Ensure deletion even if we didn't release a lock
+           this.activeCalls.delete(sid);
         }
       }
-
-      this.activeCalls.delete(sid);
     }
   }
 
@@ -884,30 +887,32 @@ export class DialerService {
    * @param contactId - the frontend contact ID (used as key in queue and sticky map)
    * @param delayMs - milliseconds to wait before reinserting (default 15s)
    */
-  requeueLeadForRedial(userId: string, contactId: string, delayMs = 15_000) {
+  requeueLeadForRedial(userId: string, leadId: string, contactId: string, delayMs = 15_000) {
     // Add to pending redials guard
     if (!this.pendingRedials.has(userId)) this.pendingRedials.set(userId, new Set());
     
     const userRedials = this.pendingRedials.get(userId)!;
-    if (userRedials.has(contactId)) {
-      console.log(`[DialerService] Redial already pending for contact ${contactId}, skipping duplicate timer.`);
+    const guardKey = contactId || leadId;
+
+    if (userRedials.has(guardKey)) {
+      console.log(`[DialerService] Redial already pending for ${guardKey}, skipping duplicate timer.`);
       return;
     }
     
-    console.log(`[DialerService] Scheduling redial for contact ${contactId} in ${delayMs}ms`);
-    userRedials.add(contactId);
+    console.log(`[DialerService] Scheduling redial for lead ${leadId} (contact: ${contactId}) in ${delayMs}ms`);
+    userRedials.add(guardKey);
 
     setTimeout(async () => {
       try {
         // Remove from guard
-        this.pendingRedials.get(userId)?.delete(contactId);
+        this.pendingRedials.get(userId)?.delete(guardKey);
 
         // Mark as CALL_BACK status
-        await this.updateLeadStatusInDB(contactId, "CALL_BACK");
+        await this.updateLeadStatusInDB(leadId, "CALL_BACK");
 
         // Look up the lead record
         const lead = await prisma.lead.findUnique({
-          where: { id: contactId }
+          where: { id: leadId }
         });
 
         if (lead) {
