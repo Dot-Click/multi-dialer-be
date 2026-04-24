@@ -92,6 +92,7 @@ export class DialerService {
   private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
   private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
   private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
+  private leadsInFlight: Map<string, Set<string>> = new Map(); // userId -> Set of leadIds in transit
 
   // ── Power Dialer additions ─────────────────────────────────────────────────
   /** Maps leadId -> phone number used on first dial. Ensures redials use the same Caller ID. */
@@ -267,6 +268,10 @@ export class DialerService {
           this.userCallerIdIndices.set(userId, (currentIndex + 1) % pool.length);
           console.log(`[processQueue] Round-robin assignment: lead ${lead.id} -> ${assignedNumber} (index ${currentIndex})`);
         }
+
+        // Track as "in-flight" to prevent the "empty session" gap during async makeCall setup
+        if (!this.leadsInFlight.has(userId)) this.leadsInFlight.set(userId, new Set());
+        this.leadsInFlight.get(userId)!.add(lead.id);
 
         callBatch.push({ lead, assignedNumber });
         inFlight++;
@@ -467,6 +472,9 @@ export class DialerService {
       // This prevents the "empty session" gap during makeCall's async setup.
       const guardKey = lead.originalContactId || lead.id;
       this.pendingRedials.get(lead.userId)?.delete(guardKey);
+
+      // ALSO remove from leadsInFlight now that it's active in memory
+      this.leadsInFlight.get(lead.userId)?.delete(lead.id);
       this.lastActivity.set(lead.userId, Date.now());
 
       // ── Sticky Caller ID: record which number was used for this lead ──────
@@ -502,6 +510,7 @@ export class DialerService {
       // Cleanup on failure too
       const guardKey = lead.originalContactId || lead.id;
       this.pendingRedials.get(lead.userId)?.delete(guardKey);
+      this.leadsInFlight.get(lead.userId)?.delete(lead.id);
 
       await this.updateLeadStatusInDB(lead.id, "FAILED");
 
@@ -540,6 +549,8 @@ export class DialerService {
 
   getStatus(userId: string) {
     const queue = this.userQueues.get(userId);
+    const inFlightCount = this.leadsInFlight.get(userId)?.size || 0;
+    
     const userActiveCalls = Array.from(this.activeCalls.values()).filter(
       (c) => c.userId === userId
     );
@@ -568,8 +579,9 @@ export class DialerService {
 
     return {
       queueSize: queue?.size() || 0,
-      activeCallsCount: userActiveCalls.length,
+      activeCallsCount: userActiveCalls.length + inFlightCount, // Combine in-flight with active to prevent session end
       pendingRedialsCount: this.pendingRedials.get(userId)?.size || 0,
+      inFlightCount, // Also return separately just in case
       currentQueue: queue?.getQueue() || [],
       leadStatuses,
       leadSids
