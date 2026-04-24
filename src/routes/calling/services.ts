@@ -36,6 +36,7 @@ export interface Lead {
   userId: string;
   originalContactId?: string; // The frontend contact ID, used for UI sync
   isRedial?: boolean;
+  attempts?: number; // Track attempts in current session
 }
 
 /**
@@ -79,7 +80,7 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean; attempts?: number }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
@@ -142,14 +143,20 @@ export class DialerService {
     // is always used. Previously a single string was put in userCallerIdPrefs
     // but processQueue only reads userCallerIdPools, causing silent fallback.
     if (callerId) {
-      const pool = Array.isArray(callerId)
-        ? callerId.filter(Boolean)          // already an array — filter empties
-        : [callerId].filter(Boolean);       // wrap single string into array
+      let pool: string[] = [];
+      if (Array.isArray(callerId)) {
+        pool = callerId.filter(Boolean);
+      } else if (typeof callerId === 'string') {
+        // Split by comma or space and filter empties
+        pool = callerId.split(/[, ]+/).map(n => n.trim()).filter(Boolean);
+      }
 
+      // ALWAYS set the pool if callerId is provided, even if empty
+      this.userCallerIdPools.set(userId, pool);
+      this.userCallerIdIndices.set(userId, 0);
+      this.userCallerIdPrefs.delete(userId);
+      
       if (pool.length > 0) {
-        this.userCallerIdPools.set(userId, pool);
-        this.userCallerIdIndices.set(userId, 0);
-        this.userCallerIdPrefs.delete(userId);
         console.log(`[DialerService] Caller ID pool set for user ${userId}: [${pool.join(', ')}]`);
       }
     } else {
@@ -241,7 +248,7 @@ export class DialerService {
       const callBatch: { lead: Lead; assignedNumber: string | null }[] = [];
 
       // 1. Synchronously assign numbers to all leads before any async work
-      //    Priority: sticky (previously used) > round-robin from pool
+      //    Priority: sticky (previously used) > Round-Robin from pool
       while (inFlight < capacity && !queue.isEmpty()) {
         const lead = queue.dequeue();
         if (!lead) break;
@@ -254,9 +261,11 @@ export class DialerService {
           assignedNumber = stickyNumber;
           console.log(`[processQueue] Using sticky Caller ID ${stickyNumber} for lead ${lead.id}`);
         } else if (pool.length > 0) {
-          // Use the first number in the pool (the active one highlighted by the frontend).
-          // If it gets frozen, makeCall handles falling back sequentially through the pool.
-          assignedNumber = pool[0];
+          // ROUND-ROBIN: Use the current index and increment
+          const currentIndex = this.userCallerIdIndices.get(userId) || 0;
+          assignedNumber = pool[currentIndex % pool.length];
+          this.userCallerIdIndices.set(userId, (currentIndex + 1) % pool.length);
+          console.log(`[processQueue] Round-robin assignment: lead ${lead.id} -> ${assignedNumber} (index ${currentIndex})`);
         }
 
         callBatch.push({ lead, assignedNumber });
@@ -450,7 +459,8 @@ export class DialerService {
         userId: lead.userId,
         sessionId,
         status: lead.isRedial ? "redialing" : "initiated",
-        isRedial: lead.isRedial
+        isRedial: lead.isRedial,
+        attempts: lead.attempts || 1
       });
       this.lastActivity.set(lead.userId, Date.now());
 
@@ -667,14 +677,26 @@ export class DialerService {
       console.error(`[handleCallStatusUpdate] ERROR: CallRecord update failed: ${dbError.message}`);
     }
 
-    // ── POWER DIALER: Handle hangup while in overflow ──
-    if (isTerminal && metadata?.status === 'callback') {
-      console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
-      if (userId && (leadId || contactId)) {
-        this.requeueLeadForRedial(userId, leadId, contactId, 2000);
+    // ── POWER DIALER: Handle redials for failed/busy/overflow ──
+    const maxAttempts = 3;
+    const currentAttempts = metadata?.attempts || 1;
+
+    if (isTerminal && userId && (leadId || contactId)) {
+      // 1. Redial on overflow (agent busy)
+      if (metadata?.status === 'callback') {
+        console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
+        this.requeueLeadForRedial(userId, leadId, contactId, 2000, currentAttempts);
+      } 
+      // 2. Redial on technical failure or no-answer (Power Dialer behavior)
+      else if (["busy", "no-answer", "failed"].includes(twilioStatus)) {
+        if (currentAttempts < maxAttempts) {
+          console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} status '${twilioStatus}'. Requeueing for redial (Attempt ${currentAttempts + 1}/${maxAttempts})`);
+          // Use a longer delay for these (30s) to not annoy customer immediately
+          this.requeueLeadForRedial(userId, leadId, contactId, 30000, currentAttempts + 1);
+        } else {
+          console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} reached max attempts (${maxAttempts}). Stopping redials.`);
+        }
       }
-      // FIX: Do NOT return early. We must fall through to activeCalls.delete(sid) 
-      // so this zombie call doesn't count against the agent's capacity.
     }
 
     if (isTerminal) {
@@ -895,7 +917,7 @@ export class DialerService {
    * @param contactId - the frontend contact ID (used as key in queue and sticky map)
    * @param delayMs - milliseconds to wait before reinserting (default 15s)
    */
-  requeueLeadForRedial(userId: string, leadId: string, contactId: string, delayMs = 15_000) {
+  requeueLeadForRedial(userId: string, leadId: string, contactId: string, delayMs = 15_000, attempts = 1) {
     // Add to pending redials guard
     if (!this.pendingRedials.has(userId)) this.pendingRedials.set(userId, new Set());
     
@@ -907,15 +929,12 @@ export class DialerService {
       return;
     }
     
-    console.log(`[DialerService] Scheduling redial for lead ${leadId} (contact: ${contactId}) in ${delayMs}ms`);
+    console.log(`[DialerService] Scheduling redial for lead ${leadId} (contact: ${contactId}) in ${delayMs}ms. Attempts so far: ${attempts}`);
     userRedials.add(guardKey);
 
     setTimeout(async () => {
       try {
-        // Remove from guard
-        this.pendingRedials.get(userId)?.delete(guardKey);
-
-        // Mark as CALL_BACK status
+        // Mark as CALL_BACK status in DB for UI amber color
         await this.updateLeadStatusInDB(leadId, "CALL_BACK");
 
         // Look up the lead record
@@ -934,10 +953,17 @@ export class DialerService {
             userId: lead.userId,
             originalContactId: contactId,
             isRedial: true,
+            attempts: attempts,
           });
-          console.log(`[DialerService] Lead ${lead.id} requeued for redial (sticky CID: ${this.leadToCallerIdMap.get(lead.id) || 'none'}).`);
+          console.log(`[DialerService] Lead ${lead.id} requeued for redial (Attempt ${attempts}).`);
+          
+          // Remove from guard ONLY after it's back in the queue to prevent "empty session" gap
+          this.pendingRedials.get(userId)?.delete(guardKey);
+          
           this.processQueue(userId);
         } else {
+          // Still remove if lead is gone so we don't leak memory
+          this.pendingRedials.get(userId)?.delete(guardKey);
           console.warn(`[DialerService] requeueLeadForRedial: lead not found for contactId ${contactId}`);
         }
       } catch (e) {
