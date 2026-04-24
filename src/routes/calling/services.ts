@@ -524,12 +524,14 @@ export class DialerService {
     );
 
     const leadStatuses: Record<string, string> = {};
+    const leadSids: Record<string, string> = {};
     
     // 1. Add active calls from memory
-    Array.from(this.activeCalls.values()).forEach(c => {
+    Array.from(this.activeCalls.entries()).forEach(([sid, c]) => {
       const lid = c.contactId || c.leadId;
       if (c.userId === userId && lid) {
         leadStatuses[lid] = c.status || "initiated";
+        leadSids[lid] = sid;
       }
     });
 
@@ -544,7 +546,8 @@ export class DialerService {
       activeCallsCount: userActiveCalls.length,
       pendingRedialsCount: this.pendingRedials.get(userId)?.size || 0,
       currentQueue: queue?.getQueue() || [],
-      leadStatuses
+      leadStatuses,
+      leadSids
     };
   }
 
