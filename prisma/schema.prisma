@@ -229,6 +229,7 @@ model User {
   notifications     Notification[]
   emailLogs         EmailLog[]
   smsLogs           SmsLog[]
+  myPlusLeadsConfig MyPlusLeadsConfig?
 
   @@map("users")
 }
@@ -1353,4 +1354,20 @@ model SmsLog {
   createdAt DateTime  @default(now())
 
   @@map("sms_logs")
+}
+
+model MyPlusLeadsConfig {
+  id              String             @id @default(cuid())
+  apiKey          String
+  userId          String             @unique
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastSyncAt      DateTime?
+  autoSync        Boolean            @default(true)
+  selectedTypes   String[]           @default(["EXPIRED", "FSBO"])
+  status          IntegrationStatus  @default(NEED_SETUP)
+  
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@map("my_plus_leads_configs")
 }
