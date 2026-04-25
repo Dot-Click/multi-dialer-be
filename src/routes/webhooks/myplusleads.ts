@@ -91,12 +91,12 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
     });
 
     // 5. Trigger Notification
-    await createInternalNotification(userId, {
-        title: "🔥 New Lead Imported",
-        message: `New ${leadType} lead "${fullName}" was automatically added to your MyPlusLeads folder.`,
-        type: "SUCCESS",
-        metadata: { contactId: contact.id, leadType }
-    });
+    await createInternalNotification(
+        userId, 
+        "🔥 New Lead Imported", 
+        `New ${leadType} lead "${fullName}" was automatically added to your MyPlusLeads folder.`,
+        "success"
+    );
 
     // 6. Update last sync time
     await prisma.myPlusLeadsConfig.update({

@@ -13,7 +13,7 @@ export const getNumberReputation = async (phoneNumber: string): Promise<Reputati
   try {
     // Twilio Lookup V2 with available fields for comprehensive health check
     const lookup = await client.lookups.v2.phoneNumbers(phoneNumber).fetch({
-      fields: ["caller_name", "line_type_intelligence"],
+      fields: "caller_name,line_type_intelligence",
     }) as any;
 
     console.log(`[TwilioLookup] Raw result for ${phoneNumber}:`, JSON.stringify(lookup, null, 2));
