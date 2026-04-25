@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/utils/handler";
 import { RequestHandler } from "express";
 import { getNumberReputation } from "@/services/twilio-lookup";
+import { client } from "@/lib/config";
 
 /**
  * Get agent specific report
@@ -191,13 +192,7 @@ export const getDialerHealth: RequestHandler = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        // De-duplicate by twillioNumber to ensure each number only appears once
-        const seenNumbers = new Set();
-        const healthData = callerIds.filter(cid => {
-            if (seenNumbers.has(cid.twillioNumber)) return false;
-            seenNumbers.add(cid.twillioNumber);
-            return true;
-        }).map(cid => ({
+        const healthData = callerIds.map(cid => ({
             id: cid.id,
             name: cid.label,
             contact: cid.twillioNumber || "No Number",
@@ -564,26 +559,59 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
             targetUserIds = [userId, ...agents.map(a => a.id)];
         }
 
-        const callerIds = await prisma.callerId.findMany({
-            where: { systemSetting: { userId: { in: targetUserIds } } }
+        // 1. Fetch ALL incoming numbers from Twilio account
+        const twilioNumbers = await client.incomingPhoneNumbers.list();
+        
+        // 2. Get or create system settings for the admin
+        let systemSettings = await prisma.system_Setting.findFirst({
+            where: { userId }
         });
 
+        if (!systemSettings) {
+            systemSettings = await prisma.system_Setting.create({
+                data: { userId }
+            });
+        }
+
         let updatedCount = 0;
-        for (const cid of callerIds) {
-            if (cid.twillioNumber) {
-                const result = await getNumberReputation(cid.twillioNumber);
-                if (result) {
-                    await prisma.callerId.update({
-                        where: { id: cid.id },
-                        data: {
-                            reputationStatus: result.status,
-                            reputationScore: result.score,
-                            lastReputationCheck: new Date()
-                        }
-                    });
-                    updatedCount++;
-                }
+        for (const tn of twilioNumbers) {
+            const phoneNumber = tn.phoneNumber;
+            if (!phoneNumber) continue;
+
+            // 3. Perform the deep reputation check
+            const result = await getNumberReputation(phoneNumber);
+            
+            // 4. Update or create in our database
+            const existing = await prisma.callerId.findFirst({
+                where: { twillioSid: tn.sid }
+            });
+
+            if (existing) {
+                await prisma.callerId.update({
+                    where: { id: existing.id },
+                    data: {
+                        twillioNumber: phoneNumber,
+                        reputationStatus: result?.status || "unknown",
+                        reputationScore: result?.score || 100,
+                        lastReputationCheck: new Date(),
+                        label: tn.friendlyName || phoneNumber,
+                    }
+                });
+            } else {
+                await prisma.callerId.create({
+                    data: {
+                        twillioSid: tn.sid,
+                        twillioNumber: phoneNumber,
+                        label: tn.friendlyName || phoneNumber,
+                        countryCode: tn.phoneNumber.startsWith('+') ? tn.phoneNumber.substring(1, 2) : '1', 
+                        systemSettingId: systemSettings.id,
+                        reputationStatus: result?.status || "unknown",
+                        reputationScore: result?.score || 100,
+                        lastReputationCheck: new Date(),
+                    }
+                });
             }
+            updatedCount++;
         }
 
         successResponse(res, 200, `Refreshed reputation for ${updatedCount} numbers`);
