@@ -1248,34 +1248,54 @@ export const handleIncomingSms: RequestHandler = async (req: Request, res: Respo
     const searchNumber = digits.length > 10 ? digits.slice(-10) : digits;
     console.log(`[SMS Webhook] Normalized sender number: ${searchNumber}`);
 
-    // 1. Find the contact by phone number
-    const contactPhone = await prisma.contactPhone.findFirst({
+    // 1. Find the agent (User) who owns the 'To' number (This is the primary way to route)
+    const callerId = await prisma.callerId.findFirst({
+      where: { twillioNumber: To },
+      include: { systemSetting: true }
+    });
+    let userId = callerId?.systemSetting.userId;
+
+    // 2. Find matching contacts
+    const matchingContactPhones = await prisma.contactPhone.findMany({
       where: { number: { contains: searchNumber } },
       include: { contact: true }
     });
 
-    const contact = contactPhone?.contact;
-    if (contact) {
-      console.log(`[SMS Webhook] Found contact: ${contact.fullName} (ID: ${contact.id})`);
-    } else {
-      console.log(`[SMS Webhook] No contact found for number: ${searchNumber}`);
+    let finalContact = null;
+
+    if (matchingContactPhones.length > 0) {
+      if (matchingContactPhones.length === 1) {
+        finalContact = matchingContactPhones[0].contact;
+      } else {
+        // DUPLICATE DETECTED: Pick the one with the most recent SMS activity with THIS user
+        console.log(`[SMS Webhook] ${matchingContactPhones.length} contacts found for ${searchNumber}. Finding active one...`);
+        
+        const contactIds = matchingContactPhones.map(cp => cp.contactId);
+        const lastActivity = await prisma.smsLog.findFirst({
+          where: {
+            userId,
+            contactId: { in: contactIds }
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { contactId: true }
+        });
+
+        if (lastActivity) {
+          finalContact = matchingContactPhones.find(cp => cp.contactId === lastActivity.contactId)?.contact;
+          console.log(`[SMS Webhook] Prioritized contact based on activity: ${finalContact?.fullName}`);
+        } else {
+          finalContact = matchingContactPhones[0].contact; // Fallback to first
+        }
+      }
     }
 
-    // 2. Find the agent (User) who owns this number or contact
-    let userId = contact?.userId;
-
-    if (!userId) {
-      console.log(`[SMS Webhook] Searching for owner of Twilio number: ${To}`);
-      // Fallback: Find which agent owns the 'To' number
-      const callerId = await prisma.callerId.findFirst({
-        where: { twillioNumber: To },
-        include: { systemSetting: true }
-      });
-      userId = callerId?.systemSetting.userId;
+    // Fallback: If userId wasn't found from Twilio number, try contact's owner
+    if (!userId && finalContact) {
+      userId = finalContact.userId ?? undefined;
     }
 
     if (userId) {
-      console.log(`[SMS Webhook] Associated message with User ID: ${userId}`);
+      console.log(`[SMS Webhook] Associated message with User ID: ${userId}, Contact: ${finalContact?.fullName || 'Unknown'}`);
       await prisma.smsLog.create({
         data: {
           to: To,
@@ -1284,7 +1304,7 @@ export const handleIncomingSms: RequestHandler = async (req: Request, res: Respo
           status: "RECEIVED",
           messageSid: MessageSid,
           userId,
-          contactId: contact?.id
+          contactId: finalContact?.id
         }
       });
       console.log(`[SMS Webhook] SUCCESS - Log entry created.`);
@@ -1303,37 +1323,134 @@ export const getSmsInbox: RequestHandler = async (req: Request, res: Response) =
   try {
     const userId = req.user?.id;
 
-    // Get unique contacts who have had SMS history with this user
-    const conversations = await prisma.smsLog.groupBy({
-      by: ['contactId'],
-      where: { 
-        userId,
-        contactId: { not: null }
-      },
-      _max: { createdAt: true }
+    // 1. Fetch all contacts for this user
+    const allContacts = await prisma.contact.findMany({
+      where: { userId },
+      include: { phones: true }
     });
 
-    const contactIds = conversations.map(c => c.contactId as string);
-
-    const contacts = await prisma.contact.findMany({
-      where: { id: { in: contactIds } },
-      include: {
-        smsLogs: {
-          orderBy: { createdAt: 'desc' },
-          take: 1
-        },
-        phones: true
+    // Map each phone number to its "Best" contact
+    const phoneToBestContactMap = new Map();
+    for (const contact of allContacts) {
+      for (const p of contact.phones) {
+        const digits = p.number.replace(/\D/g, "");
+        const norm = digits.length > 10 ? digits.slice(-10) : digits;
+        
+        // If multiple contacts have the same number, we prioritize the one with a longer name or just the first one
+        // (This is just for mapping; the canonical logic below is more important)
+        if (!phoneToBestContactMap.has(norm)) {
+          phoneToBestContactMap.set(norm, contact);
+        }
       }
+    }
+
+    // 2. Fetch all logs
+    const allLogs = await prisma.smsLog.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' }
     });
+
+    // 3. Group logs into unique threads by Phone Number
+    const threadMap = new Map();
+
+    for (const log of allLogs) {
+      const remoteNumber = log.status === 'RECEIVED' ? log.from : log.to;
+      const digits = remoteNumber.replace(/\D/g, "");
+      const norm = digits.length > 10 ? digits.slice(-10) : digits;
+
+      // Group by the normalized phone number to ensure NO duplicates in sidebar
+      if (!threadMap.has(norm)) {
+        // Find ALL contacts that share this number
+        const matchingContacts = allContacts.filter(c => 
+          c.phones.some(p => {
+            const d = p.number.replace(/\D/g, "");
+            const n = d.length > 10 ? d.slice(-10) : d;
+            return n === norm;
+          })
+        );
+
+        let bestContact = null;
+        if (matchingContacts.length > 0) {
+          // PRIORITY: 
+          // 1. The contact from the most recent SENT message for this number (The one the agent intended)
+          const lastSentLog = allLogs.find(l => 
+            l.status === 'SENT' && 
+            (l.to.replace(/\D/g, "").slice(-10) === norm || l.to.replace(/\D/g, "") === norm) &&
+            matchingContacts.some(c => c.id === l.contactId)
+          );
+          
+          if (lastSentLog) {
+            bestContact = matchingContacts.find(c => c.id === lastSentLog.contactId);
+          }
+          
+          // 2. Fallback to the contact from the current log
+          if (!bestContact) {
+            bestContact = matchingContacts.find(c => c.id === log.contactId);
+          }
+
+          // 3. Fallback to first matching contact
+          if (!bestContact) {
+            bestContact = matchingContacts[0];
+          }
+        }
+
+        threadMap.set(norm, {
+          lastLog: log,
+          contact: bestContact || null,
+          remoteNumber: remoteNumber,
+          isUnknown: !bestContact
+        });
+      }
+    }
+
+    // 4. Final step: If multiple phone numbers belong to the SAME contact, 
+    // we should ideally unify those into one thread too.
+    const contactThreads = new Map();
+    const finalInbox: any[] = [];
+
+    for (const [norm, thread] of threadMap.entries()) {
+      if (thread.contact) {
+        const existing = contactThreads.get(thread.contact.id);
+        if (existing) {
+          // If this number's log is newer than the existing thread's log, update it
+          if (thread.lastLog.createdAt > existing.smsLogs[0].createdAt) {
+            existing.smsLogs = [thread.lastLog];
+            existing.remoteNumber = thread.remoteNumber;
+          }
+        } else {
+          const newThread = {
+            id: thread.contact.id,
+            fullName: thread.contact.fullName,
+            isUnknown: false,
+            remoteNumber: thread.remoteNumber,
+            contact: thread.contact,
+            smsLogs: [thread.lastLog],
+            phones: thread.contact.phones
+          };
+          contactThreads.set(thread.contact.id, newThread);
+          finalInbox.push(newThread);
+        }
+      } else {
+        finalInbox.push({
+          id: norm,
+          fullName: thread.remoteNumber,
+          isUnknown: true,
+          remoteNumber: thread.remoteNumber,
+          contact: null,
+          smsLogs: [thread.lastLog],
+          phones: [{ number: thread.remoteNumber }]
+        });
+      }
+    }
 
     // Sort by last message date
-    const sortedInbox = contacts.sort((a, b) => {
-      const dateA = a.smsLogs[0]?.createdAt.getTime() || 0;
-      const dateB = b.smsLogs[0]?.createdAt.getTime() || 0;
+    finalInbox.sort((a, b) => {
+      const dateA = new Date(a.smsLogs[0].createdAt).getTime();
+      const dateB = new Date(b.smsLogs[0].createdAt).getTime();
       return dateB - dateA;
     });
 
-    successResponse(res, 200, "Inbox fetched successfully", sortedInbox);
+    successResponse(res, 200, "Inbox fetched successfully", finalInbox);
   } catch (error: any) {
     errorResponse(res, { message: error.message });
   }
@@ -1344,12 +1461,52 @@ export const getSmsConversation: RequestHandler = async (req: Request, res: Resp
     const userId = req.user?.id;
     const { contactId } = req.params;
 
+    const isPhoneNumber = /^\+?[0-9]+$/.test(contactId);
+    let searchNumbers: string[] = [];
+
+    if (isPhoneNumber) {
+      const digits = contactId.replace(/\D/g, "");
+      searchNumbers = [digits.length > 10 ? digits.slice(-10) : digits];
+    } else {
+      // Find the contact and all their numbers
+      const contact = await prisma.contact.findUnique({
+        where: { id: contactId },
+        include: { phones: true }
+      });
+      if (contact) {
+        searchNumbers = contact.phones.map(p => {
+          const digits = p.number.replace(/\D/g, "");
+          return digits.length > 10 ? digits.slice(-10) : digits;
+        });
+      }
+    }
+
     const messages = await prisma.smsLog.findMany({
-      where: { userId, contactId },
+      where: {
+        userId,
+        OR: [
+          { contactId: isPhoneNumber ? undefined : contactId },
+          ...searchNumbers.map(num => ({
+            OR: [
+              { from: { contains: num } },
+              { to: { contains: num } }
+            ]
+          }))
+        ]
+      },
       orderBy: { createdAt: 'asc' }
     });
 
-    successResponse(res, 200, "Conversation fetched successfully", messages);
+    // Final filtering to ensure we only get messages for the specific user and contact context
+    // (Prevents broad 'contains' from matching wrong numbers if searchNumbers was too short)
+    const filteredMessages = messages.filter(msg => {
+      const remote = msg.status === 'RECEIVED' ? msg.from : msg.to;
+      const remoteDigits = remote.replace(/\D/g, "");
+      const remoteNorm = remoteDigits.length > 10 ? remoteDigits.slice(-10) : remoteDigits;
+      return searchNumbers.includes(remoteNorm) || msg.contactId === contactId;
+    });
+
+    successResponse(res, 200, "Conversation fetched successfully", filteredMessages);
   } catch (error: any) {
     errorResponse(res, { message: error.message });
   }
