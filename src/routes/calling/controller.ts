@@ -15,7 +15,7 @@ const fromNumber = envConfig.TWILIO_PHONE_NUMBER as string;
 export const startCalling: RequestHandler = async (req, res) => {
   const agentId = req.params.agentId;
   try {
-    const { to, contactId } = req.body;
+    const { to, contactId, from } = req.body;
     if (!to) {
       errorResponse(res, { message: "Phone number is required" }, 400);
       return;
@@ -26,7 +26,7 @@ export const startCalling: RequestHandler = async (req, res) => {
       statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
       statusCallbackMethod: "POST",
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
-      from: fromNumber,
+      from: from || fromNumber,
       // applicationSid:"APd8c43edcdeb39fb09d7d904eeec31271",    
       timeout: 30,
     });
@@ -343,6 +343,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   const leadId = body.leadId || req.query.leadId || req.params.leadId || "";
   const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
   const busyRecordingUrl = body.busyRecordingUrl || req.query.busyRecordingUrl || "";
+  const callerId = body.callerId || req.query.callerId || envConfig.TWILIO_PHONE_NUMBER;
 
   if ((!agentId || agentId === 'undefined' || agentId === 'null') && isBrowserOrigin) {
     agentId = browserIdentity.split(':')[1];
@@ -433,7 +434,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
 
     const dial = twiml.dial({
-      callerId: envConfig.TWILIO_PHONE_NUMBER,
+      callerId: callerId,
       record: "record-from-answer-dual",
       recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
     });
@@ -505,7 +506,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     // body.From  = the Twilio number we used to dial the customer (e.g. +18782061927) ✅
     // body.To    = the customer's PSTN number (e.g. +923152557056)                   ❌
     // Prefer the explicit env var; fall back to body.From which is always a Twilio number.
-    const bridgeCallerId = envConfig.TWILIO_PHONE_NUMBER || body.From;
+    const bridgeCallerId = body.From || envConfig.TWILIO_PHONE_NUMBER;
 
     const dial = twiml.dial({
       callerId: bridgeCallerId,
