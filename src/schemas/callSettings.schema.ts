@@ -9,6 +9,7 @@ export const createCallSettingsSchema = z.object({
   onHoldRecording2Id: z.string().uuid().optional().nullable(),
   ivrRecordingId: z.string().uuid().optional().nullable(),
   answeringMachineRecordingId: z.string().uuid().optional().nullable(),
+  busyRecordingId: z.string().uuid().optional().nullable(),
 
   enableAutoPause: z.boolean().optional(),
   enableRecording: z.boolean().optional(),
@@ -31,6 +32,7 @@ export const updateCallSettingsSchema = z.object({
   onHoldRecording2Id: z.string().uuid().optional().nullable(),
   ivrRecordingId: z.string().uuid().optional().nullable(),
   answeringMachineRecordingId: z.string().uuid().optional().nullable(),
+  busyRecordingId: z.string().uuid().optional().nullable(),
 
   enableAutoPause: z.boolean().optional(),
   enableRecording: z.boolean().optional(),

@@ -65,7 +65,7 @@ router.use("/system-settings/integrations", protectRoute, checkRole(["ADMIN", "O
 router.use("/system-settings/integration", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), IntegrationRoute)
 router.use("/system-settings/regulatory", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), regulatoryRoutes)
 router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), auditLogRoutes)
-router.use("/system-settings/dispositions", protectRoute, checkRole(["ADMIN", "OWNER"]), dispositionRoutes)
+router.use("/system-settings/dispositions", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), dispositionRoutes)
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)

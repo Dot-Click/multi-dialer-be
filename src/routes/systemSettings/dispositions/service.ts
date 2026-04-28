@@ -23,29 +23,50 @@ export class DispositionService {
         }
 
         const mojoDefaults = [
-            { label: "contact", value: "CONTACT", color: "red", icon: "Users", isSystem: true, isActive: true, order: 1 },
-            { label: "no contact", value: "NO_ANSWER", color: "red", icon: "PhoneOff", isSystem: true, isActive: true, order: 2 },
-            { label: "bad number", value: "BAD_NUMBER", color: "red", icon: "XCircle", isSystem: true, isActive: true, order: 3 },
-            { label: "voice mail", value: "VOICEMAIL", color: "red", icon: "Mail", isSystem: true, isActive: true, order: 4 },
-            { label: "DNC contact", value: "DNC_CONTACT", color: "red", icon: "Ban", isSystem: true, isActive: true, order: 5 },
-            { label: "DNC number", value: "DNC_NUMBER", color: "red", icon: "Ban", isSystem: true, isActive: true, order: 6 },
+            { label: "Contact", value: "CONTACT", color: "green", icon: "Users", isSystem: true, isActive: true, order: 1 },
+            { label: "No Answer", value: "NO_ANSWER", color: "red", icon: "PhoneOff", isSystem: true, isActive: true, order: 2 },
+            { label: "bad number", value: "BAD_NUMBER", color: "gray", icon: "XCircle", isSystem: true, isActive: true, order: 3 },
+            { label: "voice mail", value: "VOICEMAIL", color: "blue", icon: "Mail", isSystem: true, isActive: true, order: 4 },
+            { label: "DNC contact", value: "DNC_CONTACT", color: "orange", icon: "Ban", isSystem: true, isActive: true, order: 5 },
+            { label: "DNC Number", value: "DNC_NUMBER", color: "orange", icon: "Ban", isSystem: true, isActive: true, order: 6 },
         ];
 
-        // Ensure these Mojo-standard defaults exist in DB
-        const currentValues = systemSetting.dispositions.map(d => d.value);
-        const missingDefaults = mojoDefaults.filter(d => !currentValues.includes(d.value));
+        // 1. Cleanup: Remove old system dispositions that are no longer in our defaults list
+        const allowedSystemValues = mojoDefaults.map(d => d.value);
+        const systemDispsToRemove = systemSetting.dispositions.filter(d => d.isSystem && !allowedSystemValues.includes(d.value));
 
-        if (missingDefaults.length > 0) {
-            await prisma.disposition.createMany({
-                data: missingDefaults.map(d => ({ ...d, systemSettingId: systemSetting!.id }))
+        if (systemDispsToRemove.length > 0) {
+            await prisma.disposition.deleteMany({
+                where: { id: { in: systemDispsToRemove.map(d => d.id) } }
             });
-
-            // Re-fetch to return complete synced list
+            // Re-fetch before proceeding to sync
             systemSetting = await prisma.system_Setting.findFirst({
                 where: { userId: targetUserId },
                 include: { dispositions: { orderBy: { order: 'asc' } } }
             }) ?? systemSetting;
         }
+
+        // 2. Sync: Ensure these Mojo-standard defaults exist and are up-to-date
+        for (const def of mojoDefaults) {
+            const existing = systemSetting.dispositions.find(d => d.value === def.value);
+            if (!existing) {
+                await prisma.disposition.create({
+                    data: { ...def, systemSettingId: systemSetting.id }
+                });
+            } else if (existing.isSystem && (existing.label !== def.label || existing.color !== def.color || existing.icon !== def.icon)) {
+                // Update existing system disposition if defaults changed
+                await prisma.disposition.update({
+                    where: { id: existing.id },
+                    data: { label: def.label, color: def.color, icon: def.icon }
+                });
+            }
+        }
+
+        // 3. Final Fetch: Return the clean synced list
+        systemSetting = await prisma.system_Setting.findFirst({
+            where: { userId: targetUserId },
+            include: { dispositions: { orderBy: { order: 'asc' } } }
+        }) ?? systemSetting;
 
         return systemSetting.dispositions;
     }

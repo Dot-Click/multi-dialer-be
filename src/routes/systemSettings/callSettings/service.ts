@@ -18,6 +18,7 @@ export async function insertCallSettingsInDb(payload: any, userId: string) {
       onHoldRecording2Id,
       ivrRecordingId,
       answeringMachineRecordingId,
+      busyRecordingId,
       ...rest
     } = result.data;
 
@@ -32,26 +33,19 @@ export async function insertCallSettingsInDb(payload: any, userId: string) {
       });
     }
 
-    // Build recording connects — only include a slot if an ID was provided
-    const recordingConnects = {
-      ...(onHoldRecording1Id
-        ? { onHoldRecording1: { connect: { id: onHoldRecording1Id } } }
-        : {}),
-      ...(onHoldRecording2Id
-        ? { onHoldRecording2: { connect: { id: onHoldRecording2Id } } }
-        : {}),
-      ...(ivrRecordingId
-        ? { ivrRecording: { connect: { id: ivrRecordingId } } }
-        : {}),
-      ...(answeringMachineRecordingId
-        ? { answeringMachineRecording: { connect: { id: answeringMachineRecordingId } } }
-        : {}),
+    // Build recording IDs — use direct ID fields to avoid "Unknown argument" errors with connect
+    const recordingIds = {
+      ...(onHoldRecording1Id !== undefined ? { onHoldRecording1Id } : {}),
+      ...(onHoldRecording2Id !== undefined ? { onHoldRecording2Id } : {}),
+      ...(ivrRecordingId !== undefined ? { ivrRecordingId } : {}),
+      ...(answeringMachineRecordingId !== undefined ? { answeringMachineRecordingId } : {}),
+      ...(busyRecordingId !== undefined ? { busyRecordingId } : {}),
     };
 
     const callSettings = await prisma.callSettings.create({
       data: {
         ...rest,
-        ...recordingConnects,
+        ...recordingIds,
         systemSettingId: systemSettings.id,
       },
       // Return the recording objects alongside the created record
@@ -60,6 +54,7 @@ export async function insertCallSettingsInDb(payload: any, userId: string) {
         onHoldRecording2: true,
         ivrRecording: true,
         answeringMachineRecording: true,
+        busyRecording: true,
       },
     });
 

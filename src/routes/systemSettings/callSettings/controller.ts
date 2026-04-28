@@ -40,6 +40,7 @@ export const getAllCallSettingsOfSpecificUser = async (req: Request, res: Respon
         onHoldRecording2: true,
         ivrRecording: true,
         answeringMachineRecording: true,
+        busyRecording: true,
       },
     });
     successResponse(res, 200, "CallSettings fetched", callSettings);
@@ -165,6 +166,11 @@ export const createCallSettings = async (req: Request, res: Response): Promise<v
             },
           },
         },
+        onHoldRecording1: true,
+        onHoldRecording2: true,
+        ivrRecording: true,
+        answeringMachineRecording: true,
+        busyRecording: true,
       },
     });
     
@@ -247,6 +253,11 @@ export const updateCallSettings = async (req: Request, res: Response): Promise<v
             },
           },
         },
+        onHoldRecording1: true,
+        onHoldRecording2: true,
+        ivrRecording: true,
+        answeringMachineRecording: true,
+        busyRecording: true,
       },
     });
 
