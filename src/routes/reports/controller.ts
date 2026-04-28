@@ -171,26 +171,80 @@ export const getAgentReport: RequestHandler = async (req, res) => {
 export const getDialerHealth: RequestHandler = async (req, res) => {
     try {
         const { id: userId, role } = req.user!;
-        let targetUserIds = [userId];
+        console.log(`[getDialerHealth] userId: ${userId}, role: ${role}`);
 
-        if (role === 'ADMIN' || role === 'OWNER') {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { createdById: true }
+        });
+        const adminId = user?.createdById || userId;
+        console.log(`[getDialerHealth] Resolved adminId: ${adminId}`);
+
+        let where: any = {
+            twillioSid: { not: null },
+            twillioNumber: { not: null }
+        };
+
+        if (role === 'AGENT') {
+            // 1. Get all callerIds explicitly assigned (without SID restriction yet)
+            const assignedCallerIds = await prisma.callerId.findMany({
+                where: {
+                    OR: [
+                        { agents: { some: { id: userId } } },
+                        { defaultForUsers: { some: { id: userId } } }
+                    ]
+                },
+                select: { id: true, twillioNumber: true }
+            });
+
+            // 2. Get all callerIds referenced in their CallSettings
+            const callSettings = await prisma.callSettings.findMany({
+                where: { systemSetting: { userId } },
+                select: { callerId: true }
+            });
+
+            const settingCallerIdIds = callSettings
+                .flatMap(s => (s.callerId || "").split(","))
+                .map(id => id.trim())
+                .filter(Boolean);
+
+            // Normalize phone numbers by removing all whitespace to match E.164 format
+            const assignedNumbers = assignedCallerIds.map(c => (c.twillioNumber || "").replace(/\s+/g, '')).filter(Boolean);
+            const settingNumbersNormalized = settingCallerIdIds.map(id => id.replace(/\s+/g, ''));
+
+            const allRelevantIds = Array.from(new Set([
+                ...assignedCallerIds.map(c => c.id),
+                ...assignedNumbers,
+                ...settingCallerIdIds,
+                ...settingNumbersNormalized
+            ]));
+
+            console.log(`[getDialerHealth] Relevant IDs for agent:`, allRelevantIds);
+
+            where.OR = [
+                { id: { in: allRelevantIds } },
+                { twillioNumber: { in: allRelevantIds } }
+            ];
+        } else {
+            // For admins/owners, show all Caller IDs in their organization
             const agents = await prisma.user.findMany({
                 where: { createdById: userId },
                 select: { id: true }
             });
-            targetUserIds = [userId, ...agents.map(a => a.id)];
+            const targetUserIds = [userId, ...agents.map(a => a.id)];
+            where.systemSetting = { userId: { in: targetUserIds } };
         }
 
-        // 1. Fetch Reputation-based health from Caller IDs
-        // We only show unique Twilio numbers that have a SID (official status)
+        console.log(`[getDialerHealth] Query where clause:`, JSON.stringify(where, null, 2));
+
         const callerIds = await prisma.callerId.findMany({
-            where: { 
-                systemSetting: { userId: { in: targetUserIds } },
-                twillioSid: { not: null },
-                twillioNumber: { not: null }
-            },
+            where,
             orderBy: { createdAt: 'desc' }
         });
+
+        console.log(`[getDialerHealth] Found ${callerIds.length} callerIds`);
+
+        console.log(`[getDialerHealth] Caller IDs:`, JSON.stringify(callerIds, null, 2));
 
         const healthData = callerIds.map(cid => ({
             id: cid.id,
@@ -201,6 +255,8 @@ export const getDialerHealth: RequestHandler = async (req, res) => {
             score: cid.reputationScore,
             type: "reputation"
         }));
+
+        // console.log(`[getDialerHealth] Health data:`, JSON.stringify(healthData, null, 2));
 
         successResponse(res, 200, "Dialer health fetched successfully", healthData);
     } catch (error: any) {
