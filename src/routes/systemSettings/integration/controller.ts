@@ -177,19 +177,24 @@ export const integrationController = {
       }
 
       const axios = (await import("axios")).default;
-      const bbRes = await axios.get("https://api.bombbomb.com/v2/videos", {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
+      const bbRes: any = await axios.get("https://api.bombbomb.com/v2/videos", {
+        params: {
+          api_key: apiKey,
         },
       });
 
+      console.log("BombBomb API Response:", bbRes.data);
+
       // Transform BombBomb data to a cleaner format for our UI
-      const videos = (bbRes.data as any[]).map((v: any) => ({
+      // V2 API often wraps the array in a 'data' property
+      const videoList = Array.isArray(bbRes.data.items) ? bbRes.data.items : (bbRes.data?.items || []);
+      
+      const videos = videoList.map((v: any) => ({
         id: v.id,
         name: v.name || v.title || "Untitled Video",
-        thumbUrl: v.thumbUrl || v.thumbnail || "",
-        shortUrl: v.shortUrl || `https://bbemail.com/v/${v.id}`,
-        createdAt: v.createdAt
+        thumbUrl: v.thumbUrl || v.thumbnail || v.thumbnailUrl || "",
+        shortUrl: v.shortUrl || v.videoUrl || `https://bbemail.com/v/${v.id}`,
+        createdAt: v.createdAt || v.created
       }));
 
       res.status(200).json({ success: true, data: videos });
