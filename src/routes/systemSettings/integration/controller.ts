@@ -111,7 +111,7 @@ export const integrationController = {
         return;
       }
 
-      const { recipientName, address1, address2, city, postcode, country, message, template } = req.body;
+      const { recipientName, address1, address2, city, postcode, country, message, template, automationId } = req.body;
 
       if (!recipientName || !address1 || !city || !postcode || !country) {
         res.status(400).json({ error: "Recipient name, address, city, postcode and country are required." });
@@ -124,27 +124,88 @@ export const integrationController = {
 
       const form = new FormData();
       form.append("test", "1"); // Change to "0" for live send
-      form.append("recipient[firstname]", recipientName.split(" ")[0] || recipientName);
-      form.append("recipient[lastname]", recipientName.split(" ").slice(1).join(" ") || "");
-      form.append("recipient[address1]", address1);
-      if (address2) form.append("recipient[address2]", address2);
-      form.append("recipient[city]", city);
-      form.append("recipient[postcode]", postcode);
-      form.append("recipient[country]", country);
-      form.append("message", message || "Hello from CallScout!");
-      if (template) form.append("template", template);
+      
+      if (automationId) {
+        // Trigger Automation (Add to Group)
+        form.append("group_id", automationId);
+        form.append("firstname", recipientName.split(" ")[0] || recipientName);
+        form.append("lastname", recipientName.split(" ").slice(1).join(" ") || "");
+        form.append("address1", address1);
+        if (address2) form.append("address2", address2);
+        form.append("city", city);
+        form.append("postcode", postcode);
+        form.append("country", country);
 
-      const stannpRes = await axios.post("https://dash.stannp.com/api/v1/letters/create", form, {
-        auth: { username: apiKey, password: "" },
-        headers: form.getHeaders(),
-      });
+        const stannpRes = await axios.post("https://dash.stannp.com/api/v1/recipients/new", form, {
+          auth: { username: apiKey, password: "" },
+          headers: form.getHeaders(),
+        });
 
-      res.status(200).json({ success: true, data: stannpRes.data });
+        res.status(200).json({ success: true, data: stannpRes.data });
+      } else {
+        // General Letter Creation (Fallback)
+        form.append("recipient[firstname]", recipientName.split(" ")[0] || recipientName);
+        form.append("recipient[lastname]", recipientName.split(" ").slice(1).join(" ") || "");
+        form.append("recipient[address1]", address1);
+        if (address2) form.append("recipient[address2]", address2);
+        form.append("recipient[city]", city);
+        form.append("recipient[postcode]", postcode);
+        form.append("recipient[country]", country);
+        form.append("message", message || "Hello from CallScout!");
+        if (template) form.append("template", template);
+
+        const stannpRes = await axios.post("https://dash.stannp.com/api/v1/letters/create", form, {
+          auth: { username: apiKey, password: "" },
+          headers: form.getHeaders(),
+        });
+
+        res.status(200).json({ success: true, data: stannpRes.data });
+      }
     } catch (error: any) {
       console.error("Stannp send error:", error?.response?.data || error);
       res.status(500).json({ error: error?.response?.data?.error || "Failed to send direct mail via Stannp" });
     }
   },
+
+  // GET /stannp/automations — fetches groups from Stannp API (used for automations)
+  getStannpAutomations: async (req: any, res: Response) => {
+    try {
+      const userId = req.user.id;
+      const role = req.user.role;
+      const createdById = req.user.createdById;
+
+      const targetUserId = role === "AGENT" && createdById ? createdById : userId;
+      const systemSettingId = await integrationService.findSettingsId(targetUserId);
+
+      if (!systemSettingId) {
+        res.status(404).json({ error: "System settings not found." });
+        return;
+      }
+
+      const stannpIntegration = await integrationService.getProviderIntegration(systemSettingId, "STANPP_DOT_COM" as IntegrationProvider);
+      if (!stannpIntegration) {
+        res.status(404).json({ error: "Stannp integration not configured." });
+        return;
+      }
+
+      const apiKey = (stannpIntegration.credentials as any)?.apiKey;
+      if (!apiKey) {
+        res.status(400).json({ error: "Stannp API key not found." });
+        return;
+      }
+
+      const axios = (await import("axios")).default;
+      const stannpRes = await axios.get("https://dash.stannp.com/api/v1/groups/list", {
+        auth: { username: apiKey, password: "" },
+      });
+
+      res.status(200).json({ success: true, data: stannpRes.data });
+    } catch (error: any) {
+      console.error("Stannp groups fetch error:", error?.response?.data || error);
+      res.status(500).json({ error: "Failed to fetch Stannp automations" });
+    }
+  },
+
   
   // GET /bombbomb/videos — fetches videos from BombBomb API
   getBombBombVideos: async (req: any, res: Response) => {

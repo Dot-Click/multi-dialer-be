@@ -31,4 +31,7 @@ router.post("/send-direct-mail", (req: Request, res: Response) => integrationCon
 // 8. Fetch BombBomb Videos - GET /api/system-settings/integrations/bombbomb/videos
 router.get("/bombbomb/videos", (req: Request, res: Response) => integrationController.getBombBombVideos(req, res));
 
+// 9. Fetch Stannp Automations (Groups) - GET /api/system-settings/integrations/stannp/automations
+router.get("/stannp/automations", (req: Request, res: Response) => integrationController.getStannpAutomations(req, res));
+
 export default router;
