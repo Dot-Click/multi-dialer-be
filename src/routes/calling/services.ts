@@ -1,4 +1,5 @@
 import { client } from "@/lib/config";
+import { getTwilioClient } from "../../services/twilio-account.service";
 import prisma from "@/lib/prisma";
 import axios from "axios";
 import fs from "fs";
@@ -443,7 +444,8 @@ export class DialerService {
       }
 
       // 3. Initiate Twilio Call
-      const call = await client.calls.create({
+      const userClient = await getTwilioClient(lead.userId);
+      const call = await userClient.calls.create({
         to: lead.phone,
         from: twilioFrom as string,
         url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&leadId=${lead.id}&contactId=${lead.originalContactId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,

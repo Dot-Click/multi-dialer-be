@@ -7,6 +7,7 @@ import prisma from "@/lib/prisma";
 import { envConfig } from "@/lib/config";
 import twilio from "twilio";
 import { insertCallerIdInDb } from "../systemSettings/callerId/service";
+import { getTwilioClient } from "../../services/twilio-account.service";
 
 const { jwt: { AccessToken } } = twilio;
 const VoiceGrant = AccessToken.VoiceGrant;
@@ -20,7 +21,8 @@ export const startCalling: RequestHandler = async (req, res) => {
       errorResponse(res, { message: "Phone number is required" }, 400);
       return;
     }
-    const call = await client.calls.create({
+    const userClient = await getTwilioClient(agentId);
+    const call = await userClient.calls.create({
       to: to, // Lead Number (here the number is dynamic for now on testing account i've only 1 verified caller ID)
       url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentId}`,
       statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
@@ -113,11 +115,21 @@ export const endCall: RequestHandler = async (req, res) => {
     console.log("Terminating call session for SID:", callSid);
 
     // Resolve the root call to ensure both legs are dropped
-    const currentCall = await client.calls(callSid).fetch();
+    // Find who owns this call to get the right client
+    const callRecord = await prisma.callRecord.findFirst({
+        where: { callSid }
+    });
+    
+    // Fallback to memory if DB record not found (e.g. child leg)
+    const metadata = (dialerService as any).activeCalls.get(callSid);
+    const userId = callRecord?.userId || metadata?.userId;
+    const userClient = userId ? await getTwilioClient(userId) : client;
+
+    const currentCall = await userClient.calls(callSid).fetch();
     const targetSid = currentCall.parentCallSid || callSid;
 
     console.log(`Resolved termination target: ${targetSid} (Original: ${callSid})`);
-    const call = await client.calls(targetSid).update({ status: 'completed' });
+    const call = await userClient.calls(targetSid).update({ status: 'completed' });
 
     successResponse(res, 200, "Call session terminated successfully", call);
     return;
@@ -557,7 +569,8 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
       if (answeringMachineUrl) {
         console.log(`[AMD] Dropping out-of-band voicemail for ${CallSid}`);
-        await client.calls(CallSid).update({
+        const userClient = await getTwilioClient(agentId);
+        await userClient.calls(CallSid).update({
           twiml: `<Response>
                       <Play>${answeringMachineUrl}</Play>
                       <Hangup/>
@@ -565,7 +578,8 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
         });
       } else {
         console.log(`[AMD] No voicemail configured. Hanging up ${CallSid}`);
-        await client.calls(CallSid).update({ status: 'completed' });
+        const userClient = await getTwilioClient(agentId);
+        await userClient.calls(CallSid).update({ status: 'completed' });
       }
     } else {
       console.log(`[AMD] ${isMachine ? 'Machine' : 'Human'} answered ${CallSid}`);
@@ -593,14 +607,17 @@ export const dropVoicemail: RequestHandler = async (req, res) => {
     console.log(`[DropVoicemail] Dropping voicemail for ${callSid}`);
 
     // Find the customer leg
-    const currentCall = await client.calls(callSid).fetch();
-    const childCalls = await client.calls.list({ parentCallSid: callSid });
+    const callRecord = await prisma.callRecord.findFirst({ where: { callSid } });
+    const userClient = callRecord ? await getTwilioClient(callRecord.userId) : client;
+
+    const currentCall = await userClient.calls(callSid).fetch();
+    const childCalls = await userClient.calls.list({ parentCallSid: callSid });
     const customerLeg = childCalls.find(c =>
       ['in-progress', 'ringing', 'answered'].includes(c.status)
     ) || currentCall;
 
     // Play voicemail to customer and hang up
-    await client.calls(customerLeg.sid).update({
+    await userClient.calls(customerLeg.sid).update({
       twiml: `<Response>
                 <Play>${voicemailUrl}</Play>
                 <Hangup/>
@@ -740,13 +757,16 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     console.log("cityName", cityName);
     console.log("state", state);
 
-    const numbers = await client.availablePhoneNumbers(countryCode || "US").local.list({
+    const userId = req.user?.id || "";
+    const userClient = await getTwilioClient(userId);
+
+    const numbers = await userClient.availablePhoneNumbers(countryCode || "US").local.list({
       limit: 10,
       inLocality: cityName,
       inRegion: state,
     });
 
-    const pricing = await client.pricing.v1
+    const pricing = await userClient.pricing.v1
       .phoneNumbers
       .countries(countryCode)
       .fetch();
@@ -783,7 +803,8 @@ export const buyNumber: RequestHandler = async (req, res) => {
       return;
     }
 
-    const number = await client.incomingPhoneNumbers.create({
+    const userClient = await getTwilioClient(userId);
+    const number = await userClient.incomingPhoneNumbers.create({
       phoneNumber: phoneNumber,
     });
 
@@ -868,8 +889,10 @@ export const sendSms: RequestHandler = async (req: Request, res: Response) => {
     console.log(`[sendSms] Initiating send to ${formattedTo} from ${senderNumber}`);
 
     // Call Twilio - this is the part that usually takes the most time
+    const userId = req.user?.id;
+    const userClient = await getTwilioClient(userId || "");
     const twilioStart = Date.now();
-    const service = await client.messages.create({
+    const service = await userClient.messages.create({
       body: message,
       from: senderNumber,
       to: formattedTo,
@@ -881,7 +904,6 @@ export const sendSms: RequestHandler = async (req: Request, res: Response) => {
     console.log(`[sendSms] Twilio API Response: SID=${service.sid}, Time=${twilioEnd - twilioStart}ms`);
     
     // Log outgoing SMS to database
-    const userId = req.user?.id;
     if (userId) {
        try {
          let finalContactId = contactId;
@@ -930,7 +952,9 @@ export const sendSms: RequestHandler = async (req: Request, res: Response) => {
 
 export const getCallsInsights: RequestHandler = async (req, res) => {
   try {
-    const insights = await client.calls.list({ status: "completed", limit: 10 });
+    const userId = req.user?.id || "";
+    const userClient = await getTwilioClient(userId);
+    const insights = await userClient.calls.list({ status: "completed", limit: 10 });
     const serializedInsights = insights.map(call => call.toJSON());
 
     successResponse(res, 200, "Calls insights fetched successfully", serializedInsights);
@@ -953,7 +977,9 @@ export const insights: RequestHandler = async (req: Request, res: Response) => {
   try {
     const serviceSid = process.env.TWILIO_INTELLIGENCE_SERVICE_SID;
     const { RecordingSid } = req.body;
-    const insights = await client.intelligence.v2.transcripts.create({
+    const userId = req.user?.id || "";
+    const userClient = await getTwilioClient(userId);
+    const insights = await userClient.intelligence.v2.transcripts.create({
       serviceSid: serviceSid!,
       channel: JSON.stringify({
         media_properties: {
@@ -1146,10 +1172,20 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
 
     let customerLeg: any = null;
 
+    // Find who owns this call to get the right client
+    const callRecord = await prisma.callRecord.findFirst({
+        where: { callSid }
+    });
+    
+    // Fallback to memory if DB record not found (e.g. child leg)
+    const metadata = (dialerService as any).activeCalls.get(callSid);
+    const userId = callRecord?.userId || metadata?.userId;
+    const userClient = userId ? await getTwilioClient(userId) : client;
+
     // 1. Try explicitly provided customer call SID
     if (customerCallSid) {
       try {
-        const potentialLeg = await client.calls(customerCallSid).fetch();
+        const potentialLeg = await userClient.calls(customerCallSid).fetch();
         // 🚨 Relaxed status check: Included 'answered' and 'queued'
         const validStatuses = ['in-progress', 'ringing', 'answered', 'queued'];
         if (potentialLeg && validStatuses.includes(potentialLeg.status)) {
@@ -1163,15 +1199,15 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
     // 2. Fallback: Deduce customer leg from active callSid
     if (!customerLeg) {
       try {
-        const currentCall = await client.calls(callSid).fetch();
+        const currentCall = await userClient.calls(callSid).fetch();
 
         // Case A: The agent's call is a child of the customer's call (After Resume)
         if (currentCall.parentCallSid) {
-          customerLeg = await client.calls(currentCall.parentCallSid).fetch();
+          customerLeg = await userClient.calls(currentCall.parentCallSid).fetch();
         }
         // Case B: The agent's call is the parent of the customer's call (Outbound initial)
         else {
-          const childCalls = await client.calls.list({ parentCallSid: callSid });
+          const childCalls = await userClient.calls.list({ parentCallSid: callSid });
           customerLeg = childCalls.find(c => ['in-progress', 'ringing', 'answered'].includes(c.status));
         }
 
@@ -1194,7 +1230,7 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
 
     if (hold) {
       // Play hold music to customer
-      await client.calls(customerLeg.sid).update({
+      await userClient.calls(customerLeg.sid).update({
         twiml: `<Response><Play loop="0">${musicUrl}</Play></Response>`
       });
     } else {
@@ -1207,18 +1243,18 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
         <Hangup/>
       </Response>`;
 
-      await client.calls(customerLeg.sid).update({ twiml });
+      await userClient.calls(customerLeg.sid).update({ twiml });
     }
 
     // Pause/resume recording safely
     try {
       const recordingCallSid = customerLeg.parentCallSid ? customerLeg.parentCallSid : customerLeg.sid;
-      const recordings = await client.calls(recordingCallSid).recordings.list();
+      const recordings = await userClient.calls(recordingCallSid).recordings.list();
       for (const recording of recordings) {
         if (hold && recording.status === 'in-progress') {
-          await client.calls(recordingCallSid).recordings(recording.sid).update({ status: 'paused' });
+          await userClient.calls(recordingCallSid).recordings(recording.sid).update({ status: 'paused' });
         } else if (!hold && recording.status === 'paused') {
-          await client.calls(recordingCallSid).recordings(recording.sid).update({ status: 'in-progress' });
+          await userClient.calls(recordingCallSid).recordings(recording.sid).update({ status: 'in-progress' });
         }
       }
     } catch (recErr) {
