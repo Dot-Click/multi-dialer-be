@@ -32,7 +32,7 @@ export const envConfig =  {
         ZOHOO_CLIENT_ID: process.env.ZOHOO_ID,
         ZOHOO_CLIENT_SECRET: process.env.ZOHOO_SECRET,
         ZOHOO_ORG_ID: process.env.ZOHOO_ORG_ID,
-        GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
+        GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
 }
 
 
