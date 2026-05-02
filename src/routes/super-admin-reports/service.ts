@@ -22,7 +22,7 @@ export async function getUserOverviewInDb() {
       }),
       prisma.userSubscription.findMany({
         where: { user: { role: { not: "OWNER" } } },
-        select: { amount: true }                            
+        select: { amount: true }
       }),
     ]);
 
@@ -103,7 +103,7 @@ export async function getAlertsInDb() {
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
   const [
-    expiringSubscriptions,   
+    expiringSubscriptions,
     newCustomers,
     activeSubscriptions,
     inactiveSubscriptions,
@@ -151,21 +151,29 @@ export async function getAlertsInDb() {
 }
 
 export async function getUserSubscriptionDetailsInDb() {
-  return prisma.userSubscription.findMany({
-    select: {
-      plan: true,
-      status: true,
-      createdAt: true,
-      user: {
-        select: {
-          fullName: true,
-          email: true,
-        },
+  const users = await prisma.user.findMany({
+    where: {
+      role: { not: "OWNER" },
+    },
+    include: {
+      userSubscriptions: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
       },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+  });
+
+  return users.map((u) => {
+    const sub = u.userSubscriptions[0];
+    return {
+      plan: sub?.plan || "No Plan",
+      status: sub?.status || "PENDING",
+      createdAt: sub?.createdAt || u.createdAt,
+      user: {
+        fullName: u.fullName,
+        email: u.email,
+      },
+    };
   });
 }
 
@@ -222,32 +230,40 @@ export async function getRevenueGrowthInDb() {
 }
 
 export async function getBillingReportDetailInDb() {
-  return prisma.userSubscription.findMany({
-    select: {
-      plan: true,
-      createdAt: true,
-      status: true,
-      amount: true,
-      user: {
-        select: {
-          fullName: true,
-          email: true,
-          status: true,
-        },
+  const users = await prisma.user.findMany({
+    where: {
+      role: { not: "OWNER" },
+    },
+    include: {
+      userSubscriptions: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
       },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+  });
+
+  return users.map((u) => {
+    const sub = u.userSubscriptions[0];
+    return {
+      plan: sub?.plan || "No Plan",
+      createdAt: sub?.createdAt || u.createdAt,
+      status: sub?.status || "PENDING",
+      amount: sub?.amount || "0",
+      user: {
+        fullName: u.fullName,
+        email: u.email,
+        status: u.status,
+      },
+    };
   });
 }
 
 export async function getDashboardSummaryInDb() {
   const now = new Date();
-  
+
   const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  
+
   const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
@@ -289,7 +305,7 @@ export async function getDashboardSummaryInDb() {
     })
   ]);
 
-  const sumAmount = (records: { amount: string | null }[]) => 
+  const sumAmount = (records: { amount: string | null }[]) =>
     records.reduce((sum, rec) => sum + parseFloat(rec.amount || "0"), 0);
 
   return {
@@ -319,7 +335,7 @@ export async function getBusinessOverviewInDb() {
       select: { amount: true }
     }),
     prisma.userSubscription.count({
-      where: { 
+      where: {
         status: "ACTIVE",
         user: { role: { not: "OWNER" } }
       }
@@ -344,7 +360,7 @@ export async function getBusinessOverviewInDb() {
 
 export async function getRevenuePlansInDb() {
   const plans = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
-  
+
   const allSubs = await prisma.userSubscription.findMany({
     where: {
       user: { role: { not: "OWNER" } }

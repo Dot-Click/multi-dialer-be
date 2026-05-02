@@ -39,9 +39,15 @@ export const createUser = async (req: Request, res: Response): Promise<void> => 
 export const getAllUsers = async (req: Request, res: Response): Promise<void> => {
     try {
         const currentUser = (req as any).user;
+        console.log(`[getAllUsers] Fetching for role: ${currentUser.role}, ID: ${currentUser.id}`);
         let where: any = {};
 
-        if (currentUser.role === "ADMIN" || currentUser.role === "OWNER") {
+        if (currentUser.role === "OWNER") {
+            // Super Admin can see all users except other Owners (Super Admins)
+            where = {
+                role: { not: "OWNER" }
+            };
+        } else if (currentUser.role === "ADMIN") {
             // Show users created by this admin, and include the admin themselves
             where = {
                 OR: [
@@ -70,6 +76,7 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
         }
 
         const users = await getAllUsersFromDb(where);
+        console.log(`[getAllUsers] Found ${users.length} users`);
         successResponse(res, 200, "Users fetched successfully", users);
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);

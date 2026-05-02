@@ -56,7 +56,7 @@ export async function getAllUsersFromDb(where: any = {}) {
                     status: true
                 }
             },
-            createdUsers: true, 
+            createdUsers: true,
             // Excluding password
         },
     });

@@ -188,12 +188,12 @@ export const billingReportDetail = async (
     // Formatting for frontend
     const data = Object.values(groupedData).map((group) => ({
       ...group,
-      lastPayment: group.lastPayment instanceof Date 
-        ? group.lastPayment.toISOString().split("T")[0] 
+      lastPayment: group.lastPayment instanceof Date
+        ? group.lastPayment.toISOString().split("T")[0]
         : new Date(group.lastPayment).toISOString().split("T")[0],
     }));
 
-    successResponse(res, 200, "Billing report detail fetched successfully",data);
+    successResponse(res, 200, "Billing report detail fetched successfully", data);
   } catch (error: any) {
     errorResponse(
       res,
