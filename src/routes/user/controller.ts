@@ -30,6 +30,7 @@ export const createUser = async (req: Request, res: Response): Promise<void> => 
         }
 
         const newUser = await createUserInDb(result.data);
+
         successResponse(res, 201, "User created successfully", newUser);
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);

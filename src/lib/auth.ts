@@ -10,9 +10,10 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { sendEmail, newUserSignupTemp, loginAlertTemp } from "../utils/email";
+import { newUserSignupTemp, loginAlertTemp, sendEmail } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { ensureDncFolder } from "../routes/contact/service";
+import { initializeUserAccount } from "../routes/user/service";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -331,27 +332,10 @@ export const auth = betterAuth({
         const resp = ctx.context.returned as any;
         if (resp?.user?.id) {
           try {
-            const library = await prisma.library.findFirst({
-              where: { userId: resp.user.id },
-            });
-            if (!library)
-              await prisma.library.create({ data: { userId: resp.user.id } });
-
-            const settings = await prisma.system_Setting.findFirst({
-              where: { userId: resp.user.id },
-            });
-            if (!settings) {
-              const newSettings = await prisma.system_Setting.create({
-                data: { userId: resp.user.id },
-              });
-              await ensureDefaultMiscFields(newSettings.id);
-              await ensureDncFolder(resp.user.id);
-            } else {
-              await ensureDefaultMiscFields(settings.id);
-              await ensureDncFolder(resp.user.id);
-            }
+            // Use the unified initialization service which now includes Twilio sub-account creation
+            await initializeUserAccount(resp.user.id, resp.user.fullName || resp.user.name || "Customer");
           } catch (error) {
-            console.error("User setup failed", error);
+            console.error("[AuthHook] User initialization failed:", error);
           }
         }
       }
