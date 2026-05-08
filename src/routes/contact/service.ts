@@ -3,13 +3,172 @@ import prisma from "../../lib/prisma";
 import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
 import path from "path";
 import fs from "fs";
+import axios from "axios";
 import { cloudinaryUploader } from "../../utils/handler";
 import { randomUUID } from "crypto";
 import { createInternalNotification } from "../notification/controller";
+import { envConfig } from "@/lib/config";
 
 
 function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
+}
+
+const REALTOR_API_BASE_URL = "https://realtor-com4.p.rapidapi.com";
+
+function normalizeText(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function recursiveFindByKeys(value: any, keys: string[]): any[] {
+  const results: any[] = [];
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      results.push(...recursiveFindByKeys(item, keys));
+    }
+    return results;
+  }
+
+  if (value && typeof value === "object") {
+    const normalizedEntries = Object.entries(value).map(([key, entryValue]) => ({
+      key: key.toLowerCase(),
+      value: entryValue,
+    }));
+
+    for (const entry of normalizedEntries) {
+      if (keys.includes(entry.key)) {
+        results.push(entry.value);
+      }
+      results.push(...recursiveFindByKeys(entry.value, keys));
+    }
+  }
+
+  return results;
+}
+
+function collectPropertyCandidates(value: any): Array<Record<string, any>> {
+  const candidates: Array<Record<string, any>> = [];
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      candidates.push(...collectPropertyCandidates(item));
+    }
+    return candidates;
+  }
+
+  if (value && typeof value === "object") {
+    const propertyId = value.property_id ?? value.propertyId;
+    if (propertyId) {
+      candidates.push(value);
+    }
+
+    for (const entryValue of Object.values(value)) {
+      candidates.push(...collectPropertyCandidates(entryValue));
+    }
+  }
+
+  return candidates;
+}
+
+function buildContactAddress(contact: {
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+}): string {
+  return [contact.address, contact.city, contact.state, contact.zip]
+    .filter(Boolean)
+    .join(", ")
+    .trim();
+}
+
+function scorePropertyCandidate(
+  candidate: Record<string, any>,
+  target: { address: string; city: string; state: string; zip: string }
+): number {
+  const candidateBlob = normalizeText(JSON.stringify(candidate));
+  let score = 0;
+
+  if (target.address && candidateBlob.includes(target.address)) score += 6;
+  if (target.city && candidateBlob.includes(target.city)) score += 3;
+  if (target.state && candidateBlob.includes(target.state)) score += 2;
+  if (target.zip && candidateBlob.includes(target.zip)) score += 4;
+
+  return score;
+}
+
+function pickBestPropertyId(autoCompletePayload: any, contact: {
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+}): string | null {
+  const normalizedTarget = {
+    address: normalizeText(contact.address),
+    city: normalizeText(contact.city),
+    state: normalizeText(contact.state),
+    zip: normalizeText(contact.zip),
+  };
+
+  const candidates = collectPropertyCandidates(autoCompletePayload);
+
+  if (candidates.length > 0) {
+    const ranked = candidates
+      .map((candidate) => ({
+        propertyId: String(candidate.property_id ?? candidate.propertyId),
+        score: scorePropertyCandidate(candidate, normalizedTarget),
+      }))
+      .filter((candidate) => candidate.propertyId);
+
+    ranked.sort((a, b) => b.score - a.score);
+    if (ranked[0]?.propertyId) {
+      return ranked[0].propertyId;
+    }
+  }
+
+  const propertyIds = recursiveFindByKeys(autoCompletePayload, ["property_id", "propertyid"])
+    .map((propertyId) => String(propertyId))
+    .filter(Boolean);
+
+  return propertyIds[0] ?? null;
+}
+
+function extractRealtorUrl(value: any): string | null {
+  if (typeof value === "string") {
+    if (value.startsWith("https://www.realtor.com/")) return value;
+    if (value.startsWith("http://www.realtor.com/")) return value.replace("http://", "https://");
+    if (value.startsWith("/realestateandhomes-detail/")) return `https://www.realtor.com${value}`;
+    if (value.startsWith("realestateandhomes-detail/")) return `https://www.realtor.com/${value}`;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nestedUrl = extractRealtorUrl(item);
+      if (nestedUrl) return nestedUrl;
+    }
+    return null;
+  }
+
+  if (value && typeof value === "object") {
+    for (const [key, entryValue] of Object.entries(value)) {
+      const normalizedKey = key.toLowerCase();
+      if (
+        typeof entryValue === "string" &&
+        ["href", "permalink", "url", "link", "web_url", "rdc_web_url"].includes(normalizedKey)
+      ) {
+        const resolvedUrl = extractRealtorUrl(entryValue);
+        if (resolvedUrl) return resolvedUrl;
+      }
+
+      const nestedUrl = extractRealtorUrl(entryValue);
+      if (nestedUrl) return nestedUrl;
+    }
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +377,92 @@ export async function getContactByIdFromDb(id: string) {
   });
   if (!contact) throwHttp(404, "Contact not found");
   return contact;
+}
+
+export async function getRealtorLinkForContactInDb(contactId: string) {
+  if (!envConfig.REALTOR_RAPIDAPI_KEY) {
+    throwHttp(500, "Realtor RapidAPI key is not configured on the server");
+  }
+
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: {
+      id: true,
+      fullName: true,
+      address: true,
+      city: true,
+      state: true,
+      zip: true,
+    },
+  });
+
+  if (!contact) {
+    throwHttp(404, "Contact not found");
+  }
+
+  const addressQuery = buildContactAddress(contact);
+  if (!addressQuery) {
+    throwHttp(400, "Contact does not have a property address");
+  }
+
+  const rapidApiHeaders = {
+    "Content-Type": "application/json",
+    "x-rapidapi-host": envConfig.REALTOR_RAPIDAPI_HOST || "realtor-com4.p.rapidapi.com",
+    "x-rapidapi-key": envConfig.REALTOR_RAPIDAPI_KEY,
+  };
+
+  let propertyId: string | null = null;
+  let realtorUrl: string | null = null;
+
+  try {
+    const autoCompleteResponse = await axios.get(
+      `${REALTOR_API_BASE_URL}/auto-complete`,
+      {
+        params: { input: addressQuery },
+        headers: rapidApiHeaders,
+      }
+    );
+    console.log(autoCompleteResponse.data)
+
+    propertyId = pickBestPropertyId(autoCompleteResponse.data, contact);
+    if (!propertyId) {
+      throwHttp(404, "No Realtor property match was found for this address");
+    }
+
+    const detailResponse = await axios.get(
+      `${REALTOR_API_BASE_URL}/properties/detail`,
+      {
+        params: { property_id: propertyId },
+        headers: rapidApiHeaders,
+      }
+    );
+
+
+    realtorUrl = extractRealtorUrl(detailResponse.data);
+    if (!realtorUrl) {
+      throwHttp(404, "The Realtor detail response did not include a property URL");
+    }
+  } catch (error: any) {
+    if (error?.statusCode) {
+      throw error;
+    }
+
+    const statusCode = error?.response?.status || 502;
+    const providerMessage =
+      error?.response?.data?.message ||
+      error?.response?.data?.error ||
+      error?.message ||
+      "Failed to fetch Realtor property details";
+
+    throwHttp(statusCode, providerMessage);
+  }
+
+  return {
+    contactId: contact.id,
+    propertyId,
+    addressQuery,
+    realtorUrl,
+  };
 }
 
 export async function addContactNoteInDb(id: string, note: string) {
@@ -2191,7 +2436,7 @@ export async function scheduleTemplateEmailInDb(contactId: string, templateId: s
 }
 export const getDuplicateContactsFromDb = async () => {
   // ── 1. Find Duplicate identifiers ───────────────────────────────
-  
+
   // A. Phones
   const dupPhones = await prisma.contactPhone.groupBy({
     by: ['number'],
@@ -2280,13 +2525,13 @@ export const getDuplicateContactsFromDb = async () => {
     const reasons: string[] = [];
     if (c.phones.some(p => dupPhoneNumbers.includes(p.number))) reasons.push("Phone Match");
     if (c.emails.some(e => dupEmailAddresses.includes(e.email))) reasons.push("Email Match");
-    
-    const isPropDup = dupPropAddresses.some(addr => 
+
+    const isPropDup = dupPropAddresses.some(addr =>
       addr.address === c.address && addr.city === c.city && addr.state === c.state && addr.zip === c.zip
     );
     if (isPropDup) reasons.push("Property Address Match");
 
-    const isMailDup = dupMailAddresses.some(addr => 
+    const isMailDup = dupMailAddresses.some(addr =>
       addr.mailingAddress === c.mailingAddress && addr.mailingCity === c.mailingCity && addr.mailingState === c.mailingState && addr.mailingZip === c.mailingZip
     );
     if (isMailDup) reasons.push("Mailing Address Match");
@@ -2324,17 +2569,17 @@ export const getDuplicateContactsFromDb = async () => {
 export async function bulkDeleteContactsInDb(
   userId: string,
   contactIds: string[],
-  options: { 
-    folderId?: string; 
-    listId?: string; 
-    hardDelete?: boolean 
+  options: {
+    folderId?: string;
+    listId?: string;
+    hardDelete?: boolean
   } = {}
 ) {
   const { folderId, listId, hardDelete } = options;
 
   // Use a transaction for consistency and performance
   return prisma.$transaction(async (tx) => {
-    
+
     // ── CASE 1: Contextual Removal from Folder ──────────────────────────────────
     if (folderId && !hardDelete) {
       // 1. Fetch contacts and remove the specific folderId from their arrays
@@ -2351,7 +2596,7 @@ export async function bulkDeleteContactsInDb(
           }
         });
       }
-      
+
       // 2. Clear from folder.contactIds array as well
       const folder = await tx.contactFolder.findUnique({
         where: { id: folderId },
@@ -2365,7 +2610,7 @@ export async function bulkDeleteContactsInDb(
           }
         });
       }
-      
+
       await tx.auditLog.create({
         data: {
           userId,
@@ -2373,7 +2618,7 @@ export async function bulkDeleteContactsInDb(
           details: `Folder ID: ${folderId}`
         }
       });
-      
+
       return { success: true, count: contactIds.length, mode: 'removed_from_folder' };
     }
 
@@ -2383,7 +2628,7 @@ export async function bulkDeleteContactsInDb(
         where: { id: listId },
         select: { id: true, contactIds: true }
       });
-      
+
       if (list) {
         await tx.contactList.update({
           where: { id: listId },
@@ -2678,6 +2923,6 @@ export async function mergeContactsInDb(
 
     return updatedMaster;
   }, {
-    timeout: 35000 
+    timeout: 35000
   });
 }

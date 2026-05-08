@@ -56,6 +56,7 @@ import {
   bulkDeleteContactsInDb,
   bulkAssignContactsToFolderInDb,
   mergeContactsInDb,
+  getRealtorLinkForContactInDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -120,6 +121,28 @@ export const getContactById = async (
     }
     const contact = await getContactByIdFromDb(id);
     successResponse(res, 200, "Contact fetched", contact);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const getRealtorLink = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      errorResponse(res, "Contact id is required", 400);
+      return;
+    }
+
+    const realtorData = await getRealtorLinkForContactInDb(id);
+    successResponse(res, 200, "Realtor property link fetched", realtorData);
   } catch (error: any) {
     errorResponse(
       res,

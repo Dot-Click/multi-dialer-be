@@ -36,6 +36,7 @@ import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
 import { getMyPlusLeadsConfig, updateMyPlusLeadsConfig, deleteMyPlusLeadsConfig } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { envConfig } from "@/lib/config";
+import paymentRoutes from "./payment";
 
 const router = Router()
 
@@ -82,6 +83,7 @@ router.use("/subscriptions", subscriptionRoutes)
 router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
 router.use("/email-history", protectRoute, emailHistoryRoutes)
+router.use("/payment", paymentRoutes)
 
 // Integrations & Webhooks
 router.post("/webhooks/myplusleads/:userId", handleMyPlusLeadsWebhook);

@@ -33,6 +33,8 @@ export const envConfig =  {
         ZOHOO_CLIENT_SECRET: process.env.ZOHOO_SECRET,
         ZOHOO_ORG_ID: process.env.ZOHOO_ORG_ID,
         GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
+        REALTOR_RAPIDAPI_KEY: process.env.REALTOR_RAPIDAPI_KEY,
+        REALTOR_RAPIDAPI_HOST: process.env.REALTOR_RAPIDAPI_HOST,
 }
 
 

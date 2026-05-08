@@ -10,6 +10,7 @@ import { connectDB } from "@/lib/prisma";
 import sgMail from "@sendgrid/mail";
 import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
+import { handleStripeWebhook } from "@/routes/webhooks/stripe";
 
 connectDB();
 startRetentionJobs();
@@ -36,6 +37,10 @@ app.use(
 );
 
 app.use(morgan("dev"));
+
+// Stripe webhook must be parsed as raw buffer before express.json()
+app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), handleStripeWebhook);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
