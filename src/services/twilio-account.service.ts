@@ -75,3 +75,49 @@ export async function getTwilioClient(userId: string) {
         return masterClient;
     }
 }
+
+/**
+ * Automatically finds and purchases a US phone number for a sub-account.
+ * @param subAccountSid The SID of the sub-account
+ * @param subAccountAuthToken The Auth Token of the sub-account
+ */
+export async function purchaseUSPhoneNumber(subAccountSid: string, subAccountAuthToken: string) {
+    try {
+        const subClient = twilio(subAccountSid, subAccountAuthToken);
+        
+        console.log(`[TwilioService] Searching for available US numbers for sub-account: ${subAccountSid}`);
+        
+        // 1. Find an available local US number
+        const availableNumbers = await subClient.availablePhoneNumbers('US').local.list({
+            limit: 1,
+            voiceEnabled: true,
+            smsEnabled: true
+        });
+
+        if (availableNumbers.length === 0) {
+            throw new Error("No available US phone numbers found.");
+        }
+
+        const selectedNumber = availableNumbers[0].phoneNumber;
+        console.log(`[TwilioService] Found available number: ${selectedNumber}. Purchasing...`);
+
+        // 2. Purchase the number
+        const purchasedNumber = await subClient.incomingPhoneNumbers.create({
+            phoneNumber: selectedNumber,
+            voiceUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice`,
+            voiceMethod: "POST",
+            statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status`,
+            statusCallbackMethod: "POST"
+        });
+
+        console.log(`[TwilioService] Successfully purchased number: ${purchasedNumber.phoneNumber} (SID: ${purchasedNumber.sid})`);
+        
+        return {
+            phoneNumber: purchasedNumber.phoneNumber,
+            sid: purchasedNumber.sid
+        };
+    } catch (error: any) {
+        console.error(`[TwilioService] Error purchasing phone number:`, error.message);
+        throw new Error(`Phone number purchase failed: ${error.message}`);
+    }
+}

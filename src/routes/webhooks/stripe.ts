@@ -1,10 +1,12 @@
 import { Request, Response } from "express";
 import Stripe from "stripe";
 import prisma from "../../lib/prisma";
-import { createTwilioSubAccount } from "../../services/twilio-account.service";
+import { createTwilioSubAccount, purchaseUSPhoneNumber } from "../../services/twilio-account.service";
+import { createGHLSubAccount } from "../../services/ghl.service";
+import { envConfig } from "../../lib/config";
 
 function getStripeClient() {
-  const key = process.env.STRIPE_SECRET_KEY;
+  const key = envConfig.STRIPE_SECRET_KEY;
   if (!key) throw new Error("STRIPE_SECRET_KEY is not set in environment variables.");
   return new Stripe(key, { apiVersion: "2026-04-22.dahlia" });
 }
@@ -13,7 +15,7 @@ function getStripeClient() {
 // Assuming `express.raw({type: 'application/json'})` is handled at the router level for this route.
 export const handleStripeWebhook = async (req: Request, res: Response): Promise<void> => {
   const sig = req.headers["stripe-signature"] as string;
-  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+  const endpointSecret = envConfig.STRIPE_WEBHOOK_SECRET || "";
 
   let stripe: any;
 
@@ -60,13 +62,32 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         });
 
         // 2. Create the Company if provided
+        let company;
         if (companyName) {
-            await prisma.company.create({
+            company = await prisma.company.create({
                 data: {
                     companyName: companyName,
                     userId: user.id
                 }
             });
+        }
+
+        // 2.5 Create GoHighLevel Sub-account
+        try {
+            console.log(`[Stripe Webhook] Provisioning GHL for ${email}`);
+            const ghlLocation = await createGHLSubAccount({
+                name: companyName || fullName || email,
+                email: email,
+            });
+            
+            if (company) {
+                company = await prisma.company.update({
+                    where: { id: company.id },
+                    data: { ghlLocationId: ghlLocation.id }
+                });
+            }
+        } catch (ghlError: any) {
+            console.error(`[Stripe Webhook] GHL provisioning failed for ${email}:`, ghlError.message);
         }
 
         // 3. Create the Base System Setting
@@ -75,6 +96,24 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             userId: user.id,
           },
         });
+
+        // 3.5 Create GHL Integration record
+        if (company?.ghlLocationId) {
+            try {
+                await prisma.integration.create({
+                    data: {
+                        systemSettingId: systemSetting.id,
+                        provider: "GO_HIGH_LEVEL",
+                        status: "CONNECTED",
+                        credentials: {
+                            locationId: company.ghlLocationId
+                        }
+                    }
+                });
+            } catch (e) {
+                console.error("[Stripe Webhook] Failed to link GHL integration:", e);
+            }
+        }
 
         // 4. Provision Twilio Subaccount
         try {
@@ -93,6 +132,28 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                 }
             });
             console.log(`[Stripe Webhook] Twilio Subaccount provisioned for ${email}`);
+
+            // 4.5 Buy a US Phone Number for the sub-account
+            try {
+                console.log(`[Stripe Webhook] Purchasing primary US number for ${email}`);
+                const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
+                
+                // Save it as a CallerId in the DB
+                await prisma.callerId.create({
+                    data: {
+                        label: `Primary Line (${purchased.phoneNumber})`,
+                        countryCode: "US",
+                        twillioNumber: purchased.phoneNumber,
+                        twillioSid: purchased.sid,
+                        systemSettingId: systemSetting.id,
+                        numberOfLines: 1
+                    }
+                });
+                console.log(`[Stripe Webhook] Successfully purchased and registered ${purchased.phoneNumber} for ${email}`);
+            } catch (purchaseError: any) {
+                console.error(`[Stripe Webhook] Failed to purchase US number for ${email}:`, purchaseError.message);
+                // Non-blocking failure
+            }
         } catch (twilioError: any) {
             console.error(`[Stripe Webhook] Failed to provision Twilio account for ${email}:`, twilioError);
             // We do not fail the whole webhook if Twilio fails, they can retry in dashboard.

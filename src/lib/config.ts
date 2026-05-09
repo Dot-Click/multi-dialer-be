@@ -35,7 +35,12 @@ export const envConfig =  {
         GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
         REALTOR_RAPIDAPI_KEY: process.env.REALTOR_RAPIDAPI_KEY,
         REALTOR_RAPIDAPI_HOST: process.env.REALTOR_RAPIDAPI_HOST,
+        STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
+        STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+        GHL_API_KEY: process.env.GHL_API_KEY,
+        GHL_AGENCY_API_KEY: process.env.GHL_AGENCY_API_KEY,
 }
+
 
 
 export const sessionMiddleware = session({

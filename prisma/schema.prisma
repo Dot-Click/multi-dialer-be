@@ -94,6 +94,7 @@ enum IntegrationProvider {
   MY_PLUS_LEADS
   ZAPIER
   ZOHO
+  GO_HIGH_LEVEL
 }
 
 enum IntegrationStatus {
@@ -1202,6 +1203,8 @@ model Company {
   callLogRetentionDays          Int @default(365)
   callRecordingRetentionDays    Int @default(90)
   inactiveUserDataRetentionDays Int @default(180)
+  ghlLocationId                 String?
+  ghlAccessToken                String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
