@@ -30,7 +30,7 @@ export async function createGHLSubAccount(details: GHLLocationDetails) {
 
         console.log(`[GHLService] Creating sub-account for: ${details.name}`);
 
-        const response = await axios.post(
+        const response: any = await axios.post(
             `${GHL_BASE_URL}/locations/`,
             {
                 name: details.name,
@@ -43,14 +43,11 @@ export async function createGHLSubAccount(details: GHLLocationDetails) {
                 postalCode: details.postalCode || "",
                 website: details.website || "",
                 timezone: details.timezone || "America/New_York",
-                // companyId is required for Agency API calls to create locations
-                // If not provided in body, v2 API usually expects it.
-                // We might need to fetch the companyId first or ask the user for it.
             },
             {
                 headers: {
                     Authorization: `Bearer ${apiKey}`,
-                    Version: "2021-07-28", // GHL API Version
+                    Version: "2021-07-28",
                     "Content-Type": "application/json",
                 },
             }
