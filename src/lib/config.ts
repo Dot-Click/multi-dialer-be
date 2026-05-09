@@ -39,7 +39,9 @@ export const envConfig =  {
         STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
         GHL_API_KEY: process.env.GHL_API_KEY,
         GHL_AGENCY_API_KEY: process.env.GHL_AGENCY_API_KEY,
+        GHL_AGENCY_ID: process.env.GHL_AGENCY_ID,
 }
+
 
 
 
