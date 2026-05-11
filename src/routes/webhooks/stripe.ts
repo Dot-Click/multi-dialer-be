@@ -46,6 +46,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     if (metadata && metadata.email) {
       const { fullName, email, hashedPassword, companyName } = metadata;
 
+      let newUser: any = null;
       try {
         console.log(`[Stripe Webhook] Processing new signup for ${email}`);
         
@@ -58,7 +59,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         }
 
         // 1. Create the User in DB
-        const user = await prisma.user.create({
+        newUser = await prisma.user.create({
           data: {
             email,
             password: hashedPassword,
@@ -69,126 +70,120 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           },
         });
 
-        // 1.5 Create Better Auth Account record for email provider
-        // Better Auth requires an entry in the Account table for credential login to work
+        // 1.5 Create Better Auth Account record
         await prisma.account.create({
             data: {
-                userId: user.id,
-                accountId: email.toLowerCase(),
-                providerId: "email",
+                userId: newUser.id,
+                accountId: newUser.id,
+                providerId: "credential",
                 password: hashedPassword,
             }
         });
 
-        // 2. Create the Company if provided
+        // 2. Create the Company
         let company;
         if (companyName) {
             company = await prisma.company.create({
                 data: {
                     companyName: companyName,
-                    userId: user.id
+                    userId: newUser.id
                 }
             });
         }
 
-        // 2.5 Create GoHighLevel Sub-account
-        try {
-            console.log(`[Stripe Webhook] Provisioning GHL for ${email}`);
-            const ghlLocation = await createGHLSubAccount({
-                name: companyName || fullName || email,
-                email: email,
+        // 2.5 Create GoHighLevel Sub-account (STRICT: No internal try/catch)
+        console.log(`[Stripe Webhook] Provisioning GHL for ${email}`);
+        const ghlLocation = await createGHLSubAccount({
+            name: companyName || fullName || email,
+            email: email,
+        });
+        
+        if (company) {
+            company = await prisma.company.update({
+                where: { id: company.id },
+                data: { ghlLocationId: ghlLocation.id }
             });
-            
-            if (company) {
-                company = await prisma.company.update({
-                    where: { id: company.id },
-                    data: { ghlLocationId: ghlLocation.id }
-                });
-            }
-        } catch (ghlError: any) {
-            console.error(`[Stripe Webhook] GHL provisioning failed for ${email}:`, ghlError.message);
         }
 
         // 3. Create the Base System Setting
         const systemSetting = await prisma.system_Setting.create({
           data: {
-            userId: user.id,
+            userId: newUser.id,
           },
         });
 
         // 3.5 Create GHL Integration record
         if (company?.ghlLocationId) {
-            try {
-                await prisma.integration.create({
-                    data: {
-                        systemSettingId: systemSetting.id,
-                        provider: "GO_HIGH_LEVEL",
-                        status: "CONNECTED",
-                        credentials: {
-                            locationId: company.ghlLocationId
-                        }
-                    }
-                });
-            } catch (e) {
-                console.error("[Stripe Webhook] Failed to link GHL integration:", e);
-            }
-        }
-
-        // 4. Provision Twilio Subaccount
-        try {
-            const subAccount = await createTwilioSubAccount(fullName || email);
-            
-            // Save sub-account credentials as an Integration linked to the System_Setting
             await prisma.integration.create({
                 data: {
                     systemSettingId: systemSetting.id,
-                    provider: "TWILIO",
+                    provider: "GO_HIGH_LEVEL",
                     status: "CONNECTED",
                     credentials: {
-                        accountSid: subAccount.sid,
-                        authToken: subAccount.authToken
+                        locationId: company.ghlLocationId
                     }
                 }
             });
-            console.log(`[Stripe Webhook] Twilio Subaccount provisioned for ${email}`);
-
-            // 4.5 Buy a US Phone Number for the sub-account
-            try {
-                console.log(`[Stripe Webhook] Purchasing primary US number for ${email}`);
-                const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
-                
-                // Save it as a CallerId in the DB
-                await prisma.callerId.create({
-                    data: {
-                        label: `Primary Line (${purchased.phoneNumber})`,
-                        countryCode: "US",
-                        twillioNumber: purchased.phoneNumber,
-                        twillioSid: purchased.sid,
-                        systemSettingId: systemSetting.id,
-                        numberOfLines: 1
-                    }
-                });
-                console.log(`[Stripe Webhook] Successfully purchased and registered ${purchased.phoneNumber} for ${email}`);
-            } catch (purchaseError: any) {
-                console.error(`[Stripe Webhook] Failed to purchase US number for ${email}:`, purchaseError.message);
-                // Non-blocking failure
-            }
-        } catch (twilioError: any) {
-            console.error(`[Stripe Webhook] Failed to provision Twilio account for ${email}:`, twilioError);
-            // We do not fail the whole webhook if Twilio fails, they can retry in dashboard.
         }
 
-        // 5. Setup basic folders (optional workspace setup)
+        // 4. Provision Twilio Subaccount (STRICT: No internal try/catch)
+        const subAccount = await createTwilioSubAccount(fullName || email);
+        
+        await prisma.integration.create({
+            data: {
+                systemSettingId: systemSetting.id,
+                provider: "TWILIO",
+                status: "CONNECTED",
+                credentials: {
+                    accountSid: subAccount.sid,
+                    authToken: subAccount.authToken
+                }
+            }
+        });
+
+        // 4.5 Buy a US Phone Number (STRICT: No internal try/catch)
+        console.log(`[Stripe Webhook] Purchasing primary US number for ${email}`);
+        const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
+        
+        await prisma.callerId.create({
+            data: {
+                label: `Primary Line (${purchased.phoneNumber})`,
+                countryCode: "US",
+                twillioNumber: purchased.phoneNumber,
+                twillioSid: purchased.sid,
+                systemSettingId: systemSetting.id,
+                numberOfLines: 1
+            }
+        });
+
+        // 5. Setup basic folders
         await prisma.contactFolder.create({
             data: {
                 name: "General Leads",
                 isSystem: true,
-                userId: user.id
+                userId: newUser.id
             }
         });
 
-      } catch (dbError) {
-        console.error(`[Stripe Webhook] Database setup failed for ${email}:`, dbError);
+        console.log(`[Stripe Webhook] Full provisioning successful for ${email}`);
+
+      } catch (error: any) {
+        console.error(`[Stripe Webhook] Provisioning FAILED for ${email}. Rolling back...`, error.message);
+        
+        // ROLLBACK: Delete the user if it was created. 
+        // Thanks to Cascade deletes in Prisma, this will remove Company, Account, Integrations, etc.
+        if (newUser?.id) {
+            try {
+                await prisma.user.delete({ where: { id: newUser.id } });
+                console.log(`[Stripe Webhook] Rollback successful. Deleted user ${email}`);
+            } catch (cleanupError) {
+                console.error(`[Stripe Webhook] Rollback cleanup failed:`, cleanupError);
+            }
+        }
+        
+        // Return 500 so Stripe knows to retry later
+        res.status(500).send(`Provisioning failed: ${error.message}`);
+        return;
       }
     }
   }

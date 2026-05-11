@@ -30,29 +30,9 @@ export async function createGHLSubAccount(details: GHLLocationDetails) {
 
         console.log(`[GHLService] Creating sub-account for: ${details.name}`);
 
-        const GHL_AGENCY_ID = envConfig.GHL_AGENCY_ID;
-        let companyId = GHL_AGENCY_ID;
-
-        // If companyId is not provided in env, try to discover it automatically
+        const companyId = envConfig.GHL_AGENCY_ID;
         if (!companyId) {
-            console.log("[GHLService] Agency ID not found in config, attempting auto-discovery...");
-            
-            // In v2, the best way to find the companyId (Agency ID) is to list the locations
-            // that the Agency API Key has access to.
-            const listRes: any = await axios.get(`${GHL_BASE_URL}/locations/`, {
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    Version: "2021-07-28",
-                },
-                params: { limit: 1 }
-            });
-            
-            if (listRes.data?.locations?.length > 0) {
-                companyId = listRes.data.locations[0].companyId;
-                console.log(`[GHLService] Discovered Agency ID: ${companyId}`);
-            } else {
-                throw new Error("Could not discover GoHighLevel Agency ID. Please ensure your Agency has at least one location or set GHL_AGENCY_ID in your .env file.");
-            }
+            throw new Error("GHL_AGENCY_ID is missing from .env. Auto-discovery is not supported in GHL V2; please manually add your Agency ID to the config.");
         }
 
         const response: any = await axios.post(
