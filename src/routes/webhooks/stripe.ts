@@ -49,16 +49,35 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       try {
         console.log(`[Stripe Webhook] Processing new signup for ${email}`);
         
+        // 0. Check for existing user (Idempotency)
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+            console.log(`[Stripe Webhook] User ${email} already exists, skipping provisioning.`);
+            res.json({ received: true });
+            return;
+        }
+
         // 1. Create the User in DB
         const user = await prisma.user.create({
           data: {
             email,
             password: hashedPassword,
             fullName,
-            role: "ADMIN", // Usually signups become the tenant ADMIN or OWNER
+            role: "ADMIN",
             status: "ACTIVE",
-            emailVerified: true, // Assuming payment verifies their intent
+            emailVerified: true,
           },
+        });
+
+        // 1.5 Create Better Auth Account record for email provider
+        // Better Auth requires an entry in the Account table for credential login to work
+        await prisma.account.create({
+            data: {
+                userId: user.id,
+                accountId: email.toLowerCase(),
+                providerId: "email",
+                password: hashedPassword,
+            }
         });
 
         // 2. Create the Company if provided
