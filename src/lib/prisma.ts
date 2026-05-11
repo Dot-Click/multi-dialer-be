@@ -41,45 +41,6 @@ const prismaClientSingleton = () => {
     // Execute the query
     const result = await next(params);
     
-    // After user creation, automatically create library and systemSettings
-    if (params.model === 'User' && params.action === 'create' && result) {
-      console.log("🔍 Prisma Middleware: User created, checking for library and systemSettings...", result.id);
-      
-      // Use setImmediate or don't await this block to prevent holding up the request
-      // (This helps prevent connection timeouts in the main thread)
-      (async () => {
-        try {
-          // Small delay to ensure user is committed
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // We must use the 'client' instance here, not the global 'prisma' variable yet
-          const existingLibrary = await client.library.findFirst({
-            where: { userId: result.id },
-          });
-
-          if (!existingLibrary) {
-            const newLibrary = await client.library.create({
-              data: { userId: result.id },
-            });
-            console.log("✅ Auto Library Created:", newLibrary.id);
-          }
-
-          const existingSystemSettings = await client.system_Setting.findFirst({
-            where: { userId: result.id },
-          });
-
-          if (!existingSystemSettings) {
-            const newSystemSettings = await client.system_Setting.create({
-              data: { userId: result.id },
-            });
-            console.log("✅ Auto SystemSettings Created:", newSystemSettings.id);
-          }
-        } catch (err: any) {
-          console.error("❌ Middleware Error:", err?.message);
-        }
-      })(); 
-    }
-    
     return result;
   });
 

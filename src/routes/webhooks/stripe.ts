@@ -156,7 +156,13 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             }
         });
 
-        // 5. Setup basic folders
+        // 5. Setup basic Library and folders
+        await prisma.library.create({
+            data: {
+                userId: newUser.id
+            }
+        });
+
         await prisma.contactFolder.create({
             data: {
                 name: "General Leads",
