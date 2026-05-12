@@ -12,7 +12,7 @@ To automate registration, we must collect the following additional fields during
 - **Point of Contact** (Name, Email, Phone)
 
 ## 2. Technical Workflow (Backend)
-
+  
 The registration will be triggered automatically after the **Twilio Sub-account** is created and the initial payment is confirmed.
 
 ### Step 1: Twilio Trust Hub Registration
