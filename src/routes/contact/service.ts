@@ -1638,7 +1638,7 @@ export async function importContactsInDb(args: {
         state: c.state || "",
         zip: c.zip || "",
         source: c.source || "CSV Import",
-        notes: c.notes || "",
+        notes: c.notes ? (Array.isArray(c.notes) ? c.notes : [String(c.notes)]) : [],
         tags: c.tags || [],
         // Store misc field values as JSON blob (Birthday, Notes from misc, etc.)
         miscValues: c.miscValues ?? null,
@@ -1700,7 +1700,7 @@ export async function importContactsInDb(args: {
             state: incoming.state || "",
             zip: incoming.zip || "",
             source: incoming.source || "CSV Import",
-            notes: incoming.notes || "",
+            notes: incoming.notes ? (Array.isArray(incoming.notes) ? incoming.notes : [String(incoming.notes)]) : [],
             tags: incoming.tags || [],
             miscValues: incoming.miscValues ?? undefined,
           },

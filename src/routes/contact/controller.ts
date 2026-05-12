@@ -1029,14 +1029,42 @@ export const importContacts = async (
         }
 
         const phones: { number: string; type: string }[] = [];
-        const phoneVal = resolve(r, "Phone");
-        if (phoneVal) {
-          phones.push({ number: phoneVal.toString(), type: "MOBILE" });
-        }
+        const seenNumbers = new Set<string>();
+
+        const addPhone = (val: any) => {
+          if (!val) return;
+          const str = val.toString();
+          str.split(/[,;|]/).forEach((p: string) => {
+            const trimmed = p.trim();
+            if (trimmed && !seenNumbers.has(trimmed)) {
+              phones.push({ number: trimmed, type: "MOBILE" });
+              seenNumbers.add(trimmed);
+            }
+          });
+        };
+
+        // 1. Check the explicitly mapped Phone column
+        addPhone(resolve(r, "Phone"));
+
+        // 2. Auto-discover other phone columns (Phone 1, Phone 2, Mobile, Contact, etc.)
+        const mappedCol = fieldMappings["Phone"];
+        Object.keys(r).forEach((col) => {
+          const lowerCol = col.toLowerCase();
+          const isPhoneKeyword =
+            lowerCol.includes("phone") ||
+            lowerCol.includes("mobile") ||
+            lowerCol.includes("cell") ||
+            lowerCol.includes("contact");
+
+          // If it matches a keyword and wasn't already handled by the primary mapping
+          if (isPhoneKeyword && col !== mappedCol) {
+            addPhone(r[col]);
+          }
+        });
 
         const tagsVal = resolve(r, "Tags");
         const tags = tagsVal
-          ? tagsVal.split(",").map((t: string) => t.trim()).filter(Boolean)
+          ? tagsVal.split(/[,;|]/).map((t: string) => t.trim()).filter(Boolean)
           : [];
 
         const miscValues: Record<string, string> = {};
@@ -1047,12 +1075,12 @@ export const importContacts = async (
 
         return {
           fullName: resolve(r, "Name") || "Unnamed",
-          address: "",
-          city: "",
-          state: "",
-          zip: "",
+          address: resolve(r, "Property Address"),
+          city: resolve(r, "Property City"),
+          state: resolve(r, "Property State"),
+          zip: resolve(r, "Property Zip Code"),
           source: fileExtension?.toUpperCase() + " Import",
-          notes: "",
+          notes: resolve(r, "Notes"),
           tags,
           emails,
           phones,
