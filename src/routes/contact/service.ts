@@ -60,7 +60,7 @@ function collectPropertyCandidates(value: any): Array<Record<string, any>> {
   }
 
   if (value && typeof value === "object") {
-    const propertyId = value.property_id ?? value.propertyId;
+    const propertyId = value.property_id ?? value.propertyId ?? value.mpr_id ?? value.mprid ?? value.geo_id;
     if (propertyId) {
       candidates.push(value);
     }
@@ -118,7 +118,7 @@ function pickBestPropertyId(autoCompletePayload: any, contact: {
   if (candidates.length > 0) {
     const ranked = candidates
       .map((candidate) => ({
-        propertyId: String(candidate.property_id ?? candidate.propertyId),
+        propertyId: String(candidate.property_id ?? candidate.propertyId ?? candidate.mpr_id ?? candidate.mprid ?? candidate.geo_id),
         score: scorePropertyCandidate(candidate, normalizedTarget),
       }))
       .filter((candidate) => candidate.propertyId);
@@ -129,7 +129,7 @@ function pickBestPropertyId(autoCompletePayload: any, contact: {
     }
   }
 
-  const propertyIds = recursiveFindByKeys(autoCompletePayload, ["property_id", "propertyid"])
+  const propertyIds = recursiveFindByKeys(autoCompletePayload, ["property_id", "propertyid", "mpr_id", "mprid", "geo_id"])
     .map((propertyId) => String(propertyId))
     .filter(Boolean);
 
