@@ -1,6 +1,7 @@
 import prisma from "../lib/prisma";
 import { encryptEIN } from "../utils/encryption";
 import twilio from "twilio";
+import { envConfig } from "../lib/config";
 
 export interface A2PBusinessDetails {
     legalBusinessName: string;
@@ -63,13 +64,16 @@ export class A2PRegistrationService {
         try {
             // STEP 1: Create Customer Profile (Trust Hub)
             console.log("[A2P Service] Step 1: Creating Customer Profile...");
-            // Note: Real registration involves address/entity verification. 
+            // Real registration involves address/entity verification. 
             // We use the sub-account client as requested.
             const profile = await subClient.trusthub.v1.customerProfiles.create({
                 friendlyName: details.legalBusinessName,
                 email: details.contactEmail,
-                policySid: 'RNdf1861150ec6070624a905a5a1f6a19f' // Standard A2P Policy
-            });
+                phoneNumber: details.contactPhone,
+                policySid: 'RNdfbf3fae0e1107f8aded0e7cead80bf5', // Secondary Customer Profile of type Business
+                isvRegisteringForSelf: true, // As requested by user
+                statusCallbackUrl: `${envConfig.BACKEND_URL}/api/a2p/webhook`
+            } as any); // Cast to any to bypass strict type checking for non-standard fields like isvRegisteringForSelf if they aren't in the SDK definition
 
             // STEP 2: Register Brand
             console.log("[A2P Service] Step 2: Registering Brand...");
@@ -112,11 +116,16 @@ export class A2PRegistrationService {
 
         } catch (error: any) {
             console.error("[A2P Service] Registration FAILED:", error.message);
+            // On failure: Reset status and clear all SIDs
             await prisma.a2P_Registration.update({
                 where: { userId },
-                data: { 
-                    status: "REJECTED",
-                    rejectionReason: `Internal Error: ${error.message}`
+                data: {
+                    status: "NOT_STARTED",
+                    customerProfileSid: null,
+                    brandSid: null,
+                    messagingServiceSid: null,
+                    campaignSid: null,
+                    rejectionReason: error.message
                 }
             });
             throw error;
