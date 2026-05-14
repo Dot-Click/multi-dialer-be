@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber } from "../../services/twilio-account.service";
-import { createGHLSubAccount } from "../../services/ghl.service";
 import { envConfig } from "../../lib/config";
 
 function getStripeClient() {
@@ -91,40 +90,12 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             });
         }
 
-        // 2.5 Create GoHighLevel Sub-account (STRICT: No internal try/catch)
-        console.log(`[Stripe Webhook] Provisioning GHL for ${email}`);
-        const ghlLocation = await createGHLSubAccount({
-            name: companyName || fullName || email,
-            email: email,
-        });
-        
-        if (company) {
-            company = await prisma.company.update({
-                where: { id: company.id },
-                data: { ghlLocationId: ghlLocation.id }
-            });
-        }
-
         // 3. Create the Base System Setting
         const systemSetting = await prisma.system_Setting.create({
           data: {
             userId: newUser.id,
           },
         });
-
-        // 3.5 Create GHL Integration record
-        if (company?.ghlLocationId) {
-            await prisma.integration.create({
-                data: {
-                    systemSettingId: systemSetting.id,
-                    provider: "GO_HIGH_LEVEL",
-                    status: "CONNECTED",
-                    credentials: {
-                        locationId: company.ghlLocationId
-                    }
-                }
-            });
-        }
 
         // 4. Provision Twilio Subaccount (STRICT: No internal try/catch)
         const subAccount = await createTwilioSubAccount(fullName || email);

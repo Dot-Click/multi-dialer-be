@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount } from "../../services/twilio-account.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
+import { triggerZapierWebhook } from "../../lib/zapier";
 
 function throwHttp(statusCode: number, message: string): never {
     throw { message, statusCode };
@@ -17,7 +18,7 @@ export async function createUserInDb(payload: any) {
     if (existing) throwHttp(400, "User with this email already exists");
 
     // Use a transaction for atomicity
-    return await prisma.$transaction(async (tx) => {
+    const newUser = await prisma.$transaction(async (tx) => {
         // 1. Create User
         const newUser = await tx.user.create({
             data: {
@@ -96,6 +97,23 @@ export async function createUserInDb(payload: any) {
     }, {
         timeout: 20000 // Higher timeout for external Twilio API call
     });
+
+    // Fire Zapier webhook AFTER transaction — non-blocking
+    triggerZapierWebhook({
+        event: "NEW_USER_SIGNUP",
+        timestamp: new Date().toISOString(),
+        user: {
+            id: newUser.id,
+            fullName: newUser.fullName,
+            email: newUser.email,
+            phone: (newUser as any).phone ?? null,
+            role: newUser.role,
+            plan: (newUser as any).plan ?? null,
+            createdAt: newUser.createdAt,
+        },
+    });
+
+    return newUser;
 }
 
 /**

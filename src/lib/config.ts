@@ -40,6 +40,7 @@ export const envConfig =  {
         GHL_API_KEY: process.env.GHL_API_KEY,
         GHL_AGENCY_API_KEY: process.env.GHL_AGENCY_API_KEY,
         GHL_AGENCY_ID: process.env.GHL_AGENCY_ID,
+        ZAPIER_WEBHOOK_URL: process.env.ZAPIER_WEBHOOK_URL,
 }
 
 
