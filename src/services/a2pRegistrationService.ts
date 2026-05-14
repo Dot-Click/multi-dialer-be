@@ -19,6 +19,32 @@ export interface A2PBusinessDetails {
     contactPhone: string;
 }
 
+const getUsAppToPersonUsecase = (businessType: string) => {
+    switch(businessType) {
+        case 'Sole Proprietor':
+            return 'SOLE_PROPRIETOR';
+        case 'LLC':
+        case 'Corporation':
+        case 'Partnership':
+        case 'Non-Profit':
+        default:
+            return 'MIXED';
+    }
+};
+
+const getBrandType = (businessType: string) => {
+    switch(businessType) {
+        case 'Sole Proprietor':
+            return 'SOLE_PROPRIETOR';
+        case 'LLC':
+        case 'Corporation':
+        case 'Partnership':
+        case 'Non-Profit':
+        default:
+            return 'STANDARD';
+    }
+};
+
 export class A2PRegistrationService {
     /**
      * Executes the 4-step A2P registration sequence.
@@ -64,24 +90,33 @@ export class A2PRegistrationService {
         try {
             // STEP 1: Create Customer Profile (Trust Hub)
             console.log("[A2P Service] Step 1: Creating Customer Profile...");
-            // Real registration involves address/entity verification. 
-            // We use the sub-account client as requested.
+            const policies = await subClient.trusthub.v1.policies.list();
+            const businessPolicy = policies.find(p => 
+                p.friendlyName.toLowerCase().includes('business')
+            );
+            const policySid = businessPolicy?.sid;
+
+            if (!policySid) throw new Error("Could not find business policy SID");
+
             const profile = await subClient.trusthub.v1.customerProfiles.create({
                 friendlyName: details.legalBusinessName,
                 email: details.contactEmail,
                 phoneNumber: details.contactPhone,
-                policySid: 'RNdfbf3fae0e1107f8aded0e7cead80bf5', // Secondary Customer Profile of type Business
-                isvRegisteringForSelf: true, // As requested by user
+                policySid: policySid,
                 statusCallbackUrl: `${envConfig.BACKEND_URL}/api/a2p/webhook`
-            } as any); // Cast to any to bypass strict type checking for non-standard fields like isvRegisteringForSelf if they aren't in the SDK definition
+            } as any);
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
 
             // STEP 2: Register Brand
             console.log("[A2P Service] Step 2: Registering Brand...");
             const brand = await subClient.messaging.v1.brandRegistrations.create({
                 customerProfileBundleSid: profile.sid,
                 a2PProfileBundleSid: profile.sid,
-                brandType: details.businessType === 'SOLE_PROPRIETOR' ? 'SOLE_PROPRIETOR' : 'STANDARD'
+                brandType: getBrandType(details.businessType)
             });
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
 
             // STEP 3: Create Messaging Service
             console.log("[A2P Service] Step 3: Creating Messaging Service...");
@@ -89,17 +124,31 @@ export class A2PRegistrationService {
                 friendlyName: `${details.legalBusinessName} Messaging Service`,
             });
 
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
             // STEP 4: Submit Campaign
             console.log("[A2P Service] Step 4: Submitting Campaign...");
-            const campaign = await subClient.messaging.v1.services(messagingService.sid).usAppToPerson.create({
-                brandRegistrationSid: brand.sid,
-                description: 'Marketing and customer support messages.',
-                messageSamples: ['Hello, this is a test message.'],
-                usAppToPersonUsecase: details.businessType === 'SOLE_PROPRIETOR' ? 'SOLE_PROPRIETOR' : 'MIXED',
-                messageFlow: 'Users opt-in via a checkbox on our website signup form.',
-                hasEmbeddedLinks: false,
-                hasEmbeddedPhone: false
-            });
+            const campaign = await subClient.messaging.v1
+                .services(messagingService.sid)
+                .usAppToPerson.create({
+                    brandRegistrationSid: brand.sid,
+                    description: 'Sending appointment reminders, follow-ups, and lead outreach messages to real estate contacts who have opted in.',
+                    messageSamples: [
+                        'Hi {name}, this is {agent} following up on the property at {address}. Reply STOP to opt out.',
+                        'Your showing appointment is confirmed for {date} at {time}. Reply STOP to opt out.',
+                        'Hi {name}, I wanted to check in regarding your real estate inquiry. Reply STOP to opt out.'
+                    ],
+                    usAppToPersonUsecase: getUsAppToPersonUsecase(details.businessType),
+                    messageFlow: 'Contacts opt-in via lead forms on our website and verbal consent during initial contact.',
+                    hasEmbeddedLinks: false,
+                    hasEmbeddedPhone: false,
+                    optInMessage: 'You have opted in to receive messages from {agent}. Reply STOP to unsubscribe.',
+                    optOutMessage: 'You have been unsubscribed. Reply START to resubscribe.',
+                    helpMessage: 'For help contact support@slingvo.com. Reply STOP to unsubscribe.',
+                    subscriberOptIn: true,
+                    subscriberOptOut: true,
+                    subscriberHelp: true
+                } as any);
 
             // Update DB with REAL SIDs
             await prisma.a2P_Registration.update({
@@ -115,7 +164,7 @@ export class A2PRegistrationService {
             return { status: "PENDING" };
 
         } catch (error: any) {
-            console.error("[A2P Service] Registration FAILED:", error.message);
+            console.error("[A2P Service] Registration FAILED:", error.message, error.code, error.status);
             // On failure: Reset status and clear all SIDs
             await prisma.a2P_Registration.update({
                 where: { userId },
