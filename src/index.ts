@@ -11,10 +11,12 @@ import sgMail from "@sendgrid/mail";
 import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
 import { handleStripeWebhook } from "@/routes/webhooks/stripe";
+import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 
 connectDB();
 startRetentionJobs();
 initJobs();
+startA2PStatusPoller();
 
 const app = express();
 const PORT = envConfig.PORT || 3000;

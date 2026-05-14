@@ -33,6 +33,7 @@ import pushRoutes from "./push"
 import notificationRoutes from "./notification"
 import emailHistoryRoutes from "./email-history"
 import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
+import a2pRoutes from "./a2p";
 import { getMyPlusLeadsConfig, updateMyPlusLeadsConfig, deleteMyPlusLeadsConfig } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { envConfig } from "@/lib/config";
@@ -84,6 +85,7 @@ router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
 router.use("/email-history", protectRoute, emailHistoryRoutes)
 router.use("/payment", paymentRoutes)
+router.use("/a2p", a2pRoutes)
 
 // Integrations & Webhooks
 router.post("/webhooks/myplusleads/:userId", handleMyPlusLeadsWebhook);

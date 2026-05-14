@@ -46,6 +46,13 @@ enum SubscriptionStatus {
   PENDING
 }
 
+enum A2PStatus {
+  NOT_STARTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum TeamAccess {
   ALL
   SALES
@@ -231,8 +238,47 @@ model User {
   emailLogs         EmailLog[]
   smsLogs           SmsLog[]
   myPlusLeadsConfig MyPlusLeadsConfig?
+  a2pRegistration   A2P_Registration?
 
   @@map("users")
+}
+
+model A2P_Registration {
+  id                  String    @id @default(uuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Business Details
+  legalBusinessName   String
+  businessType        String    // LLC, CORPORATION, SOLE_PROPRIETOR etc.
+  ein                 String    // Store encrypted
+  businessWebsite     String
+  businessAddress     String
+  city                String
+  state               String
+  postalCode          String
+  country             String    @default("US")
+  
+  // Point of Contact
+  contactFirstName    String
+  contactLastName     String
+  contactEmail        String
+  contactPhone        String
+  
+  // Twilio IDs
+  customerProfileSid  String?
+  brandSid            String?
+  messagingServiceSid String?
+  campaignSid         String?
+  
+  // Status
+  status              A2PStatus @default(NOT_STARTED)
+  rejectionReason     String?
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@map("a2p_registrations")
 }
 
 model Recording {
