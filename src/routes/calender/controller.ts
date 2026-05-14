@@ -15,13 +15,23 @@ const canManageOthers = (role?: string) => {
 
 export const getCalendarEvents = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id: userId } = req.user!;
+    const { id: userId, role } = req.user!;
+    let whereClause: any = { assignToId: userId, status: "SET" };
+
+    if (role === 'ADMIN' || role === 'OWNER') {
+      const agents = await prisma.user.findMany({
+        where: { createdById: userId },
+        select: { id: true }
+      });
+      const agentIds = agents.map(a => a.id);
+      whereClause = {
+        assignToId: { in: [userId, ...agentIds] },
+        status: "SET"
+      };
+    }
 
     const events = await prisma.calendar.findMany({
-      where: {
-        assignToId: userId,
-        status: "SET"
-      },
+      where: whereClause,
       include: calendarInclude,
       orderBy: { startDate: "desc" },
       take: 10
@@ -35,7 +45,22 @@ export const getCalendarEvents = async (req: Request, res: Response): Promise<vo
 
 export const getAllCalendarEvents = async (req: Request, res: Response): Promise<void> => {
   try {
+    const { id: userId, role } = req.user!;
+    let whereClause: any = { assignToId: userId };
+
+    if (role === 'ADMIN' || role === 'OWNER') {
+      const agents = await prisma.user.findMany({
+        where: { createdById: userId },
+        select: { id: true }
+      });
+      const agentIds = agents.map(a => a.id);
+      whereClause = {
+        assignToId: { in: [userId, ...agentIds] }
+      };
+    }
+
     const events = await prisma.calendar.findMany({
+      where: whereClause,
       include: calendarInclude,
       orderBy: { startDate: "desc" },
     });
@@ -208,15 +233,33 @@ export const deleteCalendarEvent = async (req: Request, res: Response): Promise<
 export const getCalendarEventsByContact = async (req: Request, res: Response): Promise<void> => {
   try {
     const { contactId } = req.params;
+    const { id: userId, role } = req.user!;
 
     const contact = await prisma.contact.findUnique({
       where: { id: contactId },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
 
     if (!contact) {
       errorResponse(res, "Contact not found", 404);
       return;
+    }
+
+    // Check if the user has access to this contact's activities
+    if (role === 'AGENT' && contact.userId !== userId) {
+      errorResponse(res, "You do not have access to this contact's activities", 403);
+      return;
+    }
+
+    if ((role === 'ADMIN' || role === 'OWNER')) {
+      const targetUser = contact.userId ? await prisma.user.findUnique({
+        where: { id: contact.userId },
+        select: { createdById: true }
+      }) : null;
+      if (contact.userId !== userId && targetUser?.createdById !== userId) {
+        errorResponse(res, "You do not have access to this contact's activities", 403);
+        return;
+      }
     }
 
     const events = await prisma.calendar.findMany({
