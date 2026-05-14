@@ -30,6 +30,9 @@ export const createCheckoutSession = async (req: Request, res: Response): Promis
         },
       ],
       mode: "subscription",
+      subscription_data: {
+        trial_period_days: 30,
+      },
       success_url: `${envConfig.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${envConfig.FRONTEND_URL}/signup`,
       metadata: {

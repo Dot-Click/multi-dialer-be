@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber } from "../../services/twilio-account.service";
 import { envConfig } from "../../lib/config";
+import { triggerZapierWebhook } from "../../lib/zapier";
 
 function getStripeClient() {
   const key = envConfig.STRIPE_SECRET_KEY;
@@ -65,6 +66,8 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             fullName,
             role: "ADMIN",
             status: "ACTIVE",
+            trialStatus: "ACTIVE",
+            isSubscribed: false,
             emailVerified: true,
           },
         });
@@ -147,6 +150,20 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         });
 
         console.log(`[Stripe Webhook] Full provisioning successful for ${email}`);
+
+        // Fire Zapier Webhook
+        console.log("[Zapier] About to fire webhook for:", email);
+        triggerZapierWebhook({
+          event: "NEW_USER_SIGNUP",
+          timestamp: new Date().toISOString(),
+          user: {
+            id: newUser.id,
+            fullName: newUser.fullName,
+            email: newUser.email,
+            role: newUser.role,
+            createdAt: newUser.createdAt,
+          },
+        });
 
       } catch (error: any) {
         console.error(`[Stripe Webhook] Provisioning FAILED for ${email}. Rolling back...`, error.message);

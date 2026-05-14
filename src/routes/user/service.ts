@@ -99,6 +99,7 @@ export async function createUserInDb(payload: any) {
     });
 
     // Fire Zapier webhook AFTER transaction — non-blocking
+    console.log("[Zapier] About to fire webhook for:", newUser.email)
     triggerZapierWebhook({
         event: "NEW_USER_SIGNUP",
         timestamp: new Date().toISOString(),
