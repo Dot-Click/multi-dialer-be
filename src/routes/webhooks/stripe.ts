@@ -119,7 +119,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         // TODO: Uncomment in production — auto-purchases 
         // a phone number for the user's sub-account
         console.log(`[Stripe Webhook] Skipping primary US number purchase for ${email} (Provisioning Disabled)`);
-        /*
+       
         const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
         
         await prisma.callerId.create({
@@ -132,7 +132,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                 numberOfLines: 1
             }
         });
-        */
+        
 
         // 5. Setup basic Library and folders
         await prisma.library.create({
