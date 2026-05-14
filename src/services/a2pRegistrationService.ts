@@ -95,7 +95,7 @@ export class A2PRegistrationService {
                 brandRegistrationSid: brand.sid,
                 description: 'Marketing and customer support messages.',
                 messageSamples: ['Hello, this is a test message.'],
-                usAppToPersonUsecase: 'LOW_VOLUME_MIXED',
+                usAppToPersonUsecase: details.businessType === 'SOLE_PROPRIETOR' ? 'SOLE_PROPRIETOR' : 'MIXED',
                 messageFlow: 'Users opt-in via a checkbox on our website signup form.',
                 hasEmbeddedLinks: false,
                 hasEmbeddedPhone: false
