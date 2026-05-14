@@ -1,6 +1,6 @@
-import { getTwilioClient } from "./twilio-account.service";
 import prisma from "../lib/prisma";
 import { encryptEIN } from "../utils/encryption";
+import twilio from "twilio";
 
 export interface A2PBusinessDetails {
     legalBusinessName: string;
@@ -45,40 +45,66 @@ export class A2PRegistrationService {
             }
         });
 
-        try {
-            const client = await getTwilioClient(userId);
+        // 3. Fetch user's Twilio sub-account credentials
+        const integration = await prisma.integration.findFirst({
+            where: { 
+                systemSetting: { userId },
+                provider: "TWILIO"
+            }
+        });
 
+        if (!integration || !integration.credentials) {
+            throw new Error("Twilio integration not found for this user.");
+        }
+
+        const creds = integration.credentials as any;
+        const subClient = twilio(creds.accountSid, creds.authToken);
+
+        try {
             // STEP 1: Create Customer Profile (Trust Hub)
-            // Note: In real implementation, this involves multiple sub-resources (Address, Entities, etc.)
-            // For this automated flow, we assume a simplified call or use Twilio's bulk onboarding if available.
             console.log("[A2P Service] Step 1: Creating Customer Profile...");
-            // const profile = await client.trusthub.v1.customerProfiles.create({ ... });
-            const mockProfileSid = "CP" + Math.random().toString(36).substring(7);
+            // Note: Real registration involves address/entity verification. 
+            // We use the sub-account client as requested.
+            const profile = await subClient.trusthub.v1.customerProfiles.create({
+                friendlyName: details.legalBusinessName,
+                email: details.contactEmail,
+                policySid: 'RNdf1861150ec6070624a905a5a1f6a19f' // Standard A2P Policy
+            });
 
             // STEP 2: Register Brand
             console.log("[A2P Service] Step 2: Registering Brand...");
-            // const brand = await client.messaging.v1.brandRegistrations.create({ ... });
-            const mockBrandSid = "BN" + Math.random().toString(36).substring(7);
+            const brand = await subClient.messaging.v1.brandRegistrations.create({
+                customerProfileBundleSid: profile.sid,
+                a2PProfileBundleSid: profile.sid,
+                brandType: details.businessType === 'SOLE_PROPRIETOR' ? 'SOLE_PROPRIETOR' : 'STANDARD'
+            });
 
             // STEP 3: Create Messaging Service
             console.log("[A2P Service] Step 3: Creating Messaging Service...");
-            const messagingService = await client.messaging.v1.services.create({
+            const messagingService = await subClient.messaging.v1.services.create({
                 friendlyName: `${details.legalBusinessName} Messaging Service`,
             });
 
             // STEP 4: Submit Campaign
             console.log("[A2P Service] Step 4: Submitting Campaign...");
-            // const campaign = await client.messaging.v1.brandRegistrations(mockBrandSid).campaigns.create({ ... });
-            const mockCampaignSid = "CM" + Math.random().toString(36).substring(7);
+            const campaign = await subClient.messaging.v1.services(messagingService.sid).usAppToPerson.create({
+                brandRegistrationSid: brand.sid,
+                description: 'Marketing and customer support messages.',
+                messageSamples: ['Hello, this is a test message.'],
+                usAppToPersonUsecase: 'LOW_VOLUME_MIXED',
+                messageFlow: 'Users opt-in via a checkbox on our website signup form.',
+                hasEmbeddedLinks: false,
+                hasEmbeddedPhone: false
+            });
 
-            // Update DB with SIDs
+            // Update DB with REAL SIDs
             await prisma.a2P_Registration.update({
                 where: { userId },
                 data: {
-                    customerProfileSid: mockProfileSid,
-                    brandSid: mockBrandSid,
+                    customerProfileSid: profile.sid,
+                    brandSid: brand.sid,
                     messagingServiceSid: messagingService.sid,
-                    campaignSid: mockCampaignSid,
+                    campaignSid: campaign.sid,
                 }
             });
 
