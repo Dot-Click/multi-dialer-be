@@ -13,6 +13,8 @@ type User = {
   image: string | null;
   emailVerified: boolean;
   createdById: string | null;
+  trialStatus: string;
+  isSubscribed: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -49,6 +51,8 @@ export const protectRoute = async (
           role: true,
           image: true,
           emailVerified: true,
+          trialStatus: true,
+          isSubscribed: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -71,6 +75,8 @@ export const protectRoute = async (
           image: true,
           emailVerified: true,
           createdById: true,
+          trialStatus: true,
+          isSubscribed: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -99,6 +105,8 @@ export const protectRoute = async (
           role: true,
           image: true,
           emailVerified: true,
+          trialStatus: true,
+          isSubscribed: true,
           createdAt: true,
           updatedAt: true,
         },

@@ -44,6 +44,8 @@ export const auth = betterAuth({
       role: { type: "string", required: false },
       fullName: { type: "string", required: false },
       status: { type: "string", required: false },
+      trialStatus: { type: "string", required: false },
+      isSubscribed: { type: "boolean", required: false },
       createdById: { type: "string", required: false },
       defaultCallerId: { type: "string", required: false },
     },

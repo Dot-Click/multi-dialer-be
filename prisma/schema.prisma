@@ -53,6 +53,12 @@ enum A2PStatus {
   REJECTED
 }
 
+enum TrialStatus {
+  ACTIVE
+  EXPIRED
+  NONE
+}
+
 enum TeamAccess {
   ALL
   SALES
@@ -187,6 +193,9 @@ model User {
   banned     Boolean   @default(false)
   banReason  String?
   banExpires DateTime?
+
+  trialStatus TrialStatus @default(NONE)
+  isSubscribed Boolean     @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

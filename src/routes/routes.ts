@@ -36,6 +36,7 @@ import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
 import a2pRoutes from "./a2p";
 import { getMyPlusLeadsConfig, updateMyPlusLeadsConfig, deleteMyPlusLeadsConfig } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
+import { checkFeatureLocked } from "../middlewares/featureLock.middleware";
 import { envConfig } from "@/lib/config";
 import paymentRoutes from "./payment";
 
@@ -45,7 +46,7 @@ const router = Router()
 
 router.use("/calendar", protectRoute, calendarRoutes)
 router.use("/library/script", protectRoute, scriptRoutes)
-router.use("/library/sms", protectRoute, smsRoutes)
+router.use("/library/sms", protectRoute, checkFeatureLocked, smsRoutes)
 router.use("/library/email", protectRoute, emailRoutes)
 router.use("/library/signatures", protectRoute, signatureRoutes)
 router.use("/library/media-center", protectRoute, mediaCenterRoutes)
@@ -77,7 +78,7 @@ router.use("/company", protectRoute, checkRole(["OWNER"]), companyRoutes)
 router.use("/reports", protectRoute, reportRoutes)
 
 
-router.use("/calling", callingRoutes)
+router.use("/calling", protectRoute, checkFeatureLocked, callingRoutes)
 router.use("/report", protectRoute, checkRole(["OWNER"]), SuperAdminReportsRoutes)
 
 router.use("/subscriptions", subscriptionRoutes)
