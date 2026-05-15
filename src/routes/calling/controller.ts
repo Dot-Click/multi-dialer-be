@@ -879,16 +879,26 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
               try {
                 const subClient = require('twilio')(creds.accountSid, creds.authToken);
                 const appName = 'MultiDialer Voice App';
+                const targetVoiceUrl = `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${identity}`;
                 const existingApps = await subClient.applications.list({ friendlyName: appName, limit: 1 });
 
                 let appSid: string;
                 if (existingApps.length > 0) {
-                  appSid = existingApps[0].sid;
+                  const existingApp = existingApps[0];
+                  appSid = existingApp.sid;
+
+                  // Ensure existing app has the correct agentId in voiceUrl
+                  if (!existingApp.voiceUrl || !existingApp.voiceUrl.includes(`agentId=${identity}`)) {
+                    console.log(`[getTwilioToken] Updating existing sub-account TwiML App with agentId: ${appSid}`);
+                    await existingApp.update({
+                      voiceUrl: targetVoiceUrl
+                    });
+                  }
                   console.log(`[getTwilioToken] Found existing sub-account TwiML App: ${appSid}`);
                 } else {
                   const newApp = await subClient.applications.create({
                     friendlyName: appName,
-                    voiceUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice`,
+                    voiceUrl: targetVoiceUrl,
                     voiceMethod: 'POST',
                   });
                   appSid = newApp.sid;
