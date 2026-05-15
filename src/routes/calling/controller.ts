@@ -835,41 +835,104 @@ export const buyNumber: RequestHandler = async (req, res) => {
  */
 export const getTwilioToken: RequestHandler = async (req, res) => {
   try {
-    const accountSid = envConfig.TWILIO_ACCOUNT_SID!;
-    const apiKey = envConfig.TWILIO_API_KEY;
-    const apiSecret = envConfig.TWILIO_API_SECRET;
-
     // Use the authenticated user's ID as identity
     const identity = req.user?.id || (req.query.identity as string) || 'tester_agent';
+    const userId = req.user?.id || '';
 
-    if (!apiKey || !apiSecret) {
-      console.warn("TWILIO_API_KEY or TWILIO_API_SECRET missing in .env.");
+    let accountSid = envConfig.TWILIO_ACCOUNT_SID!;
+    let apiKey = envConfig.TWILIO_API_KEY || '';
+    let apiSecret = envConfig.TWILIO_API_SECRET || '';
+    let twimlAppSid = envConfig.TWILIO_TWIML_APP_SID || "AP2dfe20dda942797074ca416be8142b9c";
+
+    // ── Sub-account support ────────────────────────────────────────────────────
+    // If the user has their own Twilio sub-account, use those credentials so that
+    // the browser Device registers under the SAME account as the one placing calls.
+    // Without this, <Dial><Client> from a sub-account cannot reach a browser
+    // registered on the master account.
+    if (userId) {
+      try {
+        // Resolve effective owner (agents inherit from their admin)
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { role: true, createdById: true }
+        });
+        const effectiveUserId = (user?.role === 'AGENT' && user?.createdById) ? user.createdById : userId;
+
+        const integration = await prisma.integration.findFirst({
+          where: { provider: 'TWILIO', systemSetting: { userId: effectiveUserId } }
+        });
+
+        if (integration?.credentials) {
+          const creds = integration.credentials as any;
+          if (creds.accountSid && creds.authToken) {
+            accountSid = creds.accountSid;
+            // Twilio allows accountSid/authToken in place of an API Key/Secret for AccessTokens
+            apiKey    = creds.accountSid;
+            apiSecret = creds.authToken;
+
+            // ── Ensure a TwiML App exists in the sub-account ──────────────────
+            if (creds.twimlAppSid) {
+              twimlAppSid = creds.twimlAppSid;
+              console.log(`[getTwilioToken] Using cached sub-account TwiML App: ${twimlAppSid}`);
+            } else {
+              // Create one on-demand and cache it back to the integration record
+              try {
+                const subClient = require('twilio')(creds.accountSid, creds.authToken);
+                const appName = 'MultiDialer Voice App';
+                const existingApps = await subClient.applications.list({ friendlyName: appName, limit: 1 });
+
+                let appSid: string;
+                if (existingApps.length > 0) {
+                  appSid = existingApps[0].sid;
+                  console.log(`[getTwilioToken] Found existing sub-account TwiML App: ${appSid}`);
+                } else {
+                  const newApp = await subClient.applications.create({
+                    friendlyName: appName,
+                    voiceUrl: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice`,
+                    voiceMethod: 'POST',
+                  });
+                  appSid = newApp.sid;
+                  console.log(`[getTwilioToken] Created new sub-account TwiML App: ${appSid}`);
+                }
+
+                twimlAppSid = appSid;
+
+                // Persist so we don't recreate on every token request
+                await prisma.integration.update({
+                  where: { id: integration.id },
+                  data: { credentials: { ...creds, twimlAppSid: appSid } }
+                });
+              } catch (appErr: any) {
+                console.error('[getTwilioToken] Failed to create sub-account TwiML App:', appErr.message);
+                // Fall back to master TwiML App — calls may still fail but token generation won't
+              }
+            }
+
+            console.log(`[getTwilioToken] Generating token for sub-account ${accountSid}, identity: ${identity}`);
+          }
+        }
+      } catch (integErr: any) {
+        console.warn('[getTwilioToken] Could not fetch integration, using master account:', integErr.message);
+      }
     }
 
-    const token = new AccessToken(
-      accountSid,
-      apiKey || '',
-      apiSecret || '',
-      { identity: identity }
-    );
+    if (!apiKey || !apiSecret) {
+      console.warn('[getTwilioToken] TWILIO_API_KEY or TWILIO_API_SECRET missing in .env.');
+    }
 
-    // Use the Twiml App SID from the environment to ensure tokens authorize for the current account
-    const twimlAppSid = envConfig.TWILIO_TWIML_APP_SID || "AP2dfe20dda942797074ca416be8142b9c";
-
-    const grant = new VoiceGrant({
-      outgoingApplicationSid: twimlAppSid,
-      incomingAllow: true,
-    });
+    const token = new AccessToken(accountSid, apiKey, apiSecret, { identity });
+    const grant = new VoiceGrant({ outgoingApplicationSid: twimlAppSid, incomingAllow: true });
     token.addGrant(grant);
 
-    successResponse(res, 200, "Token generated successfully", {
-      identity: identity,
+    console.log(`[getTwilioToken] Token issued — account: ${accountSid}, twimlApp: ${twimlAppSid}, identity: ${identity}`);
+
+    successResponse(res, 200, 'Token generated successfully', {
+      identity,
       token: token.toJwt(),
-      completeToken: token
     });
   } catch (error: any) {
-    console.error("Token generation failed:", error);
-    errorResponse(res, { message: "Failed to generate token." });
+    console.error('Token generation failed:', error);
+    errorResponse(res, { message: 'Failed to generate token.' });
   }
 }
 
