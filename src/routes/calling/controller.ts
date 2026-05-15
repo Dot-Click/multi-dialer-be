@@ -533,6 +533,8 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       statusCallbackMethod: "POST",
     }, agentId);
 
+    // Tag this as a power dialer bridge so the frontend can auto-accept it
+    clientNode.parameter({ name: 'dialerBridge', value: 'true' });
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
     }
