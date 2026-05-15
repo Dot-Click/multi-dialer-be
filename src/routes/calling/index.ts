@@ -55,15 +55,16 @@ import {
   getImprovement
 } from "./analytics.controller";
 import { protectRoute, checkRole } from "@/middlewares/auth.middleware";
+import { checkFeatureLocked } from "@/middlewares/featureLock.middleware";
 
 const router = Router();
 
 // Calling Control
-router.post("/test-call/:agentId", protectRoute, startCalling);
+router.post("/test-call/:agentId", protectRoute, checkFeatureLocked, startCalling);
 router.post("/end-call", protectRoute, endCall);
 router.post("/toggle-hold", protectRoute, toggleHold);
 router.post("/toggle-hold", protectRoute, toggleHold);
-router.post("/leads", protectRoute, addLeadsToDialer);
+router.post("/leads", protectRoute, checkFeatureLocked, addLeadsToDialer);
 router.post("/stop-dialing", protectRoute, stopDialing);
 router.get("/status", protectRoute, getDialerStatus);
 router.get("/status/:sid", protectRoute, getCallStatus);
@@ -98,18 +99,15 @@ router.get("/improvement", protectRoute, getImprovement);
 // Twilio Webhooks
 router.post("/webhooks/voice", handleVoiceWebhook);
 router.post("/webhooks/call-status", handleCallStatus);
-router.post("/webhooks/voice", handleVoiceWebhook);
-router.post("/webhooks/call-status", handleCallStatus);
 router.post("/webhooks/recording-status", handleRecordingStatus);
 router.post("/webhooks/transcription", handleTranscriptionWebhook);
 router.get('/webhooks/resume-call', resumeCall);
 
-router.get("/transcription-logs", getTranscriptionLogs);
-router.get("/token", protectRoute, getTwilioToken);
+router.get("/transcription-logs", protectRoute, getTranscriptionLogs);
 router.get("/token", protectRoute, getTwilioToken);
 
 // SMS Inbox & Webhooks
-router.post("/send-sms", protectRoute, sendSms);
+router.post("/send-sms", protectRoute, checkFeatureLocked, sendSms);
 router.post("/webhooks/sms-status", (req, res) => {
   console.log(`[SMS Webhook] Status: ${req.body.SmsStatus}, SID: ${req.body.SmsSid}`);
   res.sendStatus(200);
@@ -120,23 +118,14 @@ router.get("/sms/conversation/:contactId", protectRoute, getSmsConversation);
 
 // Number Management
 router.post("/available-numbers", protectRoute, getAvailableUsNumbers);
-router.post("/buy-number", protectRoute, buyNumber);
+router.post("/buy-number", protectRoute, checkFeatureLocked, buyNumber);
 
-// call managements}
-router.patch('/set-counter/:sid', protectRoute, setCounter)
-router.get('/callerIds', protectRoute, getCallerIds)
-
-// call managements}
+// call managements
 router.patch('/set-counter/:sid', protectRoute, setCounter)
 router.get('/callerIds', protectRoute, getCallerIds)
 
 //calls insights
 router.get("/calls-insights", protectRoute, getCallsInsights);
-
-// call managements}
-router.patch('/set-counter/:sid', protectRoute, setCounter)
-router.get('/callerIds', protectRoute, getCallerIds)
-
 
 // Answering Machine
 router.post("/webhooks/amd-status", handleAmdStatus);

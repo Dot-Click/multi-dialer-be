@@ -78,7 +78,7 @@ router.use("/company", protectRoute, checkRole(["OWNER"]), companyRoutes)
 router.use("/reports", protectRoute, reportRoutes)
 
 
-router.use("/calling", protectRoute, checkFeatureLocked, callingRoutes)
+router.use("/calling", callingRoutes)
 router.use("/report", protectRoute, checkRole(["OWNER"]), SuperAdminReportsRoutes)
 
 router.use("/subscriptions", subscriptionRoutes)
