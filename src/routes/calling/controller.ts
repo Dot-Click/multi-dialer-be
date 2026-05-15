@@ -117,9 +117,9 @@ export const endCall: RequestHandler = async (req, res) => {
     // Resolve the root call to ensure both legs are dropped
     // Find who owns this call to get the right client
     const callRecord = await prisma.callRecord.findFirst({
-        where: { callSid }
+      where: { callSid }
     });
-    
+
     // Fallback to memory if DB record not found (e.g. child leg)
     const metadata = (dialerService as any).activeCalls.get(callSid);
     const userId = callRecord?.userId || metadata?.userId;
@@ -867,34 +867,43 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
           if (creds.accountSid && creds.authToken) {
             accountSid = creds.accountSid;
             // Twilio allows accountSid/authToken in place of an API Key/Secret for AccessTokens
-            apiKey    = creds.accountSid;
+            apiKey = creds.accountSid;
             apiSecret = creds.authToken;
 
             // ── Ensure a TwiML App exists in the sub-account ──────────────────
-            if (creds.twimlAppSid) {
-              twimlAppSid = creds.twimlAppSid;
-              console.log(`[getTwilioToken] Using cached sub-account TwiML App: ${twimlAppSid}`);
-            } else {
-              // Create one on-demand and cache it back to the integration record
+            const targetVoiceUrl = `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${identity}`;
+            const subClient = require('twilio')(creds.accountSid, creds.authToken);
+
+            // ── Ensure a TwiML App exists in the sub-account ──────────────────
+            let appSid = creds.twimlAppSid;
+
+            if (appSid) {
+              console.log(`[getTwilioToken] Verifying cached sub-account TwiML App: ${appSid}`);
               try {
-                const subClient = require('twilio')(creds.accountSid, creds.authToken);
+                const app = await subClient.applications(appSid).fetch();
+                if (!app.voiceUrl || !app.voiceUrl.includes(`agentId=${identity}`)) {
+                  console.log(`[getTwilioToken] Updating cached TwiML App voiceUrl with agentId: ${appSid}`);
+                  await app.update({ voiceUrl: targetVoiceUrl });
+                }
+              } catch (fetchErr) {
+                console.warn(`[getTwilioToken] Cached TwiML App ${appSid} not found on Twilio, resetting...`);
+                appSid = null;
+              }
+            }
+
+            if (!appSid) {
+              try {
                 const appName = 'MultiDialer Voice App';
-                const targetVoiceUrl = `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${identity}`;
                 const existingApps = await subClient.applications.list({ friendlyName: appName, limit: 1 });
 
-                let appSid: string;
                 if (existingApps.length > 0) {
                   const existingApp = existingApps[0];
                   appSid = existingApp.sid;
-
-                  // Ensure existing app has the correct agentId in voiceUrl
                   if (!existingApp.voiceUrl || !existingApp.voiceUrl.includes(`agentId=${identity}`)) {
                     console.log(`[getTwilioToken] Updating existing sub-account TwiML App with agentId: ${appSid}`);
-                    await existingApp.update({
-                      voiceUrl: targetVoiceUrl
-                    });
+                    await existingApp.update({ voiceUrl: targetVoiceUrl });
                   }
-                  console.log(`[getTwilioToken] Found existing sub-account TwiML App: ${appSid}`);
+                  console.log(`[getTwilioToken] Found and verified existing sub-account TwiML App: ${appSid}`);
                 } else {
                   const newApp = await subClient.applications.create({
                     friendlyName: appName,
@@ -913,9 +922,10 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
                   data: { credentials: { ...creds, twimlAppSid: appSid } }
                 });
               } catch (appErr: any) {
-                console.error('[getTwilioToken] Failed to create sub-account TwiML App:', appErr.message);
-                // Fall back to master TwiML App — calls may still fail but token generation won't
+                console.error('[getTwilioToken] Failed to manage sub-account TwiML App:', appErr.message);
               }
+            } else {
+              twimlAppSid = appSid;
             }
 
             console.log(`[getTwilioToken] Generating token for sub-account ${accountSid}, identity: ${identity}`);
@@ -977,36 +987,36 @@ export const sendSms: RequestHandler = async (req: Request, res: Response) => {
     const twilioEnd = Date.now();
 
     console.log(`[sendSms] Twilio API Response: SID=${service.sid}, Time=${twilioEnd - twilioStart}ms`);
-    
+
     // Log outgoing SMS to database
     if (userId) {
-       try {
-         let finalContactId = contactId;
+      try {
+        let finalContactId = contactId;
 
-         if (!finalContactId) {
-           const digits = formattedTo.replace(/\D/g, "");
-           const searchNumber = digits.length > 10 ? digits.slice(-10) : digits;
-           
-           const contactPhone = await prisma.contactPhone.findFirst({
-             where: { number: { contains: searchNumber } },
-           });
-           finalContactId = contactPhone?.contactId;
-         }
+        if (!finalContactId) {
+          const digits = formattedTo.replace(/\D/g, "");
+          const searchNumber = digits.length > 10 ? digits.slice(-10) : digits;
 
-         await prisma.smsLog.create({
-           data: {
-             to: formattedTo,
-             from: senderNumber,
-             content: message,
-             status: "SENT",
-             messageSid: service.sid,
-             userId,
-             contactId: finalContactId
-           }
-         });
-       } catch (logErr) {
-         console.warn("[sendSms] Failed to log SMS to DB:", logErr);
-       }
+          const contactPhone = await prisma.contactPhone.findFirst({
+            where: { number: { contains: searchNumber } },
+          });
+          finalContactId = contactPhone?.contactId;
+        }
+
+        await prisma.smsLog.create({
+          data: {
+            to: formattedTo,
+            from: senderNumber,
+            content: message,
+            status: "SENT",
+            messageSid: service.sid,
+            userId,
+            contactId: finalContactId
+          }
+        });
+      } catch (logErr) {
+        console.warn("[sendSms] Failed to log SMS to DB:", logErr);
+      }
     }
 
     successResponse(res, 200, "SMS sent successfully", {
@@ -1249,9 +1259,9 @@ export const toggleHold: RequestHandler = async (req: Request, res: Response) =>
 
     // Find who owns this call to get the right client
     const callRecord = await prisma.callRecord.findFirst({
-        where: { callSid }
+      where: { callSid }
     });
-    
+
     // Fallback to memory if DB record not found (e.g. child leg)
     const metadata = (dialerService as any).activeCalls.get(callSid);
     const userId = callRecord?.userId || metadata?.userId;
@@ -1381,7 +1391,7 @@ export const handleIncomingSms: RequestHandler = async (req: Request, res: Respo
       } else {
         // DUPLICATE DETECTED: Pick the one with the most recent SMS activity with THIS user
         console.log(`[SMS Webhook] ${matchingContactPhones.length} contacts found for ${searchNumber}. Finding active one...`);
-        
+
         const contactIds = matchingContactPhones.map(cp => cp.contactId);
         const lastActivity = await prisma.smsLog.findFirst({
           where: {
@@ -1447,7 +1457,7 @@ export const getSmsInbox: RequestHandler = async (req: Request, res: Response) =
       for (const p of contact.phones) {
         const digits = p.number.replace(/\D/g, "");
         const norm = digits.length > 10 ? digits.slice(-10) : digits;
-        
+
         // If multiple contacts have the same number, we prioritize the one with a longer name or just the first one
         // (This is just for mapping; the canonical logic below is more important)
         if (!phoneToBestContactMap.has(norm)) {
@@ -1473,7 +1483,7 @@ export const getSmsInbox: RequestHandler = async (req: Request, res: Response) =
       // Group by the normalized phone number to ensure NO duplicates in sidebar
       if (!threadMap.has(norm)) {
         // Find ALL contacts that share this number
-        const matchingContacts = allContacts.filter(c => 
+        const matchingContacts = allContacts.filter(c =>
           c.phones.some(p => {
             const d = p.number.replace(/\D/g, "");
             const n = d.length > 10 ? d.slice(-10) : d;
@@ -1485,16 +1495,16 @@ export const getSmsInbox: RequestHandler = async (req: Request, res: Response) =
         if (matchingContacts.length > 0) {
           // PRIORITY: 
           // 1. The contact from the most recent SENT message for this number (The one the agent intended)
-          const lastSentLog = allLogs.find(l => 
-            l.status === 'SENT' && 
+          const lastSentLog = allLogs.find(l =>
+            l.status === 'SENT' &&
             (l.to.replace(/\D/g, "").slice(-10) === norm || l.to.replace(/\D/g, "") === norm) &&
             matchingContacts.some(c => c.id === l.contactId)
           );
-          
+
           if (lastSentLog) {
             bestContact = matchingContacts.find(c => c.id === lastSentLog.contactId);
           }
-          
+
           // 2. Fallback to the contact from the current log
           if (!bestContact) {
             bestContact = matchingContacts.find(c => c.id === log.contactId);
