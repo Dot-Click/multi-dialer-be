@@ -724,24 +724,40 @@ export class DialerService {
     const currentAttempts = metadata?.attempts || 1;
 
     if (isTerminal && userId && (leadId || contactId)) {
-      // 1. Redial on overflow (agent busy)
-      if (metadata?.status === 'callback') {
-        console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
-        this.requeueLeadForRedial(userId, leadId, contactId, 2000, currentAttempts);
-      } 
-      // 2. Redial on technical failure or no-answer (Power Dialer behavior)
-      else if (["busy", "no-answer", "failed"].includes(twilioStatus)) {
-        if (currentAttempts < maxAttempts) {
-          console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} status '${twilioStatus}'. Requeueing for redial (Attempt ${currentAttempts + 1}/${maxAttempts})`);
-          // Use a longer delay for these (30s) to not annoy customer immediately
-          this.requeueLeadForRedial(userId, leadId, contactId, 30000, currentAttempts + 1);
-        } else {
-          console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} reached max attempts (${maxAttempts}). Stopping redials.`);
+      // IMPORTANT: Do NOT trigger redials based on the child (agent browser) leg status.
+      // When isChildLeg=true, a 'no-answer' means the agent's BROWSER didn't connect,
+      // NOT that the customer hung up. The parent 'completed' event handles real teardown.
+      if (!isChildLeg) {
+        // 1. Redial on overflow (agent busy)
+        if (metadata?.status === 'callback') {
+          console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
+          this.requeueLeadForRedial(userId, leadId, contactId, 2000, currentAttempts);
+        } 
+        // 2. Redial on technical failure or no-answer (Power Dialer behavior)
+        else if (["busy", "no-answer", "failed"].includes(twilioStatus)) {
+          if (currentAttempts < maxAttempts) {
+            console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} status '${twilioStatus}'. Requeueing for redial (Attempt ${currentAttempts + 1}/${maxAttempts})`);
+            // Use a longer delay for these (30s) to not annoy customer immediately
+            this.requeueLeadForRedial(userId, leadId, contactId, 30000, currentAttempts + 1);
+          } else {
+            console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} reached max attempts (${maxAttempts}). Stopping redials.`);
+          }
         }
+      } else {
+        console.log(`[handleCallStatusUpdate] Skipping redial logic for child leg status '${twilioStatus}' on parent SID ${sid}.`);
       }
     }
 
     if (isTerminal) {
+      // IMPORTANT: For child (agent browser) legs, only process lock release on 'completed' or 'canceled'.
+      // A 'no-answer' or 'failed' on the child leg means the agent browser didn't connect,
+      // but the parent call (customer) may still be alive. Releasing the lock here would
+      // disconnect the customer. The parent's own terminal event handles real teardown.
+      if (isChildLeg && !["completed", "canceled"].includes(twilioStatus)) {
+        console.log(`[handleCallStatusUpdate] Child leg terminal '${twilioStatus}' on parent SID ${sid} — NOT releasing lock. Waiting for parent to complete.`);
+        return;
+      }
+
       if (this.processedTerminalSids.has(sid)) {
         console.log(`[handleCallStatusUpdate] Skipped redundant terminal trigger for SID ${sid}`);
         this.activeCalls.delete(sid);
