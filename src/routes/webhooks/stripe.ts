@@ -110,7 +110,9 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                 status: "CONNECTED",
                 credentials: {
                     accountSid: subAccount.sid,
-                    authToken: subAccount.authToken
+                    authToken: subAccount.authToken,
+                    apiKeySid: subAccount.apiKeySid,
+                    apiKeySecret: subAccount.apiKeySecret
                 }
             }
         });

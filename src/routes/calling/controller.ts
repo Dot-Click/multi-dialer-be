@@ -866,13 +866,42 @@ export const getTwilioToken: RequestHandler = async (req, res) => {
           const creds = integration.credentials as any;
           if (creds.accountSid && creds.authToken) {
             accountSid = creds.accountSid;
-            // Twilio allows accountSid/authToken in place of an API Key/Secret for AccessTokens
-            apiKey = creds.accountSid;
-            apiSecret = creds.authToken;
+
+            // ── Ensure a real API Key exists in the sub-account ──────────────────
+            // (Required for Voice SDK Access Tokens)
+            let currentApiKeySid = creds.apiKeySid;
+            let currentApiKeySecret = creds.apiKeySecret;
+            const subClient = require('twilio')(creds.accountSid, creds.authToken);
+
+            if (!currentApiKeySid || !currentApiKeySecret) {
+              console.log(`[getTwilioToken] Creating missing API Key for sub-account: ${accountSid}`);
+              try {
+                const newKey = await subClient.newKeys.create({ friendlyName: 'MultiDialer Key' });
+                currentApiKeySid = newKey.sid;
+                currentApiKeySecret = newKey.secret;
+
+                // Persist so we don't recreate on every token request
+                await prisma.integration.update({
+                  where: { id: integration.id },
+                  data: { credentials: { ...creds, apiKeySid: currentApiKeySid, apiKeySecret: currentApiKeySecret } }
+                });
+                console.log(`[getTwilioToken] API Key created and cached: ${currentApiKeySid}`);
+              } catch (keyErr: any) {
+                console.error(`[getTwilioToken] Failed to create sub-account API Key:`, keyErr.message);
+              }
+            }
+
+            if (currentApiKeySid && currentApiKeySecret) {
+              apiKey = currentApiKeySid;
+              apiSecret = currentApiKeySecret;
+            } else {
+              // Fallback (though it might fail on frontend)
+              apiKey = creds.accountSid;
+              apiSecret = creds.authToken;
+            }
 
             // ── Ensure a TwiML App exists in the sub-account ──────────────────
             const targetVoiceUrl = `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${identity}`;
-            const subClient = require('twilio')(creds.accountSid, creds.authToken);
 
             // ── Ensure a TwiML App exists in the sub-account ──────────────────
             let appSid = creds.twimlAppSid;

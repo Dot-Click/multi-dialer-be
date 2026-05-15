@@ -16,12 +16,18 @@ export async function createTwilioSubAccount(friendlyName: string) {
             friendlyName: friendlyName
         });
 
-        console.log(`[TwilioService] Sub-account created: ${account.sid}`);
+        console.log(`[TwilioService] Sub-account created: ${account.sid}. Creating API Key...`);
         
+        // Create a real API Key for this sub-account (required for Voice SDK Access Tokens)
+        const subClient = twilio(account.sid, account.authToken);
+        const newKey = await subClient.newKeys.create({ friendlyName: 'MultiDialer Key' });
+
         return {
             sid: account.sid,
             authToken: account.authToken,
-            status: account.status
+            status: account.status,
+            apiKeySid: newKey.sid,
+            apiKeySecret: newKey.secret
         };
     } catch (error: any) {
         console.error(`[TwilioService] Error creating sub-account:`, error.message);

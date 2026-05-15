@@ -81,7 +81,9 @@ export async function createUserInDb(payload: any) {
                     credentials: {
                         accountSid: twilioSub.sid,
                         authToken: twilioSub.authToken,
-                        status: twilioSub.status
+                        status: twilioSub.status,
+                        apiKeySid: twilioSub.apiKeySid,
+                        apiKeySecret: twilioSub.apiKeySecret
                     },
                     status: "CONNECTED"
                 }
@@ -180,7 +182,9 @@ export async function initializeUserAccount(userId: string, fullName: string) {
                         credentials: {
                             accountSid: twilioSub.sid,
                             authToken: twilioSub.authToken,
-                            status: twilioSub.status
+                            status: twilioSub.status,
+                            apiKeySid: twilioSub.apiKeySid,
+                            apiKeySecret: twilioSub.apiKeySecret
                         },
                         status: "CONNECTED"
                     }
