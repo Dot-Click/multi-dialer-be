@@ -257,12 +257,7 @@ export class DialerService {
 
         let assignedNumber: string | null = null;
 
-        // Check sticky map first — this lead was previously called from a specific number
-        const stickyNumber = this.leadToCallerIdMap.get(lead.id);
-        if (stickyNumber) {
-          assignedNumber = stickyNumber;
-          console.log(`[processQueue] Using sticky Caller ID ${stickyNumber} for lead ${lead.id}`);
-        } else if (pool.length > 0) {
+        if (pool.length > 0) {
           // ROUND-ROBIN: Use the current index and increment
           const currentIndex = this.userCallerIdIndices.get(userId) || 0;
           assignedNumber = pool[currentIndex % pool.length];
@@ -382,7 +377,8 @@ export class DialerService {
       await this.updateLeadStatusInDB(lead.id, "CALLING");
 
       const pool = this.userCallerIdPools.get(lead.userId);
-      let fromNumber: string | undefined = preAssignedNumber || undefined;
+      // Priority: preAssignedNumber (from round-robin) > sticky (previously used) > fallback
+      let fromNumber: string | undefined = preAssignedNumber || this.leadToCallerIdMap.get(lead.id) || undefined;
       let selectedCallerId: any = null;
 
       // If a number was pre-assigned, look up its DB record for the callerIdId
