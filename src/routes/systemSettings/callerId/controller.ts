@@ -30,7 +30,24 @@ export const getAllCallerIdsOfSpecificUser = async (req: Request, res: Response)
       where: req.user?.role === "AGENT"
         ? { agents: { some: { id: userId } } }
         : { systemSettingId: systemSettings.id },
-      include: {
+      select: {
+        id: true,
+        label: true,
+        countryCode: true,
+        numberOfLines: true,
+        systemSettingId: true,
+        twillioNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        dialerType: true,
+        aiPacing: true,
+        counter: true,
+        callCount: true,
+        frozenAt: true,
+        unfreezeAt: true,
+        reputationStatus: true,
+        reputationScore: true,
+        lastReputationCheck: true,
         agents: {
           select: {
             id: true,
@@ -61,7 +78,24 @@ export const getAllCallerIdsOfAllUsers = async (req: Request, res: Response): Pr
   try {
     // Get all CallerIds from all users
     const callerIds = await prisma.callerId.findMany({
-      include: {
+      select: {
+        id: true,
+        label: true,
+        countryCode: true,
+        numberOfLines: true,
+        systemSettingId: true,
+        twillioNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        dialerType: true,
+        aiPacing: true,
+        counter: true,
+        callCount: true,
+        frozenAt: true,
+        unfreezeAt: true,
+        reputationStatus: true,
+        reputationScore: true,
+        lastReputationCheck: true,
         agents: {
           select: {
             id: true,
@@ -109,7 +143,24 @@ export const getCallerIdById = async (req: Request, res: Response): Promise<void
         id,
         systemSettingId: systemSettings.id, // Ensure CallerId belongs to user's systemSettings
       },
-      include: {
+      select: {
+        id: true,
+        label: true,
+        countryCode: true,
+        numberOfLines: true,
+        systemSettingId: true,
+        twillioNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        dialerType: true,
+        aiPacing: true,
+        counter: true,
+        callCount: true,
+        frozenAt: true,
+        unfreezeAt: true,
+        reputationStatus: true,
+        reputationScore: true,
+        lastReputationCheck: true,
         agents: {
           select: {
             id: true,
@@ -176,7 +227,24 @@ export const createCallerId = async (req: Request, res: Response): Promise<void>
     // Include populated systemSetting and user info in response
     const populatedCallerId = await prisma.callerId.findUnique({
       where: { id: newCallerId.id },
-      include: {
+      select: {
+        id: true,
+        label: true,
+        countryCode: true,
+        numberOfLines: true,
+        systemSettingId: true,
+        twillioNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        dialerType: true,
+        aiPacing: true,
+        counter: true,
+        callCount: true,
+        frozenAt: true,
+        unfreezeAt: true,
+        reputationStatus: true,
+        reputationScore: true,
+        lastReputationCheck: true,
         systemSetting: {
           include: {
             user: {
@@ -263,7 +331,24 @@ export const updateCallerId = async (req: Request, res: Response): Promise<void>
           set: agentIds.map((agentId: string) => ({ id: agentId }))
         } : undefined
       },
-      include: {
+      select: {
+        id: true,
+        label: true,
+        countryCode: true,
+        numberOfLines: true,
+        systemSettingId: true,
+        twillioNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        dialerType: true,
+        aiPacing: true,
+        counter: true,
+        callCount: true,
+        frozenAt: true,
+        unfreezeAt: true,
+        reputationStatus: true,
+        reputationScore: true,
+        lastReputationCheck: true,
         agents: {
           select: {
             id: true,
