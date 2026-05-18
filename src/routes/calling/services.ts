@@ -710,6 +710,48 @@ export class DialerService {
           data: updateData
         });
         console.log(`[handleCallStatusUpdate] Updated CallRecord status to ${twilioStatus}${isTerminal ? ', duration: ' + updateData.duration + 's' : ''}`);
+
+        // ── TASK 3B: Apply Disposition Folder Actions ──
+        if (isTerminal && dbStatus) {
+            let mappingValue: string | null = null;
+            if (dbStatus === LeadCallStatus.CALLED) mappingValue = "CONTACT";
+            else if (dbStatus === LeadCallStatus.NO_ANSWER) mappingValue = "NO_ANSWER";
+            else if (dbStatus === LeadCallStatus.FAILED) mappingValue = "BAD_NUMBER";
+            else if (dbStatus === LeadCallStatus.BUSY) mappingValue = "NO_ANSWER"; // Map busy to No Answer for folder purposes if needed, or omit
+            
+            // Map the dbStatus string exactly if it matches
+            if (!mappingValue) {
+                const knownValues = ["CONTACT", "NO_ANSWER", "BAD_NUMBER", "VOICEMAIL", "DNC_CONTACT", "DNC_NUMBER"];
+                if (knownValues.includes(dbStatus as string)) {
+                    mappingValue = dbStatus as string;
+                }
+            }
+
+            if (mappingValue && (contactId || leadId)) {
+                try {
+                    const sysDisp = await (prisma.disposition as any).findFirst({
+                        where: {
+                            value: mappingValue,
+                            systemSetting: { userId: userId }
+                        }
+                    });
+                    
+                    if (sysDisp) {
+                        const { DispositionService } = require('../systemSettings/dispositions/service');
+                        await DispositionService.applyDisposition({
+                            contactId: contactId || leadId,
+                            dispositionId: sysDisp.id,
+                            appliedById: userId,
+                            source: 'CALL',
+                            callRecordId: callRecord.id
+                        });
+                        console.log(`[handleCallStatusUpdate] Applied system disposition ${sysDisp.label} for CallRecord ${callRecord.id}`);
+                    }
+                } catch (dispError: any) {
+                    console.error(`[handleCallStatusUpdate] Failed to apply disposition action: ${dispError.message}`);
+                }
+            }
+        }
       }
     } catch (dbError: any) {
       console.error(`[handleCallStatusUpdate] ERROR: CallRecord update failed: ${dbError.message}`);

@@ -67,3 +67,33 @@ export const reorderDispositions: RequestHandler = async (req, res) => {
         errorResponse(res, { message: error.message });
     }
 };
+
+export const applyDisposition: RequestHandler = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            errorResponse(res, { message: "Unauthorized" }, 401);
+            return;
+        }
+
+        const { contactId, dispositionId, overrideFolderId, callRecordId, source } = req.body;
+
+        if (!contactId || !dispositionId || !source) {
+            errorResponse(res, { message: "contactId, dispositionId, and source are required" }, 400);
+            return;
+        }
+
+        const result = await DispositionService.applyDisposition({
+            contactId,
+            dispositionId,
+            appliedById: userId,
+            overrideFolderId,
+            callRecordId,
+            source
+        });
+
+        successResponse(res, 200, "Disposition applied successfully", result);
+    } catch (error: any) {
+        errorResponse(res, { message: error.message });
+    }
+};

@@ -248,6 +248,7 @@ model User {
   smsLogs           SmsLog[]
   myPlusLeadsConfig MyPlusLeadsConfig?
   a2pRegistration   A2P_Registration?
+  dispositionLogs   ContactDispositionLog[]
 
   @@map("users")
 }
@@ -352,6 +353,10 @@ model ContactFolder {
   importContacts ImportContact[]
   exportContacts ExportContact[]
 
+  dispositions        Disposition[] @relation("DispositionTargetFolder")
+  callRecordOverrides CallRecord[]  @relation("CallRecordOverrideFolder")
+  dispositionLogs     ContactDispositionLog[] @relation("DispositionLogFolder")
+
   @@map("folders")
 }
 
@@ -409,6 +414,7 @@ model Contact {
   calendar Calendar[]
   emailLogs EmailLog[]
   smsLogs   SmsLog[]
+  dispositionLogs ContactDispositionLog[]
 
   folderIds    String[]       @default([])
 
@@ -680,8 +686,14 @@ model Disposition {
   isActive        Boolean        @default(true)
   order           Int            @default(0)
 
+  targetFolderId  String?
+  targetFolder    ContactFolder? @relation("DispositionTargetFolder", fields: [targetFolderId], references: [id], onDelete: SetNull)
+
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
+
+  callRecords     CallRecord[]
+  dispositionLogs ContactDispositionLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1165,6 +1177,11 @@ model CallRecord {
   status      String // Twilio status: completed, failed, etc.
   disposition String?
 
+  dispositionId    String?
+  dispositionRef   Disposition?   @relation(fields: [dispositionId], references: [id], onDelete: SetNull)
+  overrideFolderId String?
+  overrideFolder   ContactFolder? @relation("CallRecordOverrideFolder", fields: [overrideFolderId], references: [id], onDelete: SetNull)
+
   recordingUrl String?
   transcript   String? @db.Text
 
@@ -1428,4 +1445,25 @@ model MyPlusLeadsConfig {
   updatedAt       DateTime           @updatedAt
 
   @@map("my_plus_leads_configs")
+}
+
+model ContactDispositionLog {
+  id             String        @id @default(cuid())
+  
+  contactId      String
+  contact        Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  
+  dispositionId  String
+  disposition    Disposition   @relation(fields: [dispositionId], references: [id], onDelete: Cascade)
+  
+  // The folder contact actually dropped into (could be disposition default or override)
+  folderId       String?
+  folder         ContactFolder? @relation("DispositionLogFolder", fields: [folderId], references: [id], onDelete: SetNull)
+  
+  appliedById    String
+  appliedBy      User          @relation(fields: [appliedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@map("contact_disposition_logs")
 }
