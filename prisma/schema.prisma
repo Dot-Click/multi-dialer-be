@@ -1,3 +1,4 @@
+// TODO: Run `npx prisma migrate dev --name zoho_to_stripe` after reviewing this schema
 generator client {
   provider = "prisma-client-js"
 }
@@ -106,7 +107,6 @@ enum IntegrationProvider {
   STANPP_DOT_COM
   MY_PLUS_LEADS
   ZAPIER
-  ZOHO
   GO_HIGH_LEVEL
 }
 
@@ -855,7 +855,7 @@ model Billing {
   nextBillingDate     DateTime?
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
-  zohooSubscriptionId String?
+  stripeSubscriptionId String?
   leadStore           LeadStore?
   userSubscription    UserSubscription?
 
@@ -943,7 +943,8 @@ model UserSubscription {
 
   startDate       DateTime
   endDate         DateTime?
-  zohooCustomerId String?
+  stripeCustomerId String?
+  stripeSubscriptionId String?
   amount          String?
   usersCount      Int          @default(1)
   billingCycle    BillingCycle @default(MONTHLY)
@@ -1244,11 +1245,6 @@ model Company {
   defaultTimeZone String  @default("UTC")
   defaultCurrency String  @default("USD")
   dateTimeFormat  String  @default("MM/DD/YYYY - hh:mm A")
-
-  zohoSubscriptionsConnected Boolean   @default(false)
-  zohoApiKey                 String?
-  zohoOrganizationId         String?
-  zohoLastSyncedAt           DateTime?
 
   notifyFailedPayment     Boolean @default(true)
   notifyUpcomingRenewal   Boolean @default(true)

@@ -6,11 +6,6 @@ export const createCompanySchema = z.object({
     defaultCurrency: z.string().default("USD"),
     dateTimeFormat: z.string().default("MM/DD/YYYY - hh:mm A"),
 
-    // Zoho Subscriptions Integration
-    zohoSubscriptionsConnected: z.boolean().default(false),
-    zohoApiKey: z.string().optional().nullable(),
-    zohoOrganizationId: z.string().optional().nullable(),
-    zohoLastSyncedAt: z.string().datetime().optional().nullable(),
 
     // Notification Settings
     notifyFailedPayment: z.boolean().default(true),

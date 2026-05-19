@@ -28,7 +28,7 @@ import userRoutes from "./user"
 import companyRoutes from "./company"
 import reportRoutes from "./reports"
 import SuperAdminReportsRoutes from "./super-admin-reports"
-import subscriptionRoutes from "./subscription"
+import billingRouter from "./billing"
 import pushRoutes from "./push"
 import notificationRoutes from "./notification"
 import emailHistoryRoutes from "./email-history"
@@ -81,7 +81,7 @@ router.use("/reports", protectRoute, reportRoutes)
 router.use("/calling", callingRoutes)
 router.use("/report", protectRoute, checkRole(["OWNER"]), SuperAdminReportsRoutes)
 
-router.use("/subscriptions", subscriptionRoutes)
+router.use("/billing", billingRouter)
 router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
 router.use("/email-history", protectRoute, emailHistoryRoutes)

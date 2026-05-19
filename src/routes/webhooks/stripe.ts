@@ -186,6 +186,123 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         return;
       }
     }
+  } else if (event.type === "customer.subscription.updated") {
+    try {
+      const subscription = event.data.object as any;
+      const stripeCustomerId = subscription.customer;
+      const status = subscription.status;
+      const priceId = subscription.items.data[0].price.id;
+
+      console.log(`[Stripe Webhook] customer.subscription.updated: customer=${stripeCustomerId}, status=${status}, priceId=${priceId}`);
+
+      const subRecord = await prisma.userSubscription.findFirst({
+        where: { stripeCustomerId },
+      });
+
+      if (subRecord) {
+        // Map priceId to our Plan enum
+        let mappedPlan: any = "STARTER";
+        if (priceId === process.env.STRIPE_PRICE_STANDARD) {
+          mappedPlan = "PROFESSIONAL";
+        } else if (priceId === process.env.STRIPE_PRICE_PREMIUM) {
+          mappedPlan = "ENTERPRISE";
+        }
+
+        // Update userSubscription
+        await prisma.userSubscription.update({
+          where: { id: subRecord.id },
+          data: {
+            plan: mappedPlan,
+            status: status as any,
+          },
+        });
+
+        // Update User model
+        await prisma.user.update({
+          where: { id: subRecord.userId },
+          data: {
+            isSubscribed: status === "active",
+          },
+        });
+
+        console.log(`[Stripe Webhook] customer.subscription.updated processed successfully.`);
+      } else {
+        console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
+      }
+    } catch (error: any) {
+      console.error(`[Stripe Webhook] customer.subscription.updated error:`, error.message);
+    }
+  } else if (event.type === "customer.subscription.deleted") {
+    try {
+      const subscription = event.data.object as any;
+      const stripeCustomerId = subscription.customer;
+
+      console.log(`[Stripe Webhook] customer.subscription.deleted: customer=${stripeCustomerId}`);
+
+      const subRecord = await prisma.userSubscription.findFirst({
+        where: { stripeCustomerId },
+      });
+
+      if (subRecord) {
+        // Update userSubscription
+        await prisma.userSubscription.update({
+          where: { id: subRecord.id },
+          data: {
+            status: "canceled" as any,
+          },
+        });
+
+        // Update User
+        await prisma.user.update({
+          where: { id: subRecord.userId },
+          data: {
+            isSubscribed: false,
+            trialStatus: "EXPIRED" as any,
+          },
+        });
+
+        console.log(`[Stripe Webhook] customer.subscription.deleted processed successfully.`);
+      } else {
+        console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
+      }
+    } catch (error: any) {
+      console.error(`[Stripe Webhook] customer.subscription.deleted error:`, error.message);
+    }
+  } else if (event.type === "invoice.payment_failed") {
+    try {
+      const invoice = event.data.object as any;
+      const stripeCustomerId = invoice.customer;
+
+      console.log(`[Stripe Webhook] invoice.payment_failed: customer=${stripeCustomerId}`);
+
+      const subRecord = await prisma.userSubscription.findFirst({
+        where: { stripeCustomerId },
+      });
+
+      if (subRecord) {
+        // Update userSubscription
+        await prisma.userSubscription.update({
+          where: { id: subRecord.id },
+          data: {
+            status: "past_due" as any,
+          },
+        });
+
+        // Update User
+        await prisma.user.update({
+          where: { id: subRecord.userId },
+          data: {
+            isSubscribed: false,
+          },
+        });
+
+        console.log(`[Stripe Webhook] invoice.payment_failed processed successfully.`);
+      } else {
+        console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
+      }
+    } catch (error: any) {
+      console.error(`[Stripe Webhook] invoice.payment_failed error:`, error.message);
+    }
   }
 
   res.json({ received: true });
