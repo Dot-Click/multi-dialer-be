@@ -30,8 +30,11 @@ export const envConfig =  {
         GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
         REALTOR_RAPIDAPI_KEY: process.env.REALTOR_RAPIDAPI_KEY,
         REALTOR_RAPIDAPI_HOST: process.env.REALTOR_RAPIDAPI_HOST,
+
         STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
         STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+        STRIPE_BILLING_PORTAL_CONFIG: process.env.STRIPE_BILLING_PORTAL_CONFIG,
+        
         GHL_API_KEY: process.env.GHL_API_KEY,
         GHL_AGENCY_API_KEY: process.env.GHL_AGENCY_API_KEY,
         GHL_AGENCY_ID: process.env.GHL_AGENCY_ID,

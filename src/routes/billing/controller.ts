@@ -2,9 +2,10 @@ import { Request, Response } from "express";
 import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
 import Stripe from "stripe";
+import { envConfig } from "@/lib/config";
 
 // Initialize Stripe (requires STRIPE_SECRET_KEY in .env)
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+const stripe = new Stripe(envConfig.STRIPE_SECRET_KEY || "", {
   apiVersion: "2026-04-22.dahlia",
 });
 
@@ -38,7 +39,8 @@ export const getBillingPortal = async (req: Request, res: Response): Promise<voi
 
     const session = await stripe.billingPortal.sessions.create({
       customer: stripeCustomerId,
-      return_url: process.env.FRONTEND_URL || "http://localhost:3000",
+      return_url: envConfig.FRONTEND_URL || "http://localhost:5000",
+    configuration: envConfig.STRIPE_BILLING_PORTAL_CONFIG || undefined,
     });
 
     successResponse(res, 200, "Billing portal session created", { url: session.url });
