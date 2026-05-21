@@ -34,6 +34,9 @@ export const envConfig =  {
         STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
         STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
         STRIPE_BILLING_PORTAL_CONFIG: process.env.STRIPE_BILLING_PORTAL_CONFIG,
+        STRIPE_PRICE_BASIC: process.env.STRIPE_PRICE_BASIC,
+        STRIPE_PRICE_STANDARD: process.env.STRIPE_PRICE_STANDARD,
+        STRIPE_PRICE_PREMIUM: process.env.STRIPE_PRICE_PREMIUM,
         
         GHL_API_KEY: process.env.GHL_API_KEY,
         GHL_AGENCY_API_KEY: process.env.GHL_AGENCY_API_KEY,

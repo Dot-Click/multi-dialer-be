@@ -19,13 +19,13 @@ initJobs();
 startA2PStatusPoller();
 
 const app = express();
-const PORT = envConfig.PORT || 3000;
+const PORT = envConfig.PORT || 3001;
 
 app.use(sessionMiddleware);
 
 app.use(
   cors({
-    origin: ["http://localhost:5000", "https://multi-dialer-fe.vercel.app", "https://slingvo-agent-ai-dialer.vercel.app", "http://localhost:3000", "http://localhost:5173"],
+    origin: ["http://localhost:5000", "https://multi-dialer-fe.vercel.app", "https://slingvo-agent-ai-dialer.vercel.app", "http://localhost:3000", "http://localhost:3001", "http://localhost:5173"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: [
