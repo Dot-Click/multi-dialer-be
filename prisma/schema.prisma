@@ -1428,17 +1428,23 @@ model SmsLog {
 }
 
 model MyPlusLeadsConfig {
-  id              String             @id @default(cuid())
-  apiKey          String
-  userId          String             @unique
-  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lastSyncAt      DateTime?
-  autoSync        Boolean            @default(true)
-  selectedTypes   String[]           @default(["EXPIRED", "FSBO"])
-  status          IntegrationStatus  @default(NEED_SETUP)
-  
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  id                 String            @id @default(cuid())
+  userId             String            @unique
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Sub-account credentials (stored encrypted)
+  subAccountEmail    String?
+  subAccountPassword String?
+  subAccountId       String?
+
+  // Sync tracking
+  lastSyncAt         DateTime?
+  autoSync           Boolean           @default(true)
+  status             IntegrationStatus @default(NEED_SETUP)
+  errorMessage       String?
+
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
   @@map("my_plus_leads_configs")
 }

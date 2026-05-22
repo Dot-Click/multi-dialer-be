@@ -7,27 +7,30 @@ import { createInternalNotification } from "../notification/controller";
 /**
  * Webhook for MyPlusLeads to push data into the platform.
  * Expected format is a JSON object with lead details.
- * 
- * URL Format: /api/webhooks/myplusleads/:userId?apiKey=USER_API_KEY
+ *
+ * URL Format: /api/webhooks/myplusleads/:userId?accountId=SUB_ACCOUNT_ID
  */
 export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
-    const { apiKey } = req.query;
+    const { accountId } = req.query;
 
-    if (!userId || !apiKey) {
-      errorResponse(res, "Unauthorized: Missing userId or apiKey", 401);
+    if (!userId || !accountId) {
+      errorResponse(res, "Unauthorized: Missing userId or accountId", 401);
       return;
     }
 
-    // 1. Verify User and API Key
     const config = await prisma.myPlusLeadsConfig.findUnique({
       where: { userId },
       include: { user: true }
     });
 
-    if (!config || config.apiKey !== apiKey) {
-      errorResponse(res, "Unauthorized: Invalid userId or apiKey", 401);
+    if (
+      !config ||
+      config.subAccountId !== String(accountId) ||
+      config.status !== "CONNECTED"
+    ) {
+      errorResponse(res, "Unauthorized: Invalid userId or accountId", 401);
       return;
     }
 

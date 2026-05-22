@@ -1,9 +1,12 @@
 import { Request, Response } from "express";
+import crypto from "crypto";
 import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber } from "../../services/twilio-account.service";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
+import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount } from "../../services/myPlusLeads.service";
+import { encryptEIN as encrypt } from "../../utils/encryption";
 
 function getStripeClient() {
   const key = envConfig.STRIPE_SECRET_KEY;
@@ -151,6 +154,48 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             }
         });
 
+        const subEmail = `slingvo+${newUser.id}@slingvo.com`;
+        const subPassword = crypto.randomBytes(12).toString("hex");
+        const nameParts = (newUser.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
+        const firstName = nameParts[0] || "User";
+        const lastName = nameParts.slice(1).join(" ") || "User";
+
+        try {
+          const defaultBaseZip = envConfig.MYPLUSLEADS_DEFAULT_BASE_ZIP;
+          const { accountId } = await createMyPlusLeadsAccount({
+            email: subEmail,
+            password: subPassword,
+            firstName,
+            lastName,
+            phone: "0000000000",
+            address: "123 Main St",
+            city: "Austin",
+            state: "TX",
+            zip: defaultBaseZip || "7870",
+            baseZip: defaultBaseZip || "7870",
+          });
+
+          await prisma.myPlusLeadsConfig.create({
+            data: {
+              userId: newUser.id,
+              subAccountEmail: subEmail,
+              subAccountPassword: encrypt(subPassword),
+              subAccountId: accountId,
+              status: "CONNECTED",
+              errorMessage: null,
+            },
+          });
+        } catch (err) {
+          console.error("[Stripe Webhook] MyPlusLeads account creation failed:", err);
+          await prisma.myPlusLeadsConfig.create({
+            data: {
+              userId: newUser.id,
+              status: "FAILED",
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          });
+        }
+
         console.log(`[Stripe Webhook] Full provisioning successful for ${email}`);
 
         // Fire Zapier Webhook
@@ -260,6 +305,22 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             trialStatus: "EXPIRED" as any,
           },
         });
+
+        const config = await prisma.myPlusLeadsConfig.findUnique({
+          where: { userId: subRecord.userId },
+        });
+
+        if (config?.subAccountId && config.status === "CONNECTED") {
+          try {
+            await disableMyPlusLeadsAccount(config.subAccountId);
+            await prisma.myPlusLeadsConfig.update({
+              where: { userId: subRecord.userId },
+              data: { status: "NEED_SETUP", errorMessage: null },
+            });
+          } catch (err) {
+            console.error("[Stripe Webhook] MyPlusLeads disable failed:", err);
+          }
+        }
 
         console.log(`[Stripe Webhook] customer.subscription.deleted processed successfully.`);
       } else {

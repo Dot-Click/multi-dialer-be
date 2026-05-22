@@ -9,11 +9,16 @@ export const getMyPlusLeadsConfig = async (req: Request, res: Response): Promise
       where: { userId }
     });
 
-    // Provide the unique webhook URL for this user
     const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-    const webhookUrl = config ? `${baseUrl}/api/webhooks/myplusleads/${userId}?apiKey=${config.apiKey}` : null;
+    const webhookUrl = config?.subAccountId
+      ? `${baseUrl}/api/webhooks/myplusleads/${userId}?accountId=${config.subAccountId}`
+      : null;
 
-    successResponse(res, 200, "Config fetched", { ...config, webhookUrl });
+    successResponse(res, 200, "Config fetched", config ? {
+      ...config,
+      subAccountPassword: config.subAccountPassword ? "[encrypted]" : null,
+      webhookUrl,
+    } : { webhookUrl: null });
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error");
   }
@@ -22,27 +27,16 @@ export const getMyPlusLeadsConfig = async (req: Request, res: Response): Promise
 export const updateMyPlusLeadsConfig = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user.id;
-    const { apiKey, selectedTypes, autoSync } = req.body;
-
-    if (!apiKey) {
-      errorResponse(res, "API Key is required", 400);
-      return;
-    }
+    const { autoSync } = req.body;
 
     const config = await prisma.myPlusLeadsConfig.upsert({
       where: { userId },
       update: {
-        apiKey,
-        selectedTypes: selectedTypes || ["EXPIRED", "FSBO"],
         autoSync: autoSync !== undefined ? autoSync : true,
-        status: "CONNECTED"
       },
       create: {
         userId,
-        apiKey,
-        selectedTypes: selectedTypes || ["EXPIRED", "FSBO"],
         autoSync: autoSync !== undefined ? autoSync : true,
-        status: "CONNECTED"
       }
     });
 
