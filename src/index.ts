@@ -12,11 +12,13 @@ import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
 import { handleStripeWebhook } from "@/routes/webhooks/stripe";
 import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
+import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
 
 connectDB();
 startRetentionJobs();
 initJobs();
 startA2PStatusPoller();
+startMyPlusLeadsSyncWorker();
 
 const app = express();
 const PORT = envConfig.PORT || 3001;
