@@ -380,9 +380,15 @@ export async function getContactByIdFromDb(id: string) {
 }
 
 export async function getRealtorLinkForContactInDb(contactId: string) {
+  console.log("[Realtor] Starting realtor link fetch for contact:", contactId);
+  
   if (!envConfig.REALTOR_RAPIDAPI_KEY) {
+    console.error("[Realtor] REALTOR_RAPIDAPI_KEY is not configured");
     throwHttp(500, "Realtor RapidAPI key is not configured on the server");
   }
+
+  console.log("[Realtor] API Key present:", !!envConfig.REALTOR_RAPIDAPI_KEY);
+  console.log("[Realtor] API Host:", envConfig.REALTOR_RAPIDAPI_HOST);
 
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
@@ -397,11 +403,15 @@ export async function getRealtorLinkForContactInDb(contactId: string) {
   });
 
   if (!contact) {
+    console.error("[Realtor] Contact not found:", contactId);
     throwHttp(404, "Contact not found");
   }
 
   const addressQuery = buildContactAddress(contact);
+  console.log("[Realtor] Address query:", addressQuery);
+  
   if (!addressQuery) {
+    console.error("[Realtor] No property address for contact:", contactId);
     throwHttp(400, "Contact does not have a property address");
   }
 
@@ -415,6 +425,7 @@ export async function getRealtorLinkForContactInDb(contactId: string) {
   let realtorUrl: string | null = null;
 
   try {
+    console.log("[Realtor] Calling auto-complete API...");
     const autoCompleteResponse = await axios.get(
       `${REALTOR_API_BASE_URL}/auto-complete`,
       {
@@ -422,13 +433,18 @@ export async function getRealtorLinkForContactInDb(contactId: string) {
         headers: rapidApiHeaders,
       }
     );
+    console.log("[Realtor] Auto-complete response received");
     console.log(autoCompleteResponse.data)
 
     propertyId = pickBestPropertyId(autoCompleteResponse.data, contact);
+    console.log("[Realtor] Property ID:", propertyId);
+    
     if (!propertyId) {
+      console.error("[Realtor] No property match found for:", addressQuery);
       throwHttp(404, "No Realtor property match was found for this address");
     }
 
+    console.log("[Realtor] Calling properties/detail API...");
     const detailResponse = await axios.get(
       `${REALTOR_API_BASE_URL}/properties/detail`,
       {
@@ -437,12 +453,19 @@ export async function getRealtorLinkForContactInDb(contactId: string) {
       }
     );
 
-
+    console.log("[Realtor] Detail response received");
     realtorUrl = extractRealtorUrl(detailResponse.data);
+    console.log("[Realtor] Realtor URL:", realtorUrl);
+    
     if (!realtorUrl) {
+      console.error("[Realtor] No URL in detail response");
       throwHttp(404, "The Realtor detail response did not include a property URL");
     }
   } catch (error: any) {
+    console.error("[Realtor] Error occurred:", error?.message);
+    console.error("[Realtor] Error status:", error?.response?.status);
+    console.error("[Realtor] Error data:", error?.response?.data);
+    
     if (error?.statusCode) {
       throw error;
     }
