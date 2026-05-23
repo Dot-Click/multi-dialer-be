@@ -46,10 +46,12 @@ async function responseErrorMessage(res: Response): Promise<string> {
 
 function extractAuthToken(data: any): string | null {
   const token =
+    data?.authenticatedToken ??
     data?.authToken ??
     data?.token ??
     data?.accessToken ??
     data?.access_token ??
+    data?.data?.authenticatedToken ??
     data?.data?.authToken ??
     data?.data?.token ??
     data?.data?.accessToken ??
@@ -123,11 +125,11 @@ function requireConfig(value: string | undefined, name: string): string {
 export async function authenticateEnterprise(): Promise<string> {
   const url = `${BASE_URL}/authenticate`;
   const method = "POST";
-  const headers = { "Content-Type": "application/json" };
-  const body = JSON.stringify({
+  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  const body = new URLSearchParams({
     email: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_EMAIL, "MYPLUSLEADS_ENTERPRISE_EMAIL"),
     password: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_PASSWORD, "MYPLUSLEADS_ENTERPRISE_PASSWORD"),
-  });
+  }).toString();
 
   console.log("[MyPlusLeads] authenticateEnterprise request:");
   console.log("  URL:", url);
@@ -142,51 +144,26 @@ export async function authenticateEnterprise(): Promise<string> {
   });
 
   const authToken = await parseAuthResponse(res, "MyPlusLeads auth");
-  if (authToken) {
-    return authToken;
+  if (!authToken) {
+    throw new MyPlusLeadsError("MyPlusLeads auth response did not include an auth token.", 502);
   }
 
-  const formRes = await fetch(`${BASE_URL}/authenticate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      email: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_EMAIL, "MYPLUSLEADS_ENTERPRISE_EMAIL"),
-      password: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_PASSWORD, "MYPLUSLEADS_ENTERPRISE_PASSWORD"),
-    }),
-  });
-
-  const formAuthToken = await parseAuthResponse(formRes, "MyPlusLeads form auth");
-  if (!formAuthToken) {
-    throw new MyPlusLeadsError("MyPlusLeads auth response did not include an auth token after JSON or form auth attempts.", 502);
-  }
-
-  return formAuthToken;
+  return authToken;
 }
 
 export async function authenticateSubAccount(email: string, password: string): Promise<string> {
   const res = await fetch(`${BASE_URL}/authenticate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ email, password }).toString(),
   });
 
   const authToken = await parseAuthResponse(res, "MyPlusLeads sub-account auth");
-  if (authToken) {
-    return authToken;
+  if (!authToken) {
+    throw new MyPlusLeadsError("MyPlusLeads sub-account auth response did not include an auth token.", 502);
   }
 
-  const formRes = await fetch(`${BASE_URL}/authenticate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ email, password }),
-  });
-
-  const formAuthToken = await parseAuthResponse(formRes, "MyPlusLeads sub-account form auth");
-  if (!formAuthToken) {
-    throw new MyPlusLeadsError("MyPlusLeads sub-account auth response did not include an auth token after JSON or form auth attempts.", 502);
-  }
-
-  return formAuthToken;
+  return authToken;
 }
 
 export async function fetchListings(subEmail: string, subPassword: string): Promise<MyPlusLead[]> {
