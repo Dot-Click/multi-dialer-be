@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
+import { syncLeadsForUser } from "../../services/myPlusLeads.service";
 
 export const getMyPlusLeadsConfig = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -55,5 +56,30 @@ export const deleteMyPlusLeadsConfig = async (req: Request, res: Response): Prom
     successResponse(res, 200, "Integration disconnected");
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error");
+  }
+};
+
+export const syncMyPlusLeads = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+
+    await syncLeadsForUser(userId);
+
+    const config = await prisma.myPlusLeadsConfig.findUnique({
+      where: { userId },
+      select: { lastSyncAt: true, errorMessage: true },
+    });
+
+    successResponse(res, 200, "MyPlusLeads sync complete", config);
+  } catch (error: any) {
+    const userId = (req as any).user?.id;
+    if (userId) {
+      await prisma.myPlusLeadsConfig.update({
+        where: { userId },
+        data: { errorMessage: String(error?.message || error) },
+      }).catch(() => undefined);
+    }
+
+    errorResponse(res, error.message || "MyPlusLeads sync failed");
   }
 };

@@ -34,7 +34,7 @@ import notificationRoutes from "./notification"
 import emailHistoryRoutes from "./email-history"
 import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
 import a2pRoutes from "./a2p";
-import { getMyPlusLeadsConfig, updateMyPlusLeadsConfig, deleteMyPlusLeadsConfig } from "./integrations/myplusleads.controller";
+import { getMyPlusLeadsConfig, updateMyPlusLeadsConfig, deleteMyPlusLeadsConfig, syncMyPlusLeads } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import { checkFeatureLocked } from "../middlewares/featureLock.middleware";
 import { envConfig } from "@/lib/config";
@@ -91,6 +91,7 @@ router.use("/a2p", a2pRoutes)
 // Integrations & Webhooks
 router.post("/webhooks/myplusleads/:userId", handleMyPlusLeadsWebhook);
 router.get("/integrations/myplusleads", protectRoute, getMyPlusLeadsConfig);
+router.post("/integrations/myplusleads/sync", protectRoute, syncMyPlusLeads);
 router.post("/integrations/myplusleads", protectRoute, updateMyPlusLeadsConfig);
 router.delete("/integrations/myplusleads", protectRoute, deleteMyPlusLeadsConfig);
 
