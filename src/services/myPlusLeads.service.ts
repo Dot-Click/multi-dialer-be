@@ -125,11 +125,11 @@ function requireConfig(value: string | undefined, name: string): string {
 export async function authenticateEnterprise(): Promise<string> {
   const url = `${BASE_URL}/authenticate`;
   const method = "POST";
-  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
-  const body = new URLSearchParams({
+  const headers = { "Content-Type": "application/json" };
+  const body = JSON.stringify({
     email: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_EMAIL, "MYPLUSLEADS_ENTERPRISE_EMAIL"),
     password: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_PASSWORD, "MYPLUSLEADS_ENTERPRISE_PASSWORD"),
-  }).toString();
+  });
 
   console.log("[MyPlusLeads] authenticateEnterprise request:");
   console.log("  URL:", url);
@@ -154,8 +154,8 @@ export async function authenticateEnterprise(): Promise<string> {
 export async function authenticateSubAccount(email: string, password: string): Promise<string> {
   const res = await fetch(`${BASE_URL}/authenticate`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ email, password }).toString(),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
   });
 
   const authToken = await parseAuthResponse(res, "MyPlusLeads sub-account auth");
