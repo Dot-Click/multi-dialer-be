@@ -321,6 +321,8 @@ export async function createMyPlusLeadsAccount(params: {
   }
 
   const data = await res.json();
+  console.log('[MyPlusLeads] Create account response status:', res.status);
+  console.log('[MyPlusLeads] Create account response body:', JSON.stringify(data));
   return { accountId: data.accountId };
 }
 
