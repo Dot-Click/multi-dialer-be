@@ -24,6 +24,94 @@ export interface MyPlusLead {
   }>;
 }
 
+export type MyPlusLeadsSyncResult = {
+  fetched: number;
+  imported: number;
+  skipped: number;
+};
+
+class MyPlusLeadsError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode = 500) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+async function responseErrorMessage(res: Response): Promise<string> {
+  const body = await res.text().catch(() => "");
+  return body ? `${res.status} - ${body.slice(0, 500)}` : String(res.status);
+}
+
+function extractAuthToken(data: any): string | null {
+  const token =
+    data?.authToken ??
+    data?.token ??
+    data?.accessToken ??
+    data?.access_token ??
+    data?.data?.authToken ??
+    data?.data?.token ??
+    data?.data?.accessToken ??
+    data?.data?.access_token ??
+    null;
+
+  if (typeof token === "string" && token.trim()) {
+    return token;
+  }
+
+  const code = data?.code ?? data?.data?.code;
+  if (typeof code === "string" && code.trim().length > 8) {
+    return code;
+  }
+
+  return null;
+}
+
+function describeAuthResponse(data: any): string {
+  const topLevelKeys = data && typeof data === "object" ? Object.keys(data) : [];
+  const nestedKeys = data?.data && typeof data.data === "object" ? Object.keys(data.data) : [];
+  const parts = [`top-level keys: ${topLevelKeys.join(", ") || "none"}`];
+  if (data && Object.prototype.hasOwnProperty.call(data, "status")) {
+    parts.push(`status: ${String(data.status)}`);
+  }
+  if (data && Object.prototype.hasOwnProperty.call(data, "code")) {
+    parts.push(`code type: ${typeof data.code}`);
+    if (typeof data.code === "number") {
+      parts.push(`code: ${data.code}`);
+    }
+    if (typeof data.code === "string") {
+      parts.push(`code length: ${data.code.length}`);
+    }
+  }
+  if (nestedKeys.length > 0) {
+    parts.push(`data keys: ${nestedKeys.join(", ")}`);
+  }
+
+  return parts.join("; ");
+}
+
+async function parseAuthResponse(res: Response, label: string): Promise<string | null> {
+  if (!res.ok) {
+    throw new MyPlusLeadsError(`${label} failed: ${await responseErrorMessage(res)}`, 502);
+  }
+
+  const data = await res.json();
+  const authToken = extractAuthToken(data);
+  if (authToken) {
+    return authToken;
+  }
+
+  const status = typeof data?.status === "string" ? data.status : "";
+  const code = typeof data?.code === "number" ? data.code : null;
+  if (code === 401 || /authorization failed|unauthorized|invalid/i.test(status)) {
+    throw new MyPlusLeadsError(`${label} failed: ${status || "Unauthorized"}${code ? ` (${code})` : ""}.`, 502);
+  }
+
+  console.warn(`[MyPlusLeads] ${label} returned no token (${describeAuthResponse(data)}).`);
+  return null;
+}
+
 function requireConfig(value: string | undefined, name: string): string {
   if (!value) {
     throw new Error(`${name} is not configured`);
@@ -33,21 +121,46 @@ function requireConfig(value: string | undefined, name: string): string {
 }
 
 export async function authenticateEnterprise(): Promise<string> {
-  const res = await fetch(`${BASE_URL}/authenticate`, {
+  const url = `${BASE_URL}/authenticate`;
+  const method = "POST";
+  const headers = { "Content-Type": "application/json" };
+  const body = JSON.stringify({
+    email: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_EMAIL, "MYPLUSLEADS_ENTERPRISE_EMAIL"),
+    password: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_PASSWORD, "MYPLUSLEADS_ENTERPRISE_PASSWORD"),
+  });
+
+  console.log("[MyPlusLeads] authenticateEnterprise request:");
+  console.log("  URL:", url);
+  console.log("  Method:", method);
+  console.log("  Headers:", headers);
+  console.log("  Body:", body);
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body,
+  });
+
+  const authToken = await parseAuthResponse(res, "MyPlusLeads auth");
+  if (authToken) {
+    return authToken;
+  }
+
+  const formRes = await fetch(`${BASE_URL}/authenticate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
       email: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_EMAIL, "MYPLUSLEADS_ENTERPRISE_EMAIL"),
       password: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_PASSWORD, "MYPLUSLEADS_ENTERPRISE_PASSWORD"),
     }),
   });
 
-  if (!res.ok) {
-    throw new Error(`MyPlusLeads auth failed: ${res.status}`);
+  const formAuthToken = await parseAuthResponse(formRes, "MyPlusLeads form auth");
+  if (!formAuthToken) {
+    throw new MyPlusLeadsError("MyPlusLeads auth response did not include an auth token after JSON or form auth attempts.", 502);
   }
 
-  const data = await res.json();
-  return data.authToken;
+  return formAuthToken;
 }
 
 export async function authenticateSubAccount(email: string, password: string): Promise<string> {
@@ -57,12 +170,23 @@ export async function authenticateSubAccount(email: string, password: string): P
     body: JSON.stringify({ email, password }),
   });
 
-  if (!res.ok) {
-    throw new Error(`MyPlusLeads sub-account auth failed: ${res.status}`);
+  const authToken = await parseAuthResponse(res, "MyPlusLeads sub-account auth");
+  if (authToken) {
+    return authToken;
   }
 
-  const data = await res.json();
-  return data.authToken;
+  const formRes = await fetch(`${BASE_URL}/authenticate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ email, password }),
+  });
+
+  const formAuthToken = await parseAuthResponse(formRes, "MyPlusLeads sub-account form auth");
+  if (!formAuthToken) {
+    throw new MyPlusLeadsError("MyPlusLeads sub-account auth response did not include an auth token after JSON or form auth attempts.", 502);
+  }
+
+  return formAuthToken;
 }
 
 export async function fetchListings(subEmail: string, subPassword: string): Promise<MyPlusLead[]> {
@@ -72,32 +196,48 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
   });
 
   if (!res.ok) {
-    throw new Error(`MyPlusLeads listings fetch failed: ${res.status}`);
+    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
   }
 
   const data = await res.json();
   return data.listings ?? [];
 }
 
-export async function syncLeadsForUser(userId: string): Promise<void> {
+export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncResult> {
   const config = await prisma.myPlusLeadsConfig.findUnique({ where: { userId } });
 
-  if (!config || config.status !== "CONNECTED" || !config.subAccountEmail || !config.subAccountPassword) {
-    return;
+  if (!config) {
+    throw new MyPlusLeadsError("MyPlusLeads integration is not configured for this user.", 400);
+  }
+
+  if (config.status !== "CONNECTED") {
+    throw new MyPlusLeadsError(`MyPlusLeads integration is not connected. Current status: ${config.status}.`, 400);
+  }
+
+  if (!config.subAccountEmail || !config.subAccountPassword) {
+    throw new MyPlusLeadsError("MyPlusLeads sub-account credentials are missing for this user.", 400);
   }
 
   const password = decrypt(config.subAccountPassword);
   const listings = await fetchListings(config.subAccountEmail, password);
+  let imported = 0;
+  let skipped = 0;
 
   for (const listing of listings) {
     const primaryContact = listing.contacts[0];
-    if (!primaryContact) continue;
+    if (!primaryContact) {
+      skipped++;
+      continue;
+    }
 
     const source = listing.mlsNumber ?? listing.id;
     const existing = await prisma.contact.findFirst({
       where: { userId, source },
     });
-    if (existing) continue;
+    if (existing) {
+      skipped++;
+      continue;
+    }
 
     const fullName = `${primaryContact.firstName} ${primaryContact.lastName}`.trim() || "Unknown Contact";
 
@@ -117,6 +257,7 @@ export async function syncLeadsForUser(userId: string): Promise<void> {
         tags: ["MyPlusLeads", "Expired"],
       },
     });
+    imported++;
 
     for (const phone of primaryContact.phones) {
       await prisma.contactPhone.create({
@@ -156,6 +297,12 @@ export async function syncLeadsForUser(userId: string): Promise<void> {
     where: { userId },
     data: { lastSyncAt: new Date(), errorMessage: null },
   });
+
+  return {
+    fetched: listings.length,
+    imported,
+    skipped,
+  };
 }
 
 export async function createMyPlusLeadsAccount(params: {
@@ -193,7 +340,7 @@ export async function createMyPlusLeadsAccount(params: {
   });
 
   if (!res.ok) {
-    throw new Error(`MyPlusLeads account creation failed: ${res.status}`);
+    throw new MyPlusLeadsError(`MyPlusLeads account creation failed: ${await responseErrorMessage(res)}`, 502);
   }
 
   const data = await res.json();
@@ -214,6 +361,6 @@ export async function disableMyPlusLeadsAccount(subAccountId: string): Promise<v
   });
 
   if (!res.ok) {
-    throw new Error(`MyPlusLeads disable failed: ${res.status}`);
+    throw new MyPlusLeadsError(`MyPlusLeads disable failed: ${await responseErrorMessage(res)}`, 502);
   }
 }

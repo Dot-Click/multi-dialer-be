@@ -63,23 +63,30 @@ export const syncMyPlusLeads = async (req: Request, res: Response): Promise<void
   try {
     const userId = (req as any).user.id;
 
-    await syncLeadsForUser(userId);
+    const result = await syncLeadsForUser(userId);
 
     const config = await prisma.myPlusLeadsConfig.findUnique({
       where: { userId },
       select: { lastSyncAt: true, errorMessage: true },
     });
 
-    successResponse(res, 200, "MyPlusLeads sync complete", config);
+    successResponse(res, 200, "MyPlusLeads sync complete", {
+      ...result,
+      lastSyncAt: config?.lastSyncAt ?? null,
+      errorMessage: config?.errorMessage ?? null,
+    });
   } catch (error: any) {
+    const message = error.message || "MyPlusLeads sync failed";
+    console.error("[MyPlusLeads] Manual sync failed:", message);
+
     const userId = (req as any).user?.id;
     if (userId) {
       await prisma.myPlusLeadsConfig.update({
         where: { userId },
-        data: { errorMessage: String(error?.message || error) },
+        data: { errorMessage: message },
       }).catch(() => undefined);
     }
 
-    errorResponse(res, error.message || "MyPlusLeads sync failed");
+    errorResponse(res, message, error.statusCode || 500);
   }
 };
