@@ -21,6 +21,7 @@ export const createCallSettingsSchema = z.object({
   callScriptId: z.string().optional(),
   sendEmail: z.boolean().optional(),
   sendText: z.boolean().optional(),
+  amdEnabled: z.boolean().optional(),
 });
 
 export const updateCallSettingsSchema = z.object({
@@ -44,4 +45,5 @@ export const updateCallSettingsSchema = z.object({
   callScriptId: z.string().optional(),
   sendEmail: z.boolean().optional(),
   sendText: z.boolean().optional(),
+  amdEnabled: z.boolean().optional(),
 });

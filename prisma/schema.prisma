@@ -1042,6 +1042,7 @@ model CallSettings {
   callScriptId                String?
   sendEmail                   Boolean    @default(false)
   sendText                    Boolean    @default(false)
+  amdEnabled                  Boolean    @default(false)
 
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)

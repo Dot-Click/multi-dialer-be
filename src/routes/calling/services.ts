@@ -431,6 +431,7 @@ export class DialerService {
       });
       const amRecordingUrl = settings?.callSettings[0]?.answeringMachineRecording?.url || "";
       const busyRecordingUrl = settings?.callSettings[0]?.busyRecording?.url || "";
+      const amdEnabled = settings?.callSettings[0]?.amdEnabled ?? false;
 
       // Guard: Check if lead.userId is missing, empty, "undefined", or "null"
       if (!lead.userId || lead.userId === 'undefined' || lead.userId === 'null') {
@@ -448,10 +449,12 @@ export class DialerService {
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
-        machineDetection: "DetectMessageEnd",
-        asyncAmd: "true",
-        asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}`,
-        asyncAmdStatusCallbackMethod: "POST",
+        ...(amdEnabled ? {
+          machineDetection: "DetectMessageEnd",
+          asyncAmd: "true",
+          asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}&amdEnabled=true`,
+          asyncAmdStatusCallbackMethod: "POST",
+        } : {}),
       });
 
       console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}) from ${twilioFrom}. SID: ${call.sid}`);

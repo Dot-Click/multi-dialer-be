@@ -22,6 +22,20 @@ export const startCalling: RequestHandler = async (req, res) => {
       return;
     }
     const userClient = await getTwilioClient(agentId);
+
+    // Fetch amdEnabled from CallSettings (Req 4.5, 4.6)
+    let amdEnabled = false;
+    try {
+      const agentSettings = await prisma.system_Setting.findFirst({
+        where: { userId: agentId },
+        include: { callSettings: true }
+      });
+      amdEnabled = agentSettings?.callSettings[0]?.amdEnabled ?? false;
+    } catch (e) {
+      console.warn(`[startCalling] Failed to fetch CallSettings for AMD check (userId: ${agentId}):`, e);
+      // amdEnabled stays false — safe default (Req 4.6)
+    }
+
     const call = await userClient.calls.create({
       to: to, // Lead Number (here the number is dynamic for now on testing account i've only 1 verified caller ID)
       url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${agentId}`,
@@ -31,6 +45,12 @@ export const startCalling: RequestHandler = async (req, res) => {
       from: from || fromNumber,
       // applicationSid:"APd8c43edcdeb39fb09d7d904eeec31271",    
       timeout: 30,
+      ...(amdEnabled ? {
+        machineDetection: "DetectMessageEnd",
+        asyncAmd: "true",
+        asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?agentId=${agentId}&amdEnabled=true`,
+        asyncAmdStatusCallbackMethod: "POST",
+      } : {}),
     });
 
     console.log("Single Test Call SID:", call.sid);
@@ -552,46 +572,120 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
     const { CallSid, AnsweredBy } = req.body;
     const answeringMachineUrl = req.query.answeringMachineUrl as string;
     const agentId = req.query.agentId as string;
+    // Parse amdEnabled from query string — only "true" is truthy (Req 3.8)
+    const amdEnabled = req.query.amdEnabled === 'true';
 
-    console.log(`[AMD] Call ${CallSid} answered by: ${AnsweredBy}`);
+    console.log(`[AMD] Call ${CallSid} answered by: ${AnsweredBy} (amdEnabled: ${amdEnabled})`);
 
-    // AnsweredBy values: 'human', 'machine_start', 'machine_end_beep', 
-    //                    'machine_end_silence', 'machine_end_other', 'fax', 'unknown'
-    const isMachine = AnsweredBy?.startsWith('machine') || AnsweredBy === 'fax';
+    // Recognised machine values (Req 7.1)
+    const MACHINE_VALUES = ['machine_start', 'machine_end_beep', 'machine_end_silence', 'machine_end_other', 'fax'];
+    const HUMAN_VALUES = ['human', 'unknown'];
+    const answeredByStr = (AnsweredBy || '').toLowerCase();
+    const isMachine = MACHINE_VALUES.includes(answeredByStr);
+    const isHuman = HUMAN_VALUES.includes(answeredByStr);
+
+    // Log unrecognised AnsweredBy values (Req 7.1)
+    if (!isMachine && !isHuman) {
+      console.warn(`[AMD] Unrecognised AnsweredBy value "${AnsweredBy}" for ${CallSid}. Treating as human.`);
+      res.sendStatus(200);
+      return;
+    }
 
     if (isMachine) {
       console.log(`[AMD] Machine detected for ${CallSid}.`);
 
+      // Fetch CallRecord for timing and ownership info (Req 6.2, 6.3)
+      let callRecord: any = null;
+      try {
+        callRecord = await (prisma.callRecord as any).findUnique({ where: { callSid: CallSid } });
+      } catch (e) {
+        console.warn(`[AMD] Could not fetch CallRecord for ${CallSid}:`, e);
+      }
+
+      // Calculate duration (Req 6.2, 6.3)
+      const endTime = new Date();
+      let duration = 0;
+      if (callRecord?.startTime) {
+        duration = Math.floor((endTime.getTime() - new Date(callRecord.startTime).getTime()) / 1000);
+      } else if (!callRecord) {
+        console.warn(`[AMD] CallRecord not found for ${CallSid}. Duration set to 0.`);
+      } else {
+        console.warn(`[AMD] CallRecord.startTime is null for ${CallSid}. Duration set to 0.`);
+      }
+
+      // Update CallRecord with machine disposition (Req 6.1, 6.2)
       try {
         await (prisma.callRecord as any).update({
           where: { callSid: CallSid },
-          data: { disposition: "MACHINE", status: "machine-detected" }
+          data: { disposition: "MACHINE", status: "machine-detected", endTime, duration }
         });
-      } catch (e) { }
-
-      if (answeringMachineUrl) {
-        console.log(`[AMD] Dropping out-of-band voicemail for ${CallSid}`);
-        const userClient = await getTwilioClient(agentId);
-        await userClient.calls(CallSid).update({
-          twiml: `<Response>
-                      <Play>${answeringMachineUrl}</Play>
-                      <Hangup/>
-                  </Response>`
-        });
-      } else {
-        console.log(`[AMD] No voicemail configured. Hanging up ${CallSid}`);
-        const userClient = await getTwilioClient(agentId);
-        await userClient.calls(CallSid).update({ status: 'completed' });
+      } catch (e: any) {
+        console.warn(`[AMD] Could not update CallRecord for ${CallSid} (may not exist): ${e.message}`);
       }
+
+      if (amdEnabled) {
+        // ── SKIP-ON-MACHINE path (Req 3.1, 3.2) ──────────────────────────────
+        console.log(`[AMD] amdEnabled=true — skipping call ${CallSid}, advancing queue.`);
+
+        const metadata = (dialerService as any).activeCalls.get(CallSid);
+        const userId = callRecord?.userId || metadata?.userId || agentId;
+        const leadId = metadata?.leadId;
+
+        // 1. Remove from activeCalls BEFORE processQueue (Req 3.2)
+        (dialerService as any).activeCalls.delete(CallSid);
+
+        // 2. Update lead status to MACHINE (Req 6.1)
+        if (leadId) {
+          await dialerService.updateLeadStatusInDB(leadId, "MACHINE");
+        }
+
+        // 3. Hang up the call (Req 3.1)
+        try {
+          const userClient = await getTwilioClient(userId || agentId);
+          await userClient.calls(CallSid).update({ status: 'completed' });
+        } catch (hangupErr: any) {
+          console.error(`[AMD] Hangup failed for ${CallSid}:`, hangupErr.message);
+          // Mark for manual cleanup (Req 7.2)
+          try {
+            await (prisma.callRecord as any).update({
+              where: { callSid: CallSid },
+              data: { status: "hangup-failed" }
+            });
+          } catch (e) { /* non-fatal */ }
+        }
+
+        // 4. Advance the queue (Req 3.2)
+        if (userId) {
+          (dialerService as any).processQueue(userId);
+        }
+
+      } else {
+        // ── EXISTING VOICEMAIL-DROP path (Req 3.3, 3.4) ──────────────────────
+        const userClient = await getTwilioClient(agentId);
+        if (answeringMachineUrl) {
+          console.log(`[AMD] Dropping out-of-band voicemail for ${CallSid}`);
+          await userClient.calls(CallSid).update({
+            twiml: `<Response>
+                        <Play>${answeringMachineUrl}</Play>
+                        <Hangup/>
+                    </Response>`
+          });
+        } else {
+          console.log(`[AMD] No voicemail configured. Hanging up ${CallSid}`);
+          await userClient.calls(CallSid).update({ status: 'completed' });
+        }
+      }
+
     } else {
-      console.log(`[AMD] ${isMachine ? 'Machine' : 'Human'} answered ${CallSid}`);
+      // Human or unknown — no action (Req 3.5, 4.4)
+      console.log(`[AMD] Human/unknown answered ${CallSid}. No action taken.`);
     }
 
     res.sendStatus(200);
     return;
   } catch (error: any) {
     console.error('[AMD] Status handling failed:', error);
-    res.sendStatus(200); // Always 200 to Twilio
+    res.sendStatus(200); // Always 200 to Twilio (Req 7.2)
     return;
   }
 };

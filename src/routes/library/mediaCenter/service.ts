@@ -16,7 +16,7 @@ const MEDIA_CONFIG = {
   },
   ON_HOLD: {
     maxDuration: 20, // seconds
-    maxFileSize: 750 * 1024, // 750 KB
+    maxFileSize: 5 * 1024 * 1024, // 5 MB
     allowedMimeTypes: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/wave", "audio/x-wav", "audio/mp4", "audio/m4a"],
     fileCategory: "audio" as const,
   },
