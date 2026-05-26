@@ -89,6 +89,7 @@ export class DialerService {
   private userProcessingLocks: Map<string, boolean> = new Map(); // userId -> is currently processing queue
   private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
   private agentPostCallState: Set<string> = new Set(); // userId
+  private agentReadyState: Set<string> = new Set(); // userId
   private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
   private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
   private leadsInFlight: Map<string, Set<string>> = new Map(); // userId -> Set of leadIds in transit
@@ -203,6 +204,7 @@ export class DialerService {
     this.agentBusyState.delete(userId);
     this.agentBridgedCallId.delete(userId);
     this.agentPostCallState.delete(userId);
+    this.agentReadyState.delete(userId);
     this.userActiveSessions.delete(userId);
     this.lastActivity.delete(userId);
     this.sessionPacing.delete(userId);
@@ -295,6 +297,7 @@ export class DialerService {
   }
 
   async agentReady(userId: string): Promise<void> {
+    this.agentReadyState.add(userId);
     this.agentPostCallState.delete(userId);
     await this.processQueue(userId);
   }
@@ -830,7 +833,11 @@ export class DialerService {
       // Release agent busy lock ONLY if this specific SID or its ROOT is the lock owner
       if (lockOwner && (lockOwner === sid || lockOwner === rootSid)) {
         console.log(`[handleCallStatusUpdate] Releasing agent ${userId} lock owner match: ${lockOwner}.`);
-        this.agentPostCallState.add(userId!);
+        if (this.agentReadyState.has(userId!)) {
+          this.agentReadyState.delete(userId!);
+        } else {
+          this.agentPostCallState.add(userId!);
+        }
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
         // Delete SID BEFORE processing queue so capacity is accurate
@@ -846,7 +853,11 @@ export class DialerService {
         
         if (!hasOtherCalls && userId && this.isAgentBusy(userId)) {
            console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Clearing stuck lock.`);
-           this.agentPostCallState.add(userId);
+           if (this.agentReadyState.has(userId)) {
+             this.agentReadyState.delete(userId);
+           } else {
+             this.agentPostCallState.add(userId);
+           }
            this.setAgentBusy(userId, false);
            this.agentBridgedCallId.delete(userId);
            // Delete SID BEFORE processing queue so capacity is accurate
