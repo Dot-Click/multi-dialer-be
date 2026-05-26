@@ -2,10 +2,7 @@ import { client } from "@/lib/config";
 import { getTwilioClient } from "../../services/twilio-account.service";
 import prisma from "@/lib/prisma";
 import axios from "axios";
-import fs from "fs";
-import path from "path";
-import os from "os";
-import { cloudinaryUploader } from "@/utils/handler";
+import { uploadToR2 } from "@/utils/r2-uploader";
 import { envConfig } from "@/lib/config";
 import Groq from "groq-sdk";
 import { moveToDncInDb } from "../contact/service";
@@ -91,6 +88,7 @@ export class DialerService {
   private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
   private userProcessingLocks: Map<string, boolean> = new Map(); // userId -> is currently processing queue
   private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
+  private agentPostCallState: Set<string> = new Set(); // userId
   private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
   private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
   private leadsInFlight: Map<string, Set<string>> = new Map(); // userId -> Set of leadIds in transit
@@ -188,6 +186,7 @@ export class DialerService {
 
     const queue = this.getOrCreateQueue(userId);
     leads.forEach((lead) => queue.enqueue(lead));
+    this.agentPostCallState.delete(userId);
 
     // Process queue immediately
     this.processQueue(userId);
@@ -203,6 +202,7 @@ export class DialerService {
     // HARD RESET states to unblock stuck sessions
     this.agentBusyState.delete(userId);
     this.agentBridgedCallId.delete(userId);
+    this.agentPostCallState.delete(userId);
     this.userActiveSessions.delete(userId);
     this.lastActivity.delete(userId);
     this.sessionPacing.delete(userId);
@@ -223,6 +223,11 @@ export class DialerService {
    */
   // In processQueue — pre-assign caller IDs synchronously before async makeCall
   private async processQueue(userId: string) {
+    if (this.agentPostCallState.has(userId)) {
+      console.log(`[Dialer] Agent ${userId} in post-call state, holding queue`);
+      return;
+    }
+
     // Prevent concurrent processing for the same user (race condition guard)
     if (this.userProcessingLocks.get(userId)) {
       console.log(`[processQueue] Already processing for user ${userId}, skipping.`);
@@ -287,6 +292,11 @@ export class DialerService {
     // This is a simple counter if we had a state for "initiating"
     // For now, activeCalls covers it once Twilio responds
     return 0;
+  }
+
+  async agentReady(userId: string): Promise<void> {
+    this.agentPostCallState.delete(userId);
+    await this.processQueue(userId);
   }
 
   private async getUserCapacity(userId: string): Promise<number> {
@@ -820,11 +830,11 @@ export class DialerService {
       // Release agent busy lock ONLY if this specific SID or its ROOT is the lock owner
       if (lockOwner && (lockOwner === sid || lockOwner === rootSid)) {
         console.log(`[handleCallStatusUpdate] Releasing agent ${userId} lock owner match: ${lockOwner}.`);
+        this.agentPostCallState.add(userId!);
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
         // Delete SID BEFORE processing queue so capacity is accurate
         this.activeCalls.delete(sid);
-        this.processQueue(userId);
       } else {
         console.log(`[handleCallStatusUpdate] Non-locking leg terminated. Checking for orphaned lock...`);
         const hasOtherCalls = Array.from(this.activeCalls.entries()).some(([callSid, metadata]) => 
@@ -836,11 +846,11 @@ export class DialerService {
         
         if (!hasOtherCalls && userId && this.isAgentBusy(userId)) {
            console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Clearing stuck lock.`);
+           this.agentPostCallState.add(userId);
            this.setAgentBusy(userId, false);
            this.agentBridgedCallId.delete(userId);
            // Delete SID BEFORE processing queue so capacity is accurate
            this.activeCalls.delete(sid);
-           this.processQueue(userId);
         } else {
            // Ensure deletion even if we didn't release a lock
            this.activeCalls.delete(sid);
@@ -853,13 +863,13 @@ export class DialerService {
     try {
       console.log(`[Recording] Updating for ${callSid}: ${recordingUrl}`);
 
-      if (!envConfig.CLOUDINARY_CLOUD_NAME) {
-        console.warn("[Recording] Cloudinary not configured. Skipping recording sync.");
+      if (!envConfig.R2_ACCOUNT_ID) {
+        console.warn("[Recording] R2 not configured. Skipping recording sync.");
         return;
       }
 
-      // 1. Download from Twilio and Upload to Cloudinary
-      const cloudinaryUrl = await this.uploadRecordingToCloudinary(recordingUrl, callSid);
+      // 1. Download from Twilio and Upload to R2
+      const r2Url = await this.uploadRecordingToR2(recordingUrl, callSid);
 
       // RESOLVE ROOT SID: If this recording is for a child leg, find the parent
       let targetSid = callSid;
@@ -872,7 +882,7 @@ export class DialerService {
       }
 
       const transcription = await groq.audio.transcriptions.create({
-        url: cloudinaryUrl,
+        url: r2Url,
         model: "whisper-large-v3",
         temperature: 0,
         response_format: "verbose_json",
@@ -886,15 +896,15 @@ export class DialerService {
       await Promise.allSettled([
         prisma.callRecord.update({
           where: { callSid: targetSid },
-          data: { recordingUrl: cloudinaryUrl },
+          data: { recordingUrl: r2Url },
         }),
         prisma.callAnalysis.upsert({
           where: { callSid: targetSid },
-          update: { recordingUrl: cloudinaryUrl },
+          update: { recordingUrl: r2Url },
           create: {
             callSid: targetSid,
             leadId: "",
-            recordingUrl: cloudinaryUrl,
+            recordingUrl: r2Url,
             sentiment: sentimentAnalysis?.sentiment || "",
             confidence: sentimentAnalysis?.confidence || 0,
             aiSummary: sentimentAnalysis?.summary || "",
@@ -902,47 +912,32 @@ export class DialerService {
           }
         })
       ]);
-      console.log(`[Cloudinary] Recording saved: ${cloudinaryUrl}`);
+      console.log(`[R2] Recording saved: ${r2Url}`);
     } catch (error) {
       console.error("Failed to handle recording update:", error);
     }
   }
 
-  private async uploadRecordingToCloudinary(twilioUrl: string, callSid: string): Promise<string> {
-    const tempPath = path.join(os.tmpdir(), `recording-${callSid}.mp3`);
+  private async uploadRecordingToR2(twilioUrl: string, callSid: string): Promise<string> {
     try {
       const downloadUrl = twilioUrl.endsWith('.mp3') ? twilioUrl : `${twilioUrl}.mp3`;
 
       const response = await axios({
         url: downloadUrl,
         method: 'GET',
-        responseType: 'stream',
+        responseType: 'arraybuffer',
         auth: {
           username: envConfig.TWILIO_ACCOUNT_SID!,
           password: envConfig.TWILIO_AUTH_TOKEN!
         }
       });
 
-      const writer = fs.createWriteStream(tempPath);
-      (response.data as any).pipe(writer);
+      // Upload buffer directly to R2
+      const buffer = Buffer.from(response.data);
+      const r2Result = await uploadToR2(buffer, 'audio/mpeg', 'call-recordings');
 
-      await new Promise((resolve, reject) => {
-        writer.on('finish', resolve as any);
-        writer.on('error', reject);
-      });
-
-      // Use the user's utility function
-      const result = await cloudinaryUploader(tempPath);
-
-      // Cleanup temp file
-      if (fs.existsSync(tempPath)) {
-        fs.unlinkSync(tempPath);
-      }
-      return result?.secure_url!;
+      return r2Result.url;
     } catch (err) {
-      if (fs.existsSync(tempPath)) {
-        fs.unlinkSync(tempPath);
-      }
       throw err;
     }
   }
@@ -988,7 +983,7 @@ export class DialerService {
       this.lastActivity.set(userId, Date.now());
     }
     console.log(`[AgentState] User ${userId} busy state set to: ${busy}`);
-    if (!busy) {
+    if (!busy && !this.agentPostCallState.has(userId)) {
       this.processQueue(userId);
     }
   }

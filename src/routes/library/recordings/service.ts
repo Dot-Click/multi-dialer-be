@@ -1,8 +1,7 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { createRecordingSchema } from "../../../schemas/recording.schema";
-import fs from "fs";
-import path from "path";
+import { uploadToR2 } from "../../../utils/r2-uploader";
 
 export async function insertRecordingInDb(
   payload: any,
@@ -18,7 +17,7 @@ export async function insertRecordingInDb(
 
     const data = result.data;
 
-    if (!file) {
+    if (!file || !file.buffer) {
       throw { errors: [{ message: "File is required", path: ["file"] }] };
     }
 
@@ -56,28 +55,13 @@ export async function insertRecordingInDb(
       };
     }
 
-    // upload to cloudinary
-    const filePath = path.join("./uploads", file.filename);
-    // manual import so we can specify folder
-    const { v2: cloudinary } = await import("cloudinary");
-    const cloudResult = await cloudinary.uploader.upload(filePath, {
-      resource_type: "auto",
-      folder: "recordings",
-    });
-
-    // cleanup local file
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-
-    if (!cloudResult || !cloudResult.secure_url) {
-      throw new Error("Failed to upload file to Cloudinary");
-    }
+    // Upload to R2
+    const r2Result = await uploadToR2(file.buffer, file.mimetype, "recordings");
 
     const recording = await prisma.recording.create({
       data: {
         name: data.name,
-        url: cloudResult.secure_url,
+        url: r2Result.url,
         fileSize: file.size,
         duration: null,
         mimeType: file.mimetype,
@@ -88,15 +72,6 @@ export async function insertRecordingInDb(
 
     return recording;
   } catch (error) {
-    // clean up file if any error occurred
-    if (file && file.filename) {
-      const filePath = path.join("./uploads", file.filename);
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch {}
-      }
-    }
     throw error;
   }
 }

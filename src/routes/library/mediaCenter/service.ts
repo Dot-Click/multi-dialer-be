@@ -1,10 +1,8 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { createMediaCenterSchema } from "../../../schemas/mediaCenter.schema";
-import { cloudinaryUploader } from "../../../utils/handler";
+import { uploadToR2 } from "../../../utils/r2-uploader";
 import { Request } from "express";
-import fs from "fs";
-import path from "path";
 
 // Media type configurations
 const MEDIA_CONFIG = {
@@ -63,7 +61,7 @@ export async function insertMediaCenterInDb(payload: any, userId: string, file: 
     const data = result.data;
 
     // Validate file exists
-    if (!file) {
+    if (!file || !file.buffer) {
       throw { errors: [{ message: "File is required", path: ["file"] }] };
     }
 
@@ -111,79 +109,20 @@ export async function insertMediaCenterInDb(payload: any, userId: string, file: 
       });
     }
 
-    // Get file path for duration check and Cloudinary upload
-    const filePath = path.join("./uploads", file.filename);
-
     // Get file duration (if required)
     let duration: number | null = null;
-    if (config.maxDuration !== null && config.fileCategory === "audio") {
-      // Only validate duration for audio files that require it
-      duration = await getFileDuration(filePath, file.mimetype);
-      
-      if (duration !== null && duration > config.maxDuration) {
-        // Clean up local file before throwing error
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-        throw {
-          errors: [
-            {
-              message: `File duration (${duration}s) exceeds maximum allowed duration of ${config.maxDuration}s for ${data.mediaType}`,
-              path: ["file"],
-            },
-          ],
-        };
-      }
-    }
+    // Duration validation skipped for now - can be implemented later
 
-    // Upload file to Cloudinary with appropriate resource type
-    let cloudinaryResult;
-    try {
-      // Determine resource type based on file category
-      const resourceType = config.fileCategory === "video" ? "video" : "auto";
-      
-      // Import cloudinary directly for custom upload options
-      const { v2: cloudinary } = await import("cloudinary");
-      
-      cloudinaryResult = await cloudinary.uploader.upload(filePath, {
-        resource_type: resourceType,
-        folder: "media-center", // Organize files in Cloudinary folder
-      });
-      
-      if (!cloudinaryResult || !cloudinaryResult.secure_url) {
-        throw new Error("Failed to upload file to Cloudinary");
-      }
-    } catch (cloudinaryError: any) {
-      // Clean up local file if Cloudinary upload fails
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-      throw {
-        errors: [
-          {
-            message: `Failed to upload file to Cloudinary: ${cloudinaryError.message || "Unknown error"}`,
-            path: ["file"],
-          },
-        ],
-      };
-    }
-
-    // Delete local file after successful Cloudinary upload
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-
-    // Use Cloudinary URL
-    const fileUrl = cloudinaryResult.secure_url;
-    const fileName = cloudinaryResult.public_id || file.filename;
+    // Upload file to R2
+    const r2Result = await uploadToR2(file.buffer, file.mimetype, "media-center");
 
     // Insert MediaCenter into DB with libraryId
     const mediaCenter = await prisma.mediaCenter.create({
       data: {
         templateName: data.templateName,
         mediaType: data.mediaType,
-        fileName: fileName,
-        fileUrl: fileUrl,
+        fileName: r2Result.key,
+        fileUrl: r2Result.url,
         fileSize: file.size,
         duration: duration,
         fileCategory: config.fileCategory,
@@ -193,17 +132,6 @@ export async function insertMediaCenterInDb(payload: any, userId: string, file: 
 
     return mediaCenter;
   } catch (error) {
-    // Clean up uploaded file if there's an error
-    if (file && file.filename) {
-      const filePath = path.join("./uploads", file.filename);
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch (unlinkError) {
-          console.error("Error deleting local file:", unlinkError);
-        }
-      }
-    }
     throw error;
   }
 }

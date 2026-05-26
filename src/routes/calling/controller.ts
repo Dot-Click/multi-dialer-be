@@ -193,6 +193,24 @@ export const stopDialing: RequestHandler = async (req, res) => {
   }
 };
 
+export const agentReady: RequestHandler = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
+      return;
+    }
+
+    await dialerService.agentReady(userId);
+    successResponse(res, 200, "Agent ready for next call", null);
+    return;
+  } catch (error: any) {
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
 /**
  * Bulk add leads to the database and priority queue
  */

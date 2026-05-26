@@ -4,8 +4,7 @@ import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertRecordingInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateRecordingSchema } from "../../../schemas/recording.schema";
-import fs from "fs";
-import path from "path";
+import { uploadToR2 } from "../../../utils/r2-uploader";
 
 export const getAllRecordingsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.id;
@@ -164,24 +163,17 @@ export const updateRecording = async (
     // Handle file upload if present
     const file = req.file;
     if (file) {
-      // upload to cloudinary
-      const filePath = path.join("./uploads", file.filename);
-      // manual upload so we can specify folder
-      const { v2: cloudinary } = await import("cloudinary");
-      const cloudResult = await cloudinary.uploader.upload(filePath, {
-        resource_type: "auto",
-        folder: "recordings",
-      });
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-
-      if (!cloudResult || !cloudResult.secure_url) {
-        throw new Error("Failed to upload file to Cloudinary");
+      if (!file.buffer) {
+        errorResponse(res, "File buffer is required", 400);
+        return;
       }
 
-      updateData.url = cloudResult.secure_url;
+      const r2Result = await uploadToR2(file.buffer, file.mimetype, "recordings");
+
+      updateData.url = r2Result.url;
       updateData.fileSize = file.size;
       updateData.mimeType = file.mimetype;
-      updateData.name = updateData.name || file.originalname; // optionally override name
+      updateData.name = updateData.name || file.originalname;
     }
 
     if (Object.keys(updateData).length === 0) {

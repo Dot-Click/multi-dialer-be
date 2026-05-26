@@ -1,10 +1,8 @@
 import { PhoneType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
-import path from "path";
-import fs from "fs";
 import axios from "axios";
-import { cloudinaryUploader } from "../../utils/handler";
+import { uploadToR2 } from "../../utils/r2-uploader";
 import { randomUUID } from "crypto";
 import { createInternalNotification } from "../notification/controller";
 import { envConfig } from "@/lib/config";
@@ -698,19 +696,16 @@ export async function uploadAttachmentInDb(
   });
   if (!contact) throwHttp(404, "Contact not found");
 
-  const filePath = path.join("./uploads", file.filename);
-  const cloudinaryResult = await cloudinaryUploader(filePath);
-
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-
-  if (!cloudinaryResult?.secure_url) {
-    throwHttp(500, "Failed to upload to Cloudinary");
+  if (!file.buffer) {
+    throwHttp(400, "File buffer is required");
   }
+
+  const r2Result = await uploadToR2(file.buffer, file.mimetype, "attachments");
 
   return prisma.attachment.create({
     data: {
       fileName: file.originalname,
-      fileUrl: cloudinaryResult.secure_url,
+      fileUrl: r2Result.url,
       fileSize: file.size,
       mimeType: file.mimetype,
       contactId,

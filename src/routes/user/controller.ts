@@ -4,8 +4,7 @@ import { validateData } from "../../middlewares/vald.middleware";
 import { createUserSchema, updateUserSchema } from "../../schemas/user.schema";
 import { getAllUsersFromDb, createUserInDb, updateUserInDb, deleteUserFromDb, deleteAllUsersFromDb } from "./service";
 import { generateSecurePassword } from "../../utils/password";
-import { cloudinaryUploader } from "../../utils/handler";
-import fs from "fs";
+import { uploadToR2 } from "../../utils/r2-uploader";
 
 
 export const createUser = async (req: Request, res: Response): Promise<void> => {
@@ -131,25 +130,14 @@ export const deleteAllUsers = async (req: Request, res: Response): Promise<void>
 
 export const uploadProfileImage = async (req: Request, res: Response): Promise<void> => {
     try {
-        if (!req.file) {
+        if (!req.file || !req.file.buffer) {
             errorResponse(res, "No file uploaded", 400);
             return;
         }
 
-        const filePath = req.file.path;
-        const result = await cloudinaryUploader(filePath);
+        const r2Result = await uploadToR2(req.file.buffer, req.file.mimetype, "avatars");
 
-        // Delete local file after upload
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-        }
-
-        if (!result || !result.secure_url) {
-            errorResponse(res, "Failed to upload to Cloudinary", 500);
-            return;
-        }
-
-        successResponse(res, 200, "Profile image uploaded successfully", { url: result.secure_url });
+        successResponse(res, 200, "Profile image uploaded successfully", { url: r2Result.url });
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", 500);
     }

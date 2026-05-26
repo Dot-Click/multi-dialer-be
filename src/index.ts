@@ -5,8 +5,8 @@ import { toNodeHandler } from "better-auth/node";
 import { auth } from "@/lib/auth";
 import routes from "@/routes/routes";
 import { swaggerDocs } from "@/utils/handler";
-import { cloudinaryConfig, envConfig, sessionMiddleware } from "@/lib/config";
 import { connectDB } from "@/lib/prisma";
+import { envConfig, sessionMiddleware } from "@/lib/config";
 import sgMail from "@sendgrid/mail";
 import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
@@ -52,8 +52,6 @@ app.use(express.static("public"));
 sgMail.setApiKey(envConfig.SENDGRID_API_KEY as string);
 
 app.all("/api/auth/*", toNodeHandler(auth));
-
-cloudinaryConfig();
 
 app.get("/", (_req: Request, res: Response) => {
   res.send("<h1>api</h1>");

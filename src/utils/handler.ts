@@ -4,7 +4,6 @@ import { fileURLToPath } from "url";
 import yaml from "js-yaml";
 import fs from "fs";
 import swaggerUi from "swagger-ui-express";
-import { v2 as cloudinary } from "cloudinary";
 import { OpenAPIV3 } from "openapi-types";
 import { auth } from "../lib/auth";
 import { SwaggerTheme, SwaggerThemeNameEnum } from "swagger-themes";
@@ -149,15 +148,8 @@ export const swaggerDocs = async (app: any) => {
     console.log("Docs: http://localhost:3000/api-docs");
 };
 
-export const cloudinaryUploader = async (filePath: string) => {
-  try {
-    if (!filePath) return;
-    const result = await cloudinary.uploader.upload(filePath, {
-      resource_type: "auto",
-    });
-    return result;
-  } catch (error) {
-    console.log("Cloudinary Upload Error:", error);
-    throw error
-  }
+export const cloudinaryUploader = async (_filePath: string) => {
+  // DEPRECATED: Cloudinary has been replaced with Cloudflare R2.
+  // Use uploadToR2 from utils/r2-uploader.ts instead.
+  throw new Error("cloudinaryUploader is deprecated. Use uploadToR2 from utils/r2-uploader.ts instead.");
 };

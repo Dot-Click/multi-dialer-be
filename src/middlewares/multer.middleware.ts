@@ -2,12 +2,7 @@ import multer from "multer";
 import { Request, Response, NextFunction } from "express";
 import { errorResponse } from "../utils/handler";
 
-const storage = multer.diskStorage({
-  destination: "./uploads",
-  filename: (req, file, cb) => {
-    cb(null, `${file.originalname}`);
-  },
-});
+const storage = multer.memoryStorage();
 
 /**
  * Middleware for handling multiple file uploads using Multer.
@@ -29,9 +24,7 @@ const upload = (req: Request, res: Response, next: NextFunction) => {
     { name: "file3", maxCount: 1 },
     { name: "file4", maxCount: 1 },
   ])(req, res, (err) => {
-    if (err) {
-      return errorResponse(res, err.message, 400);
-    }
+    if (err) return errorResponse(res, err.message, 400);
     next();
   });
 };
@@ -51,26 +44,23 @@ const singleUpload = (fieldName: string, allowedMimeTypes: string[] | null = nul
     limits: {
       fileSize: maxFileSize,
     },
-    fileFilter: (req: Request, file: Express.Multer.File, cb: any) => {
-      // If specific MIME types are allowed, validate them
+    fileFilter: (req, file, cb) => {
       if (allowedMimeTypes) {
         if (allowedMimeTypes.includes(file.mimetype)) {
           cb(null, true);
         } else {
-          cb(new Error(`Invalid file type. Allowed types: ${allowedMimeTypes.join(', ')}`), false);
+          cb(new Error(`Invalid file type`));
         }
       } else {
         cb(null, true);
       }
     },
   }).single(fieldName)(req, res, (err) => {
-    if (err) {
-     return res.status(400).json({ message: err.message });
-    }
+    if (err) return res.status(400).json({ message: err.message });
     next();
   });
 };
 
 
 
-export {upload, singleUpload};
+export { upload, singleUpload };
