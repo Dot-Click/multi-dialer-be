@@ -104,39 +104,39 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         });
 
         // 4. Provision Twilio Subaccount (STRICT: No internal try/catch)
-        // const subAccount = await createTwilioSubAccount(fullName || email);
+        const subAccount = await createTwilioSubAccount(fullName || email);
         
-        // await prisma.integration.create({
-        //     data: {
-        //         systemSettingId: systemSetting.id,
-        //         provider: "TWILIO",
-        //         status: "CONNECTED",
-        //         credentials: {
-        //             accountSid: subAccount.sid,
-        //             authToken: subAccount.authToken,
-        //             apiKeySid: subAccount.apiKeySid,
-        //             apiKeySecret: subAccount.apiKeySecret
-        //         }
-        //     }
-        // });
+        await prisma.integration.create({
+            data: {
+                systemSettingId: systemSetting.id,
+                provider: "TWILIO",
+                status: "CONNECTED",
+                credentials: {
+                    accountSid: subAccount.sid,
+                    authToken: subAccount.authToken,
+                    apiKeySid: subAccount.apiKeySid,
+                    apiKeySecret: subAccount.apiKeySecret
+                }
+            }
+        });
 
         // 4.5 Buy a US Phone Number (STRICT: No internal try/catch)
         // TODO: Uncomment in production — auto-purchases 
         // a phone number for the user's sub-account
         console.log(`[Stripe Webhook] Skipping primary US number purchase for ${email} (Provisioning Disabled)`);
        
-        // const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
+        const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
         
-        // await prisma.callerId.create({
-        //     data: {
-        //         label: `Primary Line (${purchased.phoneNumber})`,
-        //         countryCode: "US",
-        //         twillioNumber: purchased.phoneNumber,
-        //         twillioSid: purchased.sid,
-        //         systemSettingId: systemSetting.id,
-        //         numberOfLines: 1
-        //     }
-        // });
+        await prisma.callerId.create({
+            data: {
+                label: `Primary Line (${purchased.phoneNumber})`,
+                countryCode: "US",
+                twillioNumber: purchased.phoneNumber,
+                twillioSid: purchased.sid,
+                systemSettingId: systemSetting.id,
+                numberOfLines: 1
+            }
+        });
         
 
         // 5. Setup basic Library and folders

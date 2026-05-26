@@ -63,7 +63,6 @@ import {
   updateContactListSchema,
 } from "../../schemas/contactlist.schema";
 import { parse } from "csv-parse/sync";
-import fs from "fs";
 import * as xlsx from "xlsx";
 
 export const createContact = async (
@@ -973,15 +972,20 @@ export const importContacts = async (
     let records: any[] = [];
     const fileExtension = file.originalname.split(".").pop()?.toLowerCase();
 
+    if (!file.buffer) {
+      errorResponse(res, "Uploaded file data is missing", 400);
+      return;
+    }
+
     if (fileExtension === "csv") {
-      const fileContent = fs.readFileSync(file.path, "utf-8");
+      const fileContent = file.buffer.toString("utf-8");
       records = parse(fileContent, {
         columns: true,
         skip_empty_lines: true,
         trim: true,
       });
     } else if (fileExtension === "xlsx" || fileExtension === "xls") {
-      const workbook = xlsx.readFile(file.path);
+      const workbook = xlsx.read(file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       
@@ -1003,66 +1007,95 @@ export const importContacts = async (
       return;
     }
 
-    try { fs.unlinkSync(file.path); } catch (e) { console.error("Temp file cleanup error:", e); }
 
     // ── Helpers
-    const resolve = (record: any, systemField: string): string => {
-      const csvCol = fieldMappings[systemField];
+    const resolve = (record: any, slingvoKey: string): string => {
+      const csvCol = fieldMappings[slingvoKey];
       if (!csvCol) return "";
       return (record[csvCol]?.toString() || "").trim();
     };
 
+    const getMappedSlotCount = (prefix: "phone" | "email", minimum: number): number => {
+      return Object.keys(fieldMappings).reduce((max, key) => {
+        const match = key.match(new RegExp(`^${prefix}_(\\d+)$`));
+        return match ? Math.max(max, Number(match[1])) : max;
+      }, minimum);
+    };
+
+    const phoneSlotCount = getMappedSlotCount("phone", 6);
+    const emailSlotCount = getMappedSlotCount("email", 4);
+
     // ── Map records → contacts
     const contacts = records
       .filter((r) => {
-        const name = resolve(r, "Name").toLowerCase();
-        return name !== "fullname" && name !== "full name" && name !== "name" && name !== "";
+        const fullName = resolve(r, "fullName").toLowerCase();
+        const firstName = resolve(r, "firstName").toLowerCase();
+        const lastName = resolve(r, "lastName").toLowerCase();
+        // Skip header-like rows
+        if (fullName === "fullname" || fullName === "full name" || fullName === "name") return false;
+        if (firstName === "first name" || firstName === "firstname") return false;
+        // Keep if any name field has a value
+        return fullName !== "" || firstName !== "" || lastName !== "";
       })
       .map((r) => {
-        const emails: { email: string; isPrimary: boolean }[] = [];
-        const emailVal = resolve(r, "Email");
-        if (emailVal) {
-          emailVal.split(",").forEach((e, idx) => {
-            const trimmed = e.trim();
-            if (trimmed) emails.push({ email: trimmed, isPrimary: idx === 0 });
-          });
+        // ── Name: prefer fullName, fall back to firstName + lastName
+        const fullNameVal = resolve(r, "fullName");
+        const firstNameVal = resolve(r, "firstName");
+        const lastNameVal = resolve(r, "lastName");
+        const fullName = fullNameVal
+          ? fullNameVal
+          : `${firstNameVal} ${lastNameVal}`.trim() || "Unnamed";
+
+        // ── Phones: phone_1 through phone_7
+        const phones: { number: string; type: string; isPrimary: boolean }[] = [];
+        for (let i = 1; i <= phoneSlotCount; i++) {
+          const val = resolve(r, `phone_${i}`);
+          if (val) {
+            phones.push({ number: val, type: "MOBILE", isPrimary: i === 1 });
+          }
         }
-
-        const phones: { number: string; type: string }[] = [];
-        const seenNumbers = new Set<string>();
-
-        const addPhone = (val: any) => {
-          if (!val) return;
-          const str = val.toString();
-          str.split(/[,;|]/).forEach((p: string) => {
-            const trimmed = p.trim();
-            if (trimmed && !seenNumbers.has(trimmed)) {
-              phones.push({ number: trimmed, type: "MOBILE" });
-              seenNumbers.add(trimmed);
-            }
-          });
-        };
-
-        // 1. Check the explicitly mapped Phone column
-        addPhone(resolve(r, "Phone"));
-
-        // 2. Auto-discover other phone columns (Phone 1, Phone 2, Mobile, Contact, etc.)
-        const mappedCol = fieldMappings["Phone"];
+        // Also auto-discover unmapped phone columns (backward compat)
+        const mappedPhoneCols = new Set(
+          Array.from({length: phoneSlotCount}, (_, i) => fieldMappings[`phone_${i+1}`]).filter(Boolean)
+        );
+        const seenNumbers = new Set(phones.map(p => p.number));
         Object.keys(r).forEach((col) => {
           const lowerCol = col.toLowerCase();
-          const isPhoneKeyword =
-            lowerCol.includes("phone") ||
-            lowerCol.includes("mobile") ||
-            lowerCol.includes("cell") ||
-            lowerCol.includes("contact");
-
-          // If it matches a keyword and wasn't already handled by the primary mapping
-          if (isPhoneKeyword && col !== mappedCol) {
-            addPhone(r[col]);
+          const isPhoneKeyword = lowerCol.includes("phone") || lowerCol.includes("mobile") ||
+            lowerCol.includes("cell") || lowerCol.includes("contact");
+          if (isPhoneKeyword && !mappedPhoneCols.has(col)) {
+            const val = r[col]?.toString().trim();
+            if (val && !seenNumbers.has(val)) {
+              phones.push({ number: val, type: "MOBILE", isPrimary: phones.length === 0 });
+              seenNumbers.add(val);
+            }
           }
         });
 
-        const tagsVal = resolve(r, "Tags");
+        // ── Emails: email_1 through email_5
+        const emails: { email: string; isPrimary: boolean }[] = [];
+        for (let i = 1; i <= emailSlotCount; i++) {
+          const val = resolve(r, `email_${i}`);
+          if (val) {
+            emails.push({ email: val, isPrimary: i === 1 });
+          }
+        }
+        // Also auto-discover unmapped email columns
+        const mappedEmailCols = new Set(
+          Array.from({length: emailSlotCount}, (_, i) => fieldMappings[`email_${i+1}`]).filter(Boolean)
+        );
+        const seenEmails = new Set(emails.map(e => e.email));
+        Object.keys(r).forEach((col) => {
+          if (col.toLowerCase().includes("email") && !mappedEmailCols.has(col)) {
+            const val = r[col]?.toString().trim();
+            if (val && !seenEmails.has(val)) {
+              emails.push({ email: val, isPrimary: emails.length === 0 });
+              seenEmails.add(val);
+            }
+          }
+        });
+
+        const tagsVal = resolve(r, "tags");
         const tags = tagsVal
           ? tagsVal.split(/[,;|]/).map((t: string) => t.trim()).filter(Boolean)
           : [];
@@ -1074,13 +1107,18 @@ export const importContacts = async (
         }
 
         return {
-          fullName: resolve(r, "Name") || "Unnamed",
-          address: resolve(r, "Property Address"),
-          city: resolve(r, "Property City"),
-          state: resolve(r, "Property State"),
-          zip: resolve(r, "Property Zip Code"),
-          source: fileExtension?.toUpperCase() + " Import",
-          notes: resolve(r, "Notes"),
+          fullName,
+          address: resolve(r, "address"),
+          city: resolve(r, "city"),
+          state: resolve(r, "state"),
+          zip: resolve(r, "zip"),
+          mailingAddress: resolve(r, "mailingAddress"),
+          mailingAddress2: resolve(r, "mailingAddress2"),
+          mailingCity: resolve(r, "mailingCity"),
+          mailingState: resolve(r, "mailingState"),
+          mailingZip: resolve(r, "mailingZip"),
+          source: resolve(r, "source") || fileExtension?.toUpperCase() + " Import",
+          notes: resolve(r, "notes"),
           tags,
           emails,
           phones,
