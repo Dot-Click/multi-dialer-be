@@ -879,8 +879,22 @@ export class DialerService {
         return;
       }
 
-      // 1. Download from Twilio and Upload to R2
-      const r2Url = await this.uploadRecordingToR2(recordingUrl, callSid);
+      // 1. Download from Twilio
+      const downloadUrl = recordingUrl.endsWith('.mp3') ? recordingUrl : `${recordingUrl}.mp3`;
+      const response = await axios<ArrayBuffer>({
+        url: downloadUrl,
+        method: 'GET',
+        responseType: 'arraybuffer',
+        auth: {
+          username: envConfig.TWILIO_ACCOUNT_SID!,
+          password: envConfig.TWILIO_AUTH_TOKEN!
+        }
+      });
+      const audioBuffer = Buffer.from(response.data);
+
+      // 2. Upload to R2
+      const r2Result = await uploadToR2(audioBuffer, 'audio/mpeg', 'call-recordings');
+      const r2Url = r2Result.url;
 
       // RESOLVE ROOT SID: If this recording is for a child leg, find the parent
       let targetSid = callSid;
@@ -892,18 +906,17 @@ export class DialerService {
         }
       }
 
+      // 3. Transcribe using the audio buffer directly (not the private R2 URL)
+      const audioFile = new File([audioBuffer], `recording-${callSid}.mp3`, { type: 'audio/mpeg' });
       const transcription = await groq.audio.transcriptions.create({
-        url: r2Url,
+        file: audioFile,
         model: "whisper-large-v3",
         temperature: 0,
         response_format: "verbose_json",
       });
-      // AI Sentiments Logic should be implemented here
+
       const sentimentAnalysis = await this.analyzeSentiment(transcription.text);
 
-      // console.log("sentimentAnalysis",sentimentAnalysis)
-
-      // CORRECTED: Execute in parallel without nested await inside the array
       await Promise.allSettled([
         prisma.callRecord.update({
           where: { callSid: targetSid },
@@ -943,7 +956,6 @@ export class DialerService {
         }
       });
 
-      // Upload buffer directly to R2
       const buffer = Buffer.from(response.data);
       const r2Result = await uploadToR2(buffer, 'audio/mpeg', 'call-recordings');
 
