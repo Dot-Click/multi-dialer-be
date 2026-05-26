@@ -922,7 +922,7 @@ export class DialerService {
     try {
       const downloadUrl = twilioUrl.endsWith('.mp3') ? twilioUrl : `${twilioUrl}.mp3`;
 
-      const response = await axios({
+      const response = await axios<ArrayBuffer>({
         url: downloadUrl,
         method: 'GET',
         responseType: 'arraybuffer',
