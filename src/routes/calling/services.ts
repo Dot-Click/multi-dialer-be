@@ -33,6 +33,8 @@ export interface Lead {
   priority: number;
   userId: string;
   originalContactId?: string; // The frontend contact ID, used for UI sync
+  queueCardId?: string; // The frontend per-phone queue card ID, used for UI status sync
+  phoneIndex?: number;
   isRedial?: boolean;
   attempts?: number; // Track attempts in current session
 }
@@ -70,6 +72,12 @@ export class PriorityCallQueue {
     return this.queue;
   }
 
+  removeWhere(predicate: (lead: Lead) => boolean): number {
+    const before = this.queue.length;
+    this.queue = this.queue.filter((lead) => !predicate(lead));
+    return before - this.queue.length;
+  }
+
   clear() {
     this.queue = [];
   }
@@ -78,7 +86,7 @@ export class PriorityCallQueue {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean; attempts?: number }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; queueCardId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean; attempts?: number }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
@@ -218,6 +226,22 @@ export class DialerService {
     // We identify them by checking leads that belonged to this user's active calls
     // (leadToCallerIdMap is shared so we leave it — it persists per-lead across sessions)
     console.log(`[DialerService] Hardware reset of stuck states for user ${userId} complete.`);
+  }
+
+  removeQueuedContactCards(userId: string, contactId: string, exceptQueueCardId?: string) {
+    const queue = this.userQueues.get(userId);
+    if (!queue || !contactId) return 0;
+
+    const removed = queue.removeWhere((lead) => (
+      lead.originalContactId === contactId &&
+      (!exceptQueueCardId || lead.queueCardId !== exceptQueueCardId)
+    ));
+
+    if (removed > 0) {
+      console.log(`[DialerService] Removed ${removed} queued phone cards for contact ${contactId}`);
+    }
+
+    return removed;
   }
 
   /**
@@ -453,12 +477,21 @@ export class DialerService {
         return;
       }
 
+      let dialTo = lead.phone;
+      if (!dialTo && lead.originalContactId && typeof lead.phoneIndex === "number") {
+        const contact = await prisma.contact.findUnique({
+          where: { id: lead.originalContactId },
+          include: { phones: true }
+        });
+        dialTo = contact?.phones?.[lead.phoneIndex]?.number || "";
+      }
+
       // 3. Initiate Twilio Call
       const userClient = await getTwilioClient(lead.userId);
       const call = await userClient.calls.create({
-        to: lead.phone,
+        to: dialTo,
         from: twilioFrom as string,
-        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&leadId=${lead.id}&contactId=${lead.originalContactId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&leadId=${lead.id}&contactId=${lead.originalContactId || lead.id}&queueCardId=${lead.queueCardId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
@@ -470,11 +503,12 @@ export class DialerService {
         } : {}),
       });
 
-      console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${lead.phone}) from ${twilioFrom}. SID: ${call.sid}`);
+      console.log(`[makeCall] Call initiated for user ${lead.userId} ${lead.fullName} (${dialTo}) from ${twilioFrom}. SID: ${call.sid}`);
       const sessionId = this.userActiveSessions.get(lead.userId);
       this.activeCalls.set(call.sid, {
         leadId: lead.id,
         contactId: lead.originalContactId || lead.id,
+        queueCardId: lead.queueCardId || lead.id,
         userId: lead.userId,
         sessionId,
         status: lead.isRedial ? "redialing" : "initiated",
@@ -484,7 +518,7 @@ export class DialerService {
 
       // CLEANUP: Remove from pending redials guard ONLY after the call is active in memory.
       // This prevents the "empty session" gap during makeCall's async setup.
-      const guardKey = lead.originalContactId || lead.id;
+      const guardKey = lead.queueCardId || lead.originalContactId || lead.id;
       this.pendingRedials.get(lead.userId)?.delete(guardKey);
 
       // ALSO remove from leadsInFlight now that it's active in memory
@@ -522,7 +556,7 @@ export class DialerService {
       console.error(`Failed to call lead ${lead.id}:`, error.message);
       
       // Cleanup on failure too
-      const guardKey = lead.originalContactId || lead.id;
+      const guardKey = lead.queueCardId || lead.originalContactId || lead.id;
       this.pendingRedials.get(lead.userId)?.delete(guardKey);
       this.leadsInFlight.get(lead.userId)?.delete(lead.id);
 
@@ -581,7 +615,7 @@ export class DialerService {
     
     // 1. Add active calls from memory
     Array.from(this.activeCalls.entries()).forEach(([sid, c]) => {
-      const lid = c.contactId || c.leadId;
+      const lid = c.queueCardId || c.contactId || c.leadId;
       const cUserId = c.userId?.toString().trim();
       
       if (cUserId === userId && lid) {
@@ -675,7 +709,7 @@ export class DialerService {
       return;
     }
 
-    let { leadId, contactId } = metadata || ({} as any);
+    let { leadId, contactId, queueCardId } = metadata || ({} as any);
     if (!userId) userId = providedAgentId;
 
     if (!userId) {
@@ -785,14 +819,14 @@ export class DialerService {
         // 1. Redial on overflow (agent busy)
         if (metadata?.status === 'callback') {
           console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
-          this.requeueLeadForRedial(userId, leadId, contactId, 2000, currentAttempts);
+          this.requeueLeadForRedial(userId, leadId, contactId, 2000, currentAttempts, queueCardId);
         } 
         // 2. Redial on technical failure or no-answer (Power Dialer behavior)
         else if (["busy", "no-answer", "failed"].includes(twilioStatus)) {
           if (currentAttempts < maxAttempts) {
             console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} status '${twilioStatus}'. Requeueing for redial (Attempt ${currentAttempts + 1}/${maxAttempts})`);
             // Use a longer delay for these (30s) to not annoy customer immediately
-            this.requeueLeadForRedial(userId, leadId, contactId, 30000, currentAttempts + 1);
+            this.requeueLeadForRedial(userId, leadId, contactId, 30000, currentAttempts + 1, queueCardId);
           } else {
             console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} reached max attempts (${maxAttempts}). Stopping redials.`);
           }
@@ -1034,12 +1068,12 @@ export class DialerService {
    * @param contactId - the frontend contact ID (used as key in queue and sticky map)
    * @param delayMs - milliseconds to wait before reinserting (default 15s)
    */
-  requeueLeadForRedial(userId: string, leadId: string, contactId: string, delayMs = 15_000, attempts = 1) {
+  requeueLeadForRedial(userId: string, leadId: string, contactId: string, delayMs = 15_000, attempts = 1, queueCardId?: string) {
     // Add to pending redials guard
     if (!this.pendingRedials.has(userId)) this.pendingRedials.set(userId, new Set());
     
     const userRedials = this.pendingRedials.get(userId)!;
-    const guardKey = contactId || leadId;
+    const guardKey = queueCardId || contactId || leadId;
 
     if (userRedials.has(guardKey)) {
       console.log(`[DialerService] Redial already pending for ${guardKey}, skipping duplicate timer.`);
@@ -1069,6 +1103,7 @@ export class DialerService {
             priority: 999,
             userId: lead.userId,
             originalContactId: contactId,
+            queueCardId: queueCardId || contactId || leadId,
             isRedial: true,
             attempts: attempts,
           });

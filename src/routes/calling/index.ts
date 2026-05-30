@@ -24,6 +24,7 @@ import {
   dropVoicemail,
   handleAmdStatus,
   stopDialing,
+  removeContactFromPowerQueue,
   agentReady,
   handleIncomingSms,
   getSmsInbox,
@@ -67,6 +68,7 @@ router.post("/toggle-hold", protectRoute, toggleHold);
 router.post("/toggle-hold", protectRoute, toggleHold);
 router.post("/leads", protectRoute, checkFeatureLocked, addLeadsToDialer);
 router.post("/stop-dialing", protectRoute, stopDialing);
+router.post("/queue/remove-contact", protectRoute, removeContactFromPowerQueue);
 router.post("/agent-ready", protectRoute, agentReady);
 router.get("/status", protectRoute, getDialerStatus);
 router.get("/status/:sid", protectRoute, getCallStatus);

@@ -193,6 +193,28 @@ export const stopDialing: RequestHandler = async (req, res) => {
   }
 };
 
+export const removeContactFromPowerQueue: RequestHandler = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const { contactId, exceptQueueCardId } = req.body;
+
+    if (!userId) {
+      errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
+      return;
+    }
+
+    if (!contactId) {
+      errorResponse(res, { message: "contactId is required" }, 400);
+      return;
+    }
+
+    const removed = dialerService.removeQueuedContactCards(userId, contactId, exceptQueueCardId);
+    successResponse(res, 200, "Queued phone cards removed", { removed });
+  } catch (error: any) {
+    errorResponse(res, { message: error.message || "Failed to remove queued phone cards" }, 500);
+  }
+};
+
 export const agentReady: RequestHandler = async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -326,17 +348,22 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
     }
 
     // 3. Add to Dialer Queue — pass pacing alongside caller IDs
-    const phoneToContactId = new Map(leads.map((l: any) => [l.phone, l.id]));
+    const leadPayloadByPhone = new Map(leads.map((l: any) => [l.phone, l]));
     await dialerService.addLeadsToQueue(
       userId,
-      savedLeads.map((l) => ({
+      savedLeads.map((l) => {
+        const originalPayload = leadPayloadByPhone.get(l.phone) || {};
+        return ({
         id: l.id,
         fullName: l.fullName,
         phone: l.phone,
         priority: l.priority,
         userId: userId,
-        originalContactId: phoneToContactId.get(l.phone),
-      })),
+          originalContactId: originalPayload.contactId || originalPayload.id,
+          queueCardId: originalPayload.id || l.id,
+          phoneIndex: originalPayload.phoneIndex,
+        });
+      }),
       callerIds || callerId, // Pass selected caller IDs (array) or ID (string) to service
       pacing              // Pass session-level pacing override
     );
@@ -391,6 +418,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   let agentId = body.agentId || req.query.agentId || req.params.agentId;
   const contactId = body.contactId || req.query.contactId || req.params.contactId || "";
   const leadId = body.leadId || req.query.leadId || req.params.leadId || "";
+  const queueCardId = body.queueCardId || req.query.queueCardId || "";
   const answeringMachineUrl = body.answeringMachineUrl || req.query.answeringMachineUrl || "";
   const busyRecordingUrl = body.busyRecordingUrl || req.query.busyRecordingUrl || "";
   const callerId = body.callerId || req.query.callerId || envConfig.TWILIO_PHONE_NUMBER;
@@ -419,6 +447,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
         userId: agentId,
         leadId: contactId,
         contactId: contactId,
+        queueCardId: queueCardId || contactId,
         sessionId: null,
         isBrowserCall: true,
         status: "initiated"
@@ -547,6 +576,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       userId: agentId,
       leadId: existingMeta?.leadId || contactId,
       contactId: existingMeta?.contactId || contactId,
+      queueCardId: existingMeta?.queueCardId || queueCardId || contactId,
       sessionId: existingMeta?.sessionId || null,
       isBrowserCall: false,
       status: "in-progress"
@@ -575,6 +605,9 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     clientNode.parameter({ name: 'dialerBridge', value: 'true' });
     if (contactId) {
       clientNode.parameter({ name: 'contactId', value: contactId });
+    }
+    if (existingMeta?.queueCardId || queueCardId) {
+      clientNode.parameter({ name: 'queueCardId', value: existingMeta?.queueCardId || queueCardId });
     }
   }
 
