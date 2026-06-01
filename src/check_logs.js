@@ -1,4 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
+
+if (process.env.NODE_ENV === "production") {
+  console.error("❌ Script not allowed in production");
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 async function checkSmsLogs() {

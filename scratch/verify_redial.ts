@@ -1,5 +1,10 @@
 import { DialerService } from "../src/routes/calling/services";
 
+if (process.env.NODE_ENV === "production") {
+  console.error("❌ Script not allowed in production");
+  process.exit(1);
+}
+
 async function testRedialLogic() {
   const dialer = DialerService.getInstance();
   const userId = "test-agent";

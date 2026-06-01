@@ -651,20 +651,16 @@ export async function deleteContactFromDb(id: string, userId: string) {
     });
 
     // 3. Scrub contactId from any ContactList.contactIds arrays
-    for (const l of lists) {
-      await tx.contactList.update({
-        where: { id: l.id },
-        data: { contactIds: l.contactIds.filter((cid) => cid !== id) },
-      });
-    }
+    await Promise.all(lists.map((l) => tx.contactList.update({
+      where: { id: l.id },
+      data: { contactIds: l.contactIds.filter((cid) => cid !== id) },
+    })));
 
     // 4. Scrub from ContactGroups as well
-    for (const g of groups) {
-      await tx.contactGroups.update({
-        where: { id: g.id },
-        data: { contactIds: g.contactIds.filter((cid) => cid !== id) },
-      });
-    }
+    await Promise.all(groups.map((g) => tx.contactGroups.update({
+      where: { id: g.id },
+      data: { contactIds: g.contactIds.filter((cid) => cid !== id) },
+    })));
 
     // Create Audit Log
     await tx.auditLog.create({
@@ -1384,20 +1380,21 @@ export async function bulkAssignContactsToListInDb(
     });
     if (!newList) throwHttp(404, "Target List not found");
 
-    for (const contactId of contactIds) {
+    await Promise.all(contactIds.map(async (contactId) => {
       // Remove contact from every other list it currently belongs to
       const currentLists = await tx.contactList.findMany({
         where: { contactIds: { has: contactId } },
         select: { id: true, contactIds: true },
       });
-      for (const l of currentLists) {
+      await Promise.all(currentLists.map((l) => {
         if (l.id !== listId) {
-          await tx.contactList.update({
+          return tx.contactList.update({
             where: { id: l.id },
             data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
           });
         }
-      }
+        return Promise.resolve();
+      }));
 
       // Add to target list if not already present
       if (!newList.contactIds.includes(contactId)) {
@@ -1411,7 +1408,7 @@ export async function bulkAssignContactsToListInDb(
         where: { id: contactId },
         data: { source: newList.name },
       });
-    }
+    }));
 
     return { success: true, listName: newList.name };
   });
@@ -1431,7 +1428,7 @@ export async function bulkMoveToDncInDb(
     // Pass the transaction client 'tx' to ensureDncFolder
     const dncFolder = await ensureDncFolder(userId, tx);
 
-    for (const contact of contacts) {
+    await Promise.all(contacts.map(async (contact) => {
       // 1. Mark contact as DO_NOT_CALL and move to DNC folder
       await tx.contact.update({
         where: { id: contact.id },
@@ -1447,14 +1444,12 @@ export async function bulkMoveToDncInDb(
         select: { id: true, contactIds: true }
       });
 
-      for (const list of contactLists) {
-        await tx.contactList.update({
-          where: { id: list.id },
-          data: {
-            contactIds: list.contactIds.filter(id => id !== contact.id)
-          }
-        });
-      }
+      await Promise.all(contactLists.map((list) => tx.contactList.update({
+        where: { id: list.id },
+        data: {
+          contactIds: list.contactIds.filter(id => id !== contact.id)
+        }
+      })));
 
       // 3. Create Audit Log
       const phoneNumbers = contact.phones.map((p) => p.number).join(", ");
@@ -1465,7 +1460,7 @@ export async function bulkMoveToDncInDb(
           details: `Contact: ${contact.fullName} (${phoneNumbers})`,
         },
       });
-    }
+    }));
 
     // 4. Send Compliance Alert to Admin/Owner (just one alert for bulk action)
     try {
@@ -2616,14 +2611,12 @@ export async function bulkDeleteContactsInDb(
         select: { id: true, folderIds: true }
       });
 
-      for (const contact of contacts) {
-        await tx.contact.update({
-          where: { id: contact.id },
-          data: {
-            folderIds: contact.folderIds.filter(id => id !== folderId)
-          }
-        });
-      }
+      await Promise.all(contacts.map((contact) => tx.contact.update({
+        where: { id: contact.id },
+        data: {
+          folderIds: contact.folderIds.filter(id => id !== folderId)
+        }
+      })));
 
       // 2. Clear from folder.contactIds array as well
       const folder = await tx.contactFolder.findUnique({
@@ -2686,12 +2679,10 @@ export async function bulkDeleteContactsInDb(
         select: { id: true, folderIds: true }
       });
 
-      for (const contact of contacts) {
-        await tx.contact.update({
-          where: { id: contact.id },
-          data: { folderIds: [] } // Unassign from all folders
-        });
-      }
+      await Promise.all(contacts.map((contact) => tx.contact.update({
+        where: { id: contact.id },
+        data: { folderIds: [] } // Unassign from all folders
+      })));
 
       await tx.auditLog.create({
         data: {
@@ -2724,14 +2715,12 @@ export async function bulkDeleteContactsInDb(
       select: { id: true, contactIds: true }
     });
 
-    for (const l of listsToScrub) {
-      await tx.contactList.update({
-        where: { id: l.id },
-        data: {
-          contactIds: l.contactIds.filter(id => !contactIds.includes(id))
-        }
-      });
-    }
+    await Promise.all(listsToScrub.map((l) => tx.contactList.update({
+      where: { id: l.id },
+      data: {
+        contactIds: l.contactIds.filter(id => !contactIds.includes(id))
+      }
+    })));
 
     // 4. Batch scrub from ALL groups as well
     const groupsToScrub = await tx.contactGroups.findMany({
@@ -2739,14 +2728,12 @@ export async function bulkDeleteContactsInDb(
       select: { id: true, contactIds: true }
     });
 
-    for (const g of groupsToScrub) {
-      await tx.contactGroups.update({
-        where: { id: g.id },
-        data: {
-          contactIds: g.contactIds.filter(id => !contactIds.includes(id))
-        }
-      });
-    }
+    await Promise.all(groupsToScrub.map((g) => tx.contactGroups.update({
+      where: { id: g.id },
+      data: {
+        contactIds: g.contactIds.filter(id => !contactIds.includes(id))
+      }
+    })));
 
     // 5. Delete all contact records
     await tx.contact.deleteMany({
@@ -2781,7 +2768,7 @@ export async function bulkAssignContactsToFolderInDb(
       });
     } else {
       // ADD mode: requires per-contact update because updateMany doesn't support array push
-      for (const id of contactIds) {
+      await Promise.all(contactIds.map(async (id) => {
         const contact = await tx.contact.findUnique({
           where: { id },
           select: { folderIds: true }
@@ -2793,7 +2780,7 @@ export async function bulkAssignContactsToFolderInDb(
             data: { folderIds: freshFolderIds }
           });
         }
-      }
+      }));
     }
 
     // Sync redundant folder.contactIds array
@@ -2893,13 +2880,13 @@ export async function mergeContactsInDb(
       select: { id: true, contactIds: true }
     });
 
-    for (const list of affectedLists) {
+    await Promise.all(affectedLists.map((list) => {
       const newContactIds = list.contactIds.filter(id => !allIds.includes(id));
-      await tx.contactList.update({
+      return tx.contactList.update({
         where: { id: list.id },
         data: { contactIds: newContactIds }
       });
-    }
+    }));
 
     // Add to target list
     const targetList = await tx.contactList.findUnique({

@@ -1,6 +1,5 @@
-import { PrismaClient, IntegrationProvider } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
+import { IntegrationProvider } from "@prisma/client";
 
 export const integrationService = {
   // Helper to find SystemSetting ID for the logged-in user

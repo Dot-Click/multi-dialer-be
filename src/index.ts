@@ -15,10 +15,15 @@ import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
 
 connectDB();
-startRetentionJobs();
-initJobs();
-startA2PStatusPoller();
-startMyPlusLeadsSyncWorker();
+if (process.env.ENABLE_CRON === "true") {
+  // FIX: keep cron/worker startup on one designated instance to avoid duplicate DB polling.
+  startRetentionJobs();
+  initJobs();
+  startA2PStatusPoller();
+  startMyPlusLeadsSyncWorker();
+} else {
+  console.log("⏭️ Cron jobs disabled - set ENABLE_CRON=true to enable");
+}
 
 const app = express();
 const PORT = envConfig.PORT || 3001;

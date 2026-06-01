@@ -1,6 +1,8 @@
 import { envConfig } from "../lib/config";
 import prisma from "../lib/prisma";
 import { decryptEIN as decrypt } from "../utils/encryption";
+import { chunkArray } from "@/utils/helpers";
+import { PhoneType } from "@prisma/client";
 
 const BASE_URL = "https://api.myplusleads.com";
 
@@ -200,72 +202,69 @@ export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncR
   let imported = 0;
   let skipped = 0;
 
-  for (const listing of listings) {
-    const primaryContact = listing.contacts[0];
-    if (!primaryContact) {
-      skipped++;
-      continue;
-    }
+  for (const listingChunk of chunkArray(listings, 50)) {
+    // FIX: keep the sync moving in batches while avoiding a giant burst of DB writes.
+    for (const listing of listingChunk) {
+      const primaryContact = listing.contacts[0];
+      if (!primaryContact) {
+        skipped++;
+        continue;
+      }
 
-    const source = listing.mlsNumber ?? listing.id;
-    const existing = await prisma.contact.findFirst({
-      where: { userId, source },
-    });
-    if (existing) {
-      skipped++;
-      continue;
-    }
+      const source = listing.mlsNumber ?? listing.id;
+      const existing = await prisma.contact.findFirst({
+        where: { userId, source },
+      });
+      if (existing) {
+        skipped++;
+        continue;
+      }
 
-    const fullName = `${primaryContact.firstName} ${primaryContact.lastName}`.trim() || "Unknown Contact";
+      const fullName = `${primaryContact.firstName} ${primaryContact.lastName}`.trim() || "Unknown Contact";
 
-    const newContact = await prisma.contact.create({
-      data: {
-        fullName,
-        userId,
-        address: listing.address,
-        city: listing.city,
-        state: listing.state,
-        zip: listing.zip,
-        mailingAddress: listing.ownerAddress,
-        mailingCity: listing.ownerCity,
-        mailingState: listing.ownerState,
-        mailingZip: listing.ownerZip,
-        source,
-        tags: ["MyPlusLeads", "Expired"],
-      },
-    });
-    imported++;
-
-    for (const phone of primaryContact.phones) {
-      await prisma.contactPhone.create({
+      const newContact = await prisma.contact.create({
         data: {
+          fullName,
+          userId,
+          address: listing.address,
+          city: listing.city,
+          state: listing.state,
+          zip: listing.zip,
+          mailingAddress: listing.ownerAddress,
+          mailingCity: listing.ownerCity,
+          mailingState: listing.ownerState,
+          mailingZip: listing.ownerZip,
+          source,
+          tags: ["MyPlusLeads", "Expired"],
+        },
+      });
+      imported++;
+
+      const phoneRows = [
+        ...primaryContact.phones.map((phone) => ({
           contactId: newContact.id,
           number: phone.number,
-          type: phone.type === "mobile" ? "MOBILE" : "TELEPHONE",
-        },
-      });
-    }
-
-    for (let i = 0; i < primaryContact.emails.length; i++) {
-      await prisma.contactEmail.create({
-        data: {
+          type: phone.type === "mobile" ? PhoneType.MOBILE : PhoneType.TELEPHONE,
+        })),
+        ...(listing.contacts[1]?.phones ?? []).map((phone) => ({
           contactId: newContact.id,
-          email: primaryContact.emails[i],
-          isPrimary: i === 0,
-        },
-      });
-    }
+          number: phone.number,
+          type: phone.type === "mobile" ? PhoneType.MOBILE : PhoneType.TELEPHONE,
+        })),
+      ];
 
-    const secondaryContact = listing.contacts[1];
-    if (secondaryContact) {
-      for (const phone of secondaryContact.phones) {
-        await prisma.contactPhone.create({
-          data: {
-            contactId: newContact.id,
-            number: phone.number,
-            type: phone.type === "mobile" ? "MOBILE" : "TELEPHONE",
-          },
-        });
+      if (phoneRows.length > 0) {
+        await prisma.contactPhone.createMany({ data: phoneRows, skipDuplicates: true });
+      }
+
+      const emailRows = primaryContact.emails.map((email, index) => ({
+        contactId: newContact.id,
+        email,
+        isPrimary: index === 0,
+      }));
+
+      if (emailRows.length > 0) {
+        await prisma.contactEmail.createMany({ data: emailRows, skipDuplicates: true });
       }
     }
   }

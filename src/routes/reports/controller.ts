@@ -629,6 +629,7 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
             });
         }
 
+        const dbOps: any[] = [];
         let updatedCount = 0;
         for (const tn of twilioNumbers) {
             const phoneNumber = tn.phoneNumber;
@@ -643,7 +644,7 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
             });
 
             if (existing) {
-                await prisma.callerId.update({
+                dbOps.push(prisma.callerId.update({
                     where: { id: existing.id },
                     data: {
                         twillioNumber: phoneNumber,
@@ -652,9 +653,9 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
                         lastReputationCheck: new Date(),
                         label: tn.friendlyName || phoneNumber,
                     }
-                });
+                }));
             } else {
-                await prisma.callerId.create({
+                dbOps.push(prisma.callerId.create({
                     data: {
                         twillioSid: tn.sid,
                         twillioNumber: phoneNumber,
@@ -665,9 +666,14 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
                         reputationScore: result?.score || 100,
                         lastReputationCheck: new Date(),
                     }
-                });
+                }));
             }
             updatedCount++;
+        }
+
+        if (dbOps.length > 0) {
+            // FIX: batch the writes so the refresh does not hold the pool open one update at a time.
+            await prisma.$transaction(dbOps);
         }
 
         successResponse(res, 200, `Refreshed reputation for ${updatedCount} numbers`);

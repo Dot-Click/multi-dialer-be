@@ -8,6 +8,7 @@ import { envConfig } from "@/lib/config";
 import twilio from "twilio";
 import { insertCallerIdInDb } from "../systemSettings/callerId/service";
 import { getTwilioClient } from "../../services/twilio-account.service";
+import { chunkArray } from "@/utils/helpers";
 
 const { jwt: { AccessToken } } = twilio;
 const VoiceGrant = AccessToken.VoiceGrant;
@@ -297,26 +298,29 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
 
     const existingPhonesMap = new Map(existingLeads.map((l) => [l.phone, l]));
 
-    const savedLeads = await Promise.all(
-      leads.map(async (l) => {
-        const existing = existingPhonesMap.get(l.phone);
-        if (existing) {
-          // Update existing lead to PENDING
-          return prisma.lead.update({
-            where: { id: existing.id },
-            data: {
-              fullName: l.fullName,
-              priority: l.priority || 0,
-              email: l.email || "",
-              address: l.address || "",
-              city: l.city || "",
-              state: l.state || "",
-              zip: l.zip || "",
-              phoneType: l.phoneType || "MOBILE",
-              status: "PENDING",
-            },
-          });
-        } else {
+    const savedLeads: any[] = [];
+    for (const leadChunk of chunkArray(leads, 50)) {
+      // FIX: process lead writes in batches to avoid a large burst of concurrent Prisma queries.
+      const chunkResults = await Promise.all(
+        leadChunk.map(async (l) => {
+          const existing = existingPhonesMap.get(l.phone);
+          if (existing) {
+            return prisma.lead.update({
+              where: { id: existing.id },
+              data: {
+                fullName: l.fullName,
+                priority: l.priority || 0,
+                email: l.email || "",
+                address: l.address || "",
+                city: l.city || "",
+                state: l.state || "",
+                zip: l.zip || "",
+                phoneType: l.phoneType || "MOBILE",
+                status: "PENDING",
+              },
+            });
+          }
+
           return prisma.lead.create({
             data: {
               fullName: l.fullName,
@@ -332,9 +336,10 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
               status: "PENDING",
             },
           });
-        }
-      })
-    );
+        })
+      );
+      savedLeads.push(...chunkResults);
+    }
 
     // 2. Pre-check compliance
     const compliance = await dialerService.checkCompliance(userId);

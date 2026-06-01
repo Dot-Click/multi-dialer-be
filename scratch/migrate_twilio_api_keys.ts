@@ -1,6 +1,11 @@
 import { PrismaClient } from '@prisma/client';
 import twilio from 'twilio';
 
+if (process.env.NODE_ENV === "production") {
+  console.error("❌ Script not allowed in production");
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 async function main() {
