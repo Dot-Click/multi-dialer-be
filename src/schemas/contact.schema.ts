@@ -8,6 +8,8 @@ export const contactEmailSchema = z.object({
 export const contactPhoneSchema = z.object({
   number: z.string().min(1),
   type: z.enum(["MOBILE", "TELEPHONE", "HOME", "WORK"]),
+  isPrimary: z.boolean().optional(),
+  isBestNumber: z.boolean().optional(),
 });
 
 export const createContactSchema = z.object({

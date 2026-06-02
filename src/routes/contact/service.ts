@@ -515,7 +515,7 @@ export async function updateContactInDb(
     tags: string[];
     dataDialerId: string | null;
     emails: { email: string; isPrimary: boolean }[];
-    phones: { number: string; type: any }[];
+    phones: { number: string; type: any; isPrimary?: boolean; isBestNumber?: boolean }[];
     notes: string[];
     description: string;
     agentRemarks: string;
@@ -595,7 +595,7 @@ export async function updateContactInDb(
           create: payload.phones.map((p) => ({
             number: p.number,
             type: p.type,
-            isBestNumber: (p as any).isBestNumber ?? false,
+            isBestNumber: p.isBestNumber ?? false,
           })),
         }
         : undefined,
