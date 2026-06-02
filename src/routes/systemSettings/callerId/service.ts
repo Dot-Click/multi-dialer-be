@@ -134,7 +134,9 @@ export async function recordCallAndRotateIfNeeded(
   }
 
   // ── Step 3: Increment and freeze if needed ────────────────────────────────
-  const now = new Date();
+  // All time arithmetic uses UTC epoch-ms via Date.now() so it is
+  // timezone-independent regardless of where the server process is running.
+  const nowUtcMs = Date.now(); // UTC epoch-ms — always timezone-safe
 
   // --- IDLE RESET LOGIC ---
   // If the number hasn't been used for 20 mins, reset its count to 0.
@@ -142,7 +144,7 @@ export async function recordCallAndRotateIfNeeded(
   // after a long break, even if the previous session didn't hit the limit.
   let callCount = callerIdRow.callCount ?? 0;
   const lastUsed = callerIdRow.updatedAt;
-  if (lastUsed && (now.getTime() - lastUsed.getTime()) > COOLDOWN_MS) {
+  if (lastUsed && (nowUtcMs - lastUsed.getTime()) > COOLDOWN_MS) {
     console.log("[recordCall] 🟢 Idle reset: Last used > 20 mins ago. Resetting callCount to 0.");
     callCount = 0;
   }
@@ -161,17 +163,19 @@ export async function recordCallAndRotateIfNeeded(
   console.log("[recordCall] current callCount:", callCount, "→ newCount:", newCount, "threshold:", threshold);
 
   if (newCount >= threshold) {
-    unfreezeAt = new Date(now.getTime() + COOLDOWN_MS);
+    // Store the unfreeze wall-clock as a Date (Prisma DateTime → UTC in Postgres).
+    // We derive it from the same nowUtcMs reference used throughout this function.
+    unfreezeAt = new Date(nowUtcMs + COOLDOWN_MS);
     isFrozen = true;
     rotated = true;
-    console.log("[recordCall] 🔴 FREEZING callerId. unfreezeAt:", unfreezeAt);
+    console.log("[recordCall] 🔴 FREEZING callerId. unfreezeAt (UTC):", unfreezeAt.toISOString());
   }
 
   const updated = await prisma.callerId.update({
     where: { id: callerIdRow.id },
     data: {
       callCount: newCount,
-      frozenAt: rotated ? now : (callCount === 0 ? null : undefined), // Reset states if idle reset happened
+      frozenAt: rotated ? new Date(nowUtcMs) : (callCount === 0 ? null : undefined),
       unfreezeAt: rotated ? unfreezeAt : (callCount === 0 ? null : undefined),
     },
   });
@@ -179,13 +183,16 @@ export async function recordCallAndRotateIfNeeded(
   console.log("[recordCall] ✅ DB updated:", {
     id: updated.id,
     callCount: updated.callCount,
-    frozenAt: updated.frozenAt,
-    unfreezeAt: updated.unfreezeAt,
+    frozenAt: updated.frozenAt?.toISOString(),
+    unfreezeAt: updated.unfreezeAt?.toISOString(),
   });
   console.log("─".repeat(60));
 
+  // Return unfreezeAt as UTC epoch-ms so the frontend can compare with Date.now().
   const unfreezeMs = unfreezeAt?.getTime() ?? null;
-  const secondsRemaining = unfreezeMs ? Math.max(0, Math.ceil((unfreezeMs - Date.now()) / 1000)) : 0;
+  const secondsRemaining = unfreezeMs
+    ? Math.max(0, Math.ceil((unfreezeMs - Date.now()) / 1000))
+    : 0;
 
   return { callCount: newCount, isFrozen, unfreezeAt: unfreezeMs, secondsRemaining, rotated };
 }
@@ -206,7 +213,10 @@ export async function getCooldownStatus(
     return Object.fromEntries(callerNumbers.map((n) => [n, { callCount: 0, isFrozen: false, unfreezeAt: null, secondsRemaining: 0 }]));
   }
 
-  const now = new Date();
+  // Use a single UTC epoch-ms reference for all comparisons in this call.
+  // Date.now() is always UTC regardless of server timezone.
+  const nowUtcMs = Date.now();
+  const now = new Date(nowUtcMs); // Date object used only where Prisma requires it
 
   const callerIdRows = await prisma.callerId.findMany({
     where: {
@@ -225,14 +235,18 @@ export async function getCooldownStatus(
 
   // console.log("[getCooldownStatus] found rows:", callerIdRows);
 
-  // Auto-expire
-  // 1. Cooldowns that have actually finished their time
-  const expiredCooldowns = callerIdRows.filter((r) => r.unfreezeAt !== null && r.unfreezeAt <= now);
-  // 2. Idle numbers that haven't been used for 20 mins (resets callCount even if not frozen)
-  const idleNumbers = callerIdRows.filter((r) =>
-    r.unfreezeAt === null && // Not currently frozen
-    r.callCount > 0 && // Has a count to reset
-    r.updatedAt && (now.getTime() - r.updatedAt.getTime()) > COOLDOWN_MS
+  // Auto-expire — all comparisons use UTC epoch-ms for timezone-safety
+  // 1. Cooldowns whose wall-clock expiry has passed
+  const expiredCooldowns = callerIdRows.filter(
+    (r) => r.unfreezeAt !== null && r.unfreezeAt.getTime() <= nowUtcMs
+  );
+  // 2. Idle numbers that haven't been used for ≥20 mins (resets callCount even if not frozen)
+  const idleNumbers = callerIdRows.filter(
+    (r) =>
+      r.unfreezeAt === null &&
+      r.callCount > 0 &&
+      r.updatedAt !== null &&
+      nowUtcMs - r.updatedAt.getTime() > COOLDOWN_MS
   );
 
   const resetBatch = [...expiredCooldowns, ...idleNumbers];
@@ -252,9 +266,13 @@ export async function getCooldownStatus(
 
   for (const num of callerNumbers) {
     const row = rowMap.get(num);
-    const isFrozen = !!row?.frozenAt && !!row?.unfreezeAt && row.unfreezeAt > now;
-    const unfreezeMs = isFrozen && row?.unfreezeAt ? row.unfreezeAt.getTime() : null;
-    const secondsRemaining = unfreezeMs ? Math.max(0, Math.ceil((unfreezeMs - Date.now()) / 1000)) : 0;
+    // Compare UTC epoch-ms on both sides — timezone-safe
+    const unfreezeAtMs = row?.unfreezeAt?.getTime() ?? null;
+    const isFrozen = !!row?.frozenAt && unfreezeAtMs !== null && unfreezeAtMs > nowUtcMs;
+    const unfreezeMs = isFrozen ? unfreezeAtMs : null;
+    const secondsRemaining = unfreezeMs
+      ? Math.max(0, Math.ceil((unfreezeMs - nowUtcMs) / 1000))
+      : 0;
 
     result[num] = {
       callCount: row?.callCount ?? 0,
