@@ -142,11 +142,26 @@ export async function recordCallAndRotateIfNeeded(
   // If the number hasn't been used for 20 mins, reset its count to 0.
   // This prevents "rotated after 1 call" issues when starting a new session
   // after a long break, even if the previous session didn't hit the limit.
+  //
+  // CRITICAL: Never idle-reset a number that is currently within its freeze
+  // window. The freeze timer is authoritative — it runs for the full
+  // COOLDOWN_MS from the moment the call was placed, regardless of whether
+  // the contact answered. Applying the idle reset to a frozen number would
+  // clear frozenAt/unfreezeAt in the DB update below (the callCount===0 branch),
+  // lifting the freeze prematurely.
+  //
+  // We check frozenAt directly from the DB row rather than comparing
+  // timestamps, so this guard works even if the DB session timezone differs
+  // from the Node.js process timezone (which would skew updatedAt comparisons).
+  const isCurrentlyFrozenInDb = !!callerIdRow.frozenAt && !!callerIdRow.unfreezeAt;
+
   let callCount = callerIdRow.callCount ?? 0;
   const lastUsed = callerIdRow.updatedAt;
-  if (lastUsed && (nowUtcMs - lastUsed.getTime()) > COOLDOWN_MS) {
+  if (!isCurrentlyFrozenInDb && lastUsed && (nowUtcMs - lastUsed.getTime()) > COOLDOWN_MS) {
     console.log("[recordCall] 🟢 Idle reset: Last used > 20 mins ago. Resetting callCount to 0.");
     callCount = 0;
+  } else if (isCurrentlyFrozenInDb) {
+    console.log("[recordCall] 🔒 Skipping idle reset — number is currently frozen.");
   }
 
   // Determine threshold: use the record's specific limit if it's greater than 1,
@@ -171,12 +186,17 @@ export async function recordCallAndRotateIfNeeded(
     console.log("[recordCall] 🔴 FREEZING callerId. unfreezeAt (UTC):", unfreezeAt.toISOString());
   }
 
+  // The idle-reset branch (callCount === 0 AND rotated === false) would write
+  // frozenAt: null / unfreezeAt: null, clearing any existing freeze.
+  // Guard: only allow that clear when the number was NOT already frozen in the DB.
+  const allowFreezeReset = callCount === 0 && !isCurrentlyFrozenInDb;
+
   const updated = await prisma.callerId.update({
     where: { id: callerIdRow.id },
     data: {
       callCount: newCount,
-      frozenAt: rotated ? new Date(nowUtcMs) : (callCount === 0 ? null : undefined),
-      unfreezeAt: rotated ? unfreezeAt : (callCount === 0 ? null : undefined),
+      frozenAt:   rotated ? new Date(nowUtcMs) : (allowFreezeReset ? null : undefined),
+      unfreezeAt: rotated ? unfreezeAt          : (allowFreezeReset ? null : undefined),
     },
   });
 
