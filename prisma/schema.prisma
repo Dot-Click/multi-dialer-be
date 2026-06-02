@@ -392,6 +392,8 @@ model Contact {
   source         String?
   tags           String[] @default([])
   notes          String[] @default([])
+  description    String?
+  agentRemarks   String?
   dataDialerId   String?
   userId         String?
 
@@ -456,11 +458,12 @@ model ContactEmail {
 }
 
 model ContactPhone {
-  id        String    @id @default(cuid())
-  number    String
-  type      PhoneType
-  contactId String
-  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  id            String    @id @default(cuid())
+  number        String
+  type          PhoneType
+  isBestNumber  Boolean   @default(false)
+  contactId     String
+  contact       Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@index([number])
 }

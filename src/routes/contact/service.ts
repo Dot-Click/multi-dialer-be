@@ -517,6 +517,8 @@ export async function updateContactInDb(
     emails: { email: string; isPrimary: boolean }[];
     phones: { number: string; type: any }[];
     notes: string[];
+    description: string;
+    agentRemarks: string;
     miscValues: any;
     leadsheetValues: any;
     status: string;
@@ -565,6 +567,8 @@ export async function updateContactInDb(
       source: payload.source,
       tags: payload.tags,
       notes: payload.notes,
+      description: payload.description,
+      agentRemarks: payload.agentRemarks,
       miscValues: payload.miscValues,
       leadsheetValues: payload.leadsheetValues,
       permission: payload.permission,
@@ -591,6 +595,7 @@ export async function updateContactInDb(
           create: payload.phones.map((p) => ({
             number: p.number,
             type: p.type,
+            isBestNumber: (p as any).isBestNumber ?? false,
           })),
         }
         : undefined,
@@ -1656,7 +1661,9 @@ export async function importContactsInDb(args: {
         mailingState: c.mailingState || null,
         mailingZip: c.mailingZip || null,
         source: c.source || "CSV Import",
-        notes: c.notes ? (Array.isArray(c.notes) ? c.notes : [String(c.notes)]) : [],
+        notes: [],
+        description: c.description ? String(c.description) : (c.notes ? (Array.isArray(c.notes) ? c.notes.join("\n") : String(c.notes)) : null),
+        agentRemarks: null,
         tags: c.tags || [],
         // Store misc field values as JSON blob (Birthday, Notes from misc, etc.)
         miscValues: c.miscValues ?? null,
@@ -1723,7 +1730,8 @@ export async function importContactsInDb(args: {
             mailingState: incoming.mailingState || null,
             mailingZip: incoming.mailingZip || null,
             source: incoming.source || "CSV Import",
-            notes: incoming.notes ? (Array.isArray(incoming.notes) ? incoming.notes : [String(incoming.notes)]) : [],
+            notes: undefined, // never overwrite agent/Slingvo notes on import
+            description: incoming.description ? String(incoming.description) : (incoming.notes ? (Array.isArray(incoming.notes) ? incoming.notes.join("\n") : String(incoming.notes)) : undefined),
             tags: incoming.tags || [],
             miscValues: incoming.miscValues ?? undefined,
           },

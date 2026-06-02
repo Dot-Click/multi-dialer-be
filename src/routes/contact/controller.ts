@@ -1118,7 +1118,7 @@ export const importContacts = async (
           mailingState: resolve(r, "mailingState"),
           mailingZip: resolve(r, "mailingZip"),
           source: resolve(r, "source") || fileExtension?.toUpperCase() + " Import",
-          notes: resolve(r, "notes"),
+          description: resolve(r, "description") || resolve(r, "notes"), // "notes" key kept for backward-compat
           tags,
           emails,
           phones,

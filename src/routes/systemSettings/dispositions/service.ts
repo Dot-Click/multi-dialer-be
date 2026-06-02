@@ -202,29 +202,32 @@ export class DispositionService {
         // 2. Resolve which folder to drop contact into
         const resolvedFolderId = overrideFolderId ?? disposition.targetFolderId ?? null;
 
-        // 3. If there's a folder, add it to contact.folderIds (avoid duplicates)
+        console.log(`[applyDisposition] contact=${contactId} disposition=${disposition.label} resolvedFolderId=${resolvedFolderId ?? 'none'}`);
+
+        // 3. Move contact: set folderIds to only the resolved folder, and remove from all lists
         if (resolvedFolderId) {
+            // 3a. Remove contact from every list it currently belongs to
+            const listsContainingContact = await prisma.contactList.findMany({
+                where: { contactIds: { has: contactId } },
+                select: { id: true, contactIds: true }
+            });
+            if (listsContainingContact.length > 0) {
+                console.log(`[applyDisposition] Removing contact from ${listsContainingContact.length} list(s)`);
+                await Promise.all(listsContainingContact.map(list =>
+                    prisma.contactList.update({
+                        where: { id: list.id },
+                        data: { contactIds: list.contactIds.filter(id => id !== contactId) }
+                    })
+                ));
+            }
+
+            // 3b. Set contact's folderIds to only the disposition folder
             await prisma.contact.update({
                 where: { id: contactId },
-                data: {
-                    folderIds: {
-                        push: resolvedFolderId
-                    }
-                }
+                data: { folderIds: [resolvedFolderId] }
             });
 
-            // Dedupe folderIds
-            const contact = await prisma.contact.findUnique({
-                where: { id: contactId },
-                select: { folderIds: true }
-            });
-            if (contact) {
-                const uniqueFolderIds = [...new Set(contact.folderIds)];
-                await prisma.contact.update({
-                    where: { id: contactId },
-                    data: { folderIds: uniqueFolderIds }
-                });
-            }
+            console.log(`[applyDisposition] Contact moved to folder ${resolvedFolderId}, removed from all lists`);
         }
 
         // 4. If MANUAL — create ContactDispositionLog
