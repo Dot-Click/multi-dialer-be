@@ -249,6 +249,7 @@ model User {
   myPlusLeadsConfig MyPlusLeadsConfig?
   a2pRegistration   A2P_Registration?
   dispositionLogs   ContactDispositionLog[]
+  dialListSessions  DialListSession[]
 
   @@map("users")
 }
@@ -1472,4 +1473,18 @@ model ContactDispositionLog {
   createdAt DateTime @default(now())
 
   @@map("contact_disposition_logs")
+}
+
+model DialListSession {
+  id            String   @id @default(cuid())
+  userId        String
+  listId        String
+  lastContactId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listId])
+  @@map("dial_list_sessions")
 }

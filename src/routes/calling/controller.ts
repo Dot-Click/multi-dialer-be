@@ -1384,6 +1384,261 @@ export const getCallSummary: RequestHandler = async (req: Request, res: Response
 };
 
 
+// ── Dial Filters ─────────────────────────────────────────────────────────────
+
+export const filterDialContacts: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) { errorResponse(res, { message: "Unauthorized" }, 401); return; }
+
+    const { contactIds, listId, filters } = req.body as {
+      contactIds: string[];
+      listId?: string;
+      filters: {
+        startMode: 'resume' | 'top';
+        neverDialed?: 'ever' | 'today' | '24h' | '2d' | '5d' | null;
+        neverContacted?: boolean;
+        statusChangedWithin?: '7d' | '14d' | '30d' | null;
+        createdAfter?: string | null;
+        createdBefore?: string | null;
+      };
+    };
+
+    if (!contactIds?.length) {
+      successResponse(res, 200, "No contacts provided", { contactIds: [] });
+      return;
+    }
+
+    let result: string[] = [...contactIds];
+
+    // ── Never Dialed filter ────────────────────────────────────────────────
+    if (filters.neverDialed) {
+      let since: Date | undefined;
+      const now = new Date();
+      if (filters.neverDialed === 'today') {
+        since = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else if (filters.neverDialed === '24h') {
+        since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      } else if (filters.neverDialed === '2d') {
+        since = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+      } else if (filters.neverDialed === '5d') {
+        since = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
+      }
+      // 'ever' means no call records at all → no `since` date
+
+      const calledRecords = await prisma.callRecord.findMany({
+        where: {
+          contactId: { in: result },
+          userId,
+          ...(since ? { startTime: { gte: since } } : {}),
+        },
+        select: { contactId: true },
+        distinct: ['contactId'],
+      });
+      const calledSet = new Set(calledRecords.map((r: any) => r.contactId).filter(Boolean));
+      result = result.filter((id) => !calledSet.has(id));
+    }
+
+    // ── Never Contacted filter ─────────────────────────────────────────────
+    if (filters.neverContacted) {
+      // "Contacted" = any call record with a non-null, non-empty disposition
+      const contactedRecords = await prisma.callRecord.findMany({
+        where: {
+          contactId: { in: result },
+          userId,
+          disposition: { not: null },
+        },
+        select: { contactId: true },
+        distinct: ['contactId'],
+      });
+      const contactedSet = new Set(contactedRecords.map((r: any) => r.contactId).filter(Boolean));
+      result = result.filter((id) => !contactedSet.has(id));
+    }
+
+    // ── Status Changed Within filter ───────────────────────────────────────
+    if (filters.statusChangedWithin) {
+      const days = filters.statusChangedWithin === '7d' ? 7 : filters.statusChangedWithin === '14d' ? 14 : 30;
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const changedLogs = await prisma.contactDispositionLog.findMany({
+        where: {
+          contactId: { in: result },
+          createdAt: { gte: since },
+        },
+        select: { contactId: true },
+        distinct: ['contactId'],
+      });
+      const changedSet = new Set(changedLogs.map((l: any) => l.contactId));
+      result = result.filter((id) => !changedSet.has(id));
+    }
+
+    // ── Created Date filter ────────────────────────────────────────────────
+    if (filters.createdAfter || filters.createdBefore) {
+      const contacts = await prisma.contact.findMany({
+        where: {
+          id: { in: result },
+          ...(filters.createdAfter || filters.createdBefore ? {
+            createdAt: {
+              ...(filters.createdAfter ? { gte: new Date(filters.createdAfter) } : {}),
+              ...(filters.createdBefore ? { lte: new Date(filters.createdBefore) } : {}),
+            },
+          } : {}),
+        },
+        select: { id: true },
+      });
+      const validSet = new Set(contacts.map((c: any) => c.id));
+      result = result.filter((id) => validSet.has(id));
+    }
+
+    // ── Start Mode: Resume ─────────────────────────────────────────────────
+    if (filters.startMode === 'resume' && listId) {
+      const session = await (prisma as any).dialListSession.findUnique({
+        where: { userId_listId: { userId, listId } },
+      });
+
+      if (session?.lastContactId && result.includes(session.lastContactId)) {
+        const lastIdx = result.indexOf(session.lastContactId);
+        // savedId means "start FROM here" — so slice is inclusive of lastIdx
+        const afterLast = result.slice(lastIdx);
+        const beforeLast = result.slice(0, lastIdx);
+
+        // "New leads first" = contacts with no call records at all go to the front
+        const anyCallRecords = await prisma.callRecord.findMany({
+          where: { contactId: { in: result }, userId },
+          select: { contactId: true },
+          distinct: ['contactId'],
+        });
+        const everCalledSet = new Set(anyCallRecords.map((r: any) => r.contactId).filter(Boolean));
+
+        const newLeads = beforeLast.filter((id) => !everCalledSet.has(id));
+        const resumeFrom = afterLast;
+        const remainder = beforeLast.filter((id) => everCalledSet.has(id));
+
+        result = [...newLeads, ...resumeFrom, ...remainder];
+      }
+      // If no session found, use the order as-is (top of list)
+    }
+
+    successResponse(res, 200, "Contacts filtered successfully", { contactIds: result });
+  } catch (error: any) {
+    console.error("filterDialContacts failed:", error);
+    errorResponse(res, { message: error.message });
+  }
+};
+
+export const upsertDialSession: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) { errorResponse(res, { message: "Unauthorized" }, 401); return; }
+
+    const { listId, lastContactId } = req.body as { listId: string; lastContactId: string };
+    if (!listId || !lastContactId) {
+      errorResponse(res, { message: "listId and lastContactId are required" }, 400);
+      return;
+    }
+
+    await (prisma as any).dialListSession.upsert({
+      where: { userId_listId: { userId, listId } },
+      update: { lastContactId },
+      create: { userId, listId, lastContactId },
+    });
+
+    successResponse(res, 200, "Dial session updated", {});
+  } catch (error: any) {
+    console.error("upsertDialSession failed:", error);
+    errorResponse(res, { message: error.message });
+  }
+};
+
+export const getDialSession: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) { errorResponse(res, { message: "Unauthorized" }, 401); return; }
+
+    const { listId } = req.params;
+    const session = await (prisma as any).dialListSession.findUnique({
+      where: { userId_listId: { userId, listId } },
+    });
+
+    successResponse(res, 200, "Dial session fetched", { lastContactId: session?.lastContactId ?? null });
+  } catch (error: any) {
+    console.error("getDialSession failed:", error);
+    errorResponse(res, { message: error.message });
+  }
+};
+
+export const getContactAnalysis: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { contactId } = req.params;
+    if (!contactId) {
+      errorResponse(res, { message: "Contact ID is required" }, 400);
+      return;
+    }
+
+    // Get all completed call records for this contact that have analysis
+    const callRecords = await prisma.callRecord.findMany({
+      where: { contactId, status: "completed" },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (callRecords.length === 0) {
+      successResponse(res, 200, "No calls found for this contact", { hasData: false });
+      return;
+    }
+
+    const callSids = callRecords.map((r: any) => r.callSid);
+
+    const analyses = await prisma.callAnalysis.findMany({
+      where: { callSid: { in: callSids } },
+    });
+
+    if (analyses.length === 0) {
+      successResponse(res, 200, "No analysis available for this contact", { hasData: false });
+      return;
+    }
+
+    // Aggregate sentiment counts
+    const sentimentCounts = { positive: 0, neutral: 0, negative: 0 };
+    let totalConfidence = 0;
+
+    for (const a of analyses) {
+      const s = (a.sentiment || "").toLowerCase();
+      if (s === "positive") sentimentCounts.positive++;
+      else if (s === "negative") sentimentCounts.negative++;
+      else sentimentCounts.neutral++;
+      totalConfidence += a.confidence || 0;
+    }
+
+    const total = analyses.length;
+    const positivePercent = Math.round((sentimentCounts.positive / total) * 100);
+    const neutralPercent = Math.round((sentimentCounts.neutral / total) * 100);
+    const negativePercent = 100 - positivePercent - neutralPercent;
+    const avgConfidence = Math.round((totalConfidence / total) * 100);
+
+    // Most recent call's data for suggestions
+    const latestRecord = callRecords[0];
+    const latestAnalysis = analyses.find((a: any) => a.callSid === latestRecord.callSid);
+
+    successResponse(res, 200, "Contact analysis fetched successfully", {
+      hasData: true,
+      sentiment: {
+        positive: positivePercent,
+        neutral: neutralPercent,
+        negative: negativePercent,
+      },
+      confidence: avgConfidence,
+      totalCalls: total,
+      latestDisposition: latestRecord.disposition || null,
+      latestSentiment: latestAnalysis?.sentiment || null,
+      latestSummary: latestAnalysis?.aiSummary || null,
+    });
+    return;
+  } catch (error: any) {
+    console.error("Get contact analysis failed:", error);
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
 export const setCounter: RequestHandler = async (req: Request, res: Response) => {
   try {
     const { sid } = req.params;

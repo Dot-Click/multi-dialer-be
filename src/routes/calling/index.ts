@@ -17,6 +17,10 @@ import {
   getHistory,
   getCallStatus,
   getCallSummary,
+  getContactAnalysis,
+  filterDialContacts,
+  upsertDialSession,
+  getDialSession,
   setCounter,
   getCallerIds,
   toggleHold,
@@ -74,6 +78,10 @@ router.get("/status", protectRoute, getDialerStatus);
 router.get("/status/:sid", protectRoute, getCallStatus);
 router.get("/getHistory", protectRoute, getHistory);
 router.get("/sentiments/:sid", protectRoute, getCallSummary);
+router.get("/contact-analysis/:contactId", protectRoute, getContactAnalysis);
+router.post("/filter-contacts", protectRoute, filterDialContacts);
+router.post("/dial-session", protectRoute, upsertDialSession);
+router.get("/dial-session/:listId", protectRoute, getDialSession);
 
 // Analytics & Reports
 router.get("/stats", protectRoute, getAggregateStats);
