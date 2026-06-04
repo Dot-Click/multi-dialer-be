@@ -83,6 +83,33 @@ export class PriorityCallQueue {
   }
 }
 
+// ── Formats the structured LLM output into a readable aiSummary string ─────────
+function buildAiSummary(a: any): string {
+  if (!a) return "";
+
+  const lines: string[] = [];
+
+  if (a.summary) lines.push(a.summary);
+
+  if (Array.isArray(a.topics_discussed) && a.topics_discussed.length > 0) {
+    lines.push(`Topics: ${a.topics_discussed.join(", ")}.`);
+  }
+
+  if (Array.isArray(a.objections) && a.objections.length > 0) {
+    lines.push(`Objections: ${a.objections.join("; ")}.`);
+  }
+
+  if (a.next_steps && a.next_steps !== "none") {
+    lines.push(`Next steps: ${a.next_steps}.`);
+  }
+
+  if (a.lead_interest) {
+    lines.push(`Lead interest: ${a.lead_interest}. Outcome: ${a.call_outcome ?? "unknown"}.`);
+  }
+
+  return lines.join("\n\n");
+}
+
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
@@ -654,26 +681,42 @@ export class DialerService {
 
   async analyzeSentiment(transcript: string) {
     const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile", // fast + powerful
+      model: "llama-3.3-70b-versatile",
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
-          content: `
-            You are a sales call analyzer.
+          content: `You are an expert sales call analyst for an outbound real estate dialing platform.
+You will receive the full transcript of a recorded sales call.
+Your job is to produce a highly accurate, detailed analysis of exactly what was said and what happened.
 
-            Return ONLY valid JSON:
-            {
-              "sentiment": "positive" | "neutral" | "negative",
-              "confidence": number (0-1),
-              "lead_interest": "high" | "medium" | "low",
-              "summary": "2-3 line short summary"
-            }`
+SENTIMENT RULES — be precise, not generous:
+• "positive"  — prospect is actively engaged: asks questions, expresses interest, agrees to a next step, or requests more information.
+• "neutral"   — prospect is polite but non-committal: willing to listen but gives no real signal either way, asks to call back at a vague future time, or gives soft deflections.
+• "negative"  — prospect is disengaged or hostile: says they're not interested, asks to be removed from the list, hangs up quickly, raises hard objections, or is clearly dismissive.
+
+ACCURACY RULES:
+• Report ONLY what is explicitly in the transcript — do not invent or infer details not present.
+• If the call was short (under 30 seconds) or the prospect immediately declined, reflect that accurately.
+• Quotes or paraphrases from the transcript are preferred over generic observations.
+• If the transcript is empty, too short, or unintelligible, set sentiment to "neutral" and note it in the summary.
+
+Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
+{
+  "sentiment": "positive" | "neutral" | "negative",
+  "confidence": <float 0.0–1.0 reflecting how certain you are>,
+  "lead_interest": "high" | "medium" | "low" | "none",
+  "topics_discussed": [<specific topics mentioned, e.g. "property listing on Main St", "pricing", "viewing availability">],
+  "objections": [<exact objections raised, e.g. "already working with another agent", "not the right time">],
+  "next_steps": "<agreed follow-up action, or 'none'>",
+  "call_outcome": "interested" | "callback_requested" | "not_interested" | "voicemail" | "hung_up_early" | "no_meaningful_conversation",
+  "summary": "<4–6 sentences describing: (1) how the call opened, (2) what topics came up, (3) how the prospect responded to key points, (4) any objections and how they were handled, (5) how the call ended and what was agreed>"
+}`
         },
         {
           role: "user",
-          content: transcript
+          content: transcript.trim() || "(No transcript available — call may have been too short or silent.)"
         }
       ]
     });
@@ -947,9 +990,26 @@ export class DialerService {
         model: "whisper-large-v3",
         temperature: 0,
         response_format: "verbose_json",
-      });
+      }) as any;
 
-      const sentimentAnalysis = await this.analyzeSentiment(transcription.text);
+      // Build a richer transcript from segments (with timestamps) when available.
+      // This preserves conversational pacing and gives the LLM far more context than
+      // a single flat text blob — making sentiment and topic detection far more accurate.
+      let richTranscript: string;
+      if (transcription.segments && Array.isArray(transcription.segments) && transcription.segments.length > 0) {
+        richTranscript = transcription.segments
+          .map((seg: any) => {
+            const start = Math.floor(seg.start ?? 0);
+            const mm = String(Math.floor(start / 60)).padStart(2, "0");
+            const ss = String(start % 60).padStart(2, "0");
+            return `[${mm}:${ss}] ${(seg.text ?? "").trim()}`;
+          })
+          .join("\n");
+      } else {
+        richTranscript = transcription.text ?? "";
+      }
+
+      const sentimentAnalysis = await this.analyzeSentiment(richTranscript);
 
       await Promise.allSettled([
         prisma.callRecord.update({
@@ -963,10 +1023,10 @@ export class DialerService {
             callSid: targetSid,
             leadId: "",
             recordingUrl: r2Url,
-            sentiment: sentimentAnalysis?.sentiment || "",
+            sentiment: sentimentAnalysis?.sentiment || "neutral",
             confidence: sentimentAnalysis?.confidence || 0,
-            aiSummary: sentimentAnalysis?.summary || "",
-            transcript: transcription.text
+            aiSummary: buildAiSummary(sentimentAnalysis),
+            transcript: richTranscript || transcription.text
           }
         })
       ]);
