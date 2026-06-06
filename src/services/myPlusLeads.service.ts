@@ -1,6 +1,7 @@
+import crypto from "crypto";
 import { envConfig } from "../lib/config";
 import prisma from "../lib/prisma";
-import { decryptEIN as decrypt } from "../utils/encryption";
+import { decryptEIN as decrypt, encryptEIN as encrypt } from "../utils/encryption";
 import { chunkArray } from "@/utils/helpers";
 import { PhoneType } from "@prisma/client";
 
@@ -323,6 +324,97 @@ export async function createMyPlusLeadsAccount(params: {
   console.log('[MyPlusLeads] Create account response status:', res.status);
   console.log('[MyPlusLeads] Create account response body:', JSON.stringify(data));
   return { accountId: data.accountId };
+}
+
+/**
+ * Repair a broken MyPlusLeads integration for a user.
+ *
+ * Handles two cases:
+ *  1. status=FAILED / missing credentials — account may exist in MPL but
+ *     credentials were never saved (e.g. due to the Int→String Prisma bug).
+ *  2. status=CONNECTED but auth fails — stored password doesn't match MPL.
+ *
+ * Strategy: re-create the sub-account using the enterprise API with a fresh
+ * password. MPL uses the email as the unique key, so if the account already
+ * exists it may return an error — in that case we try updating the password
+ * via the enterprise update endpoint. After credentials are saved we run an
+ * immediate sync.
+ */
+export async function repairAndSyncUser(userId: string): Promise<MyPlusLeadsSyncResult> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, fullName: true },
+  });
+  if (!user) throw new MyPlusLeadsError("User not found.", 404);
+
+  const subEmail = `slingvo+${userId}@slingvo.com`;
+  const newPassword = crypto.randomBytes(12).toString("hex");
+  const nameParts = (user.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
+  const firstName = nameParts[0] || "User";
+  const lastName = nameParts.slice(1).join(" ") || "User";
+  const defaultBaseZip = envConfig.MYPLUSLEADS_DEFAULT_BASE_ZIP || "78701";
+
+  let accountId: string;
+
+  try {
+    // Try creating the account (will succeed if it doesn't exist yet, or if MPL
+    // allows re-creation with the same email under the enterprise).
+    const result = await createMyPlusLeadsAccount({
+      email: subEmail,
+      password: newPassword,
+      firstName,
+      lastName,
+      phone: "0000000000",
+      address: "123 Main St",
+      city: "Austin",
+      state: "TX",
+      zip: defaultBaseZip,
+      baseZip: defaultBaseZip,
+    });
+    accountId = String(result.accountId);
+    console.log(`[MyPlusLeads Repair] Created new sub-account for userId=${userId}, accountId=${accountId}`);
+  } catch (createErr: any) {
+    // Account likely already exists — try updating the password via enterprise
+    console.warn(`[MyPlusLeads Repair] Create failed (${createErr.message}), trying enterprise password update...`);
+    const authToken = await authenticateEnterprise();
+    const existing = await prisma.myPlusLeadsConfig.findUnique({ where: { userId }, select: { subAccountId: true } });
+    if (!existing?.subAccountId) throw new MyPlusLeadsError("Cannot repair: no subAccountId on record.", 400);
+    accountId = existing.subAccountId;
+
+    const updateRes = await fetch(`${BASE_URL}/enterprise/account`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ authToken, accountId, password: newPassword }),
+    });
+    if (!updateRes.ok) {
+      const msg = await responseErrorMessage(updateRes);
+      throw new MyPlusLeadsError(`Enterprise password update failed: ${msg}`, 502);
+    }
+    console.log(`[MyPlusLeads Repair] Password updated for accountId=${accountId}`);
+  }
+
+  // Save the fresh credentials to DB — upsert so it works for both FAILED and CONNECTED states
+  await prisma.myPlusLeadsConfig.upsert({
+    where: { userId },
+    create: {
+      userId,
+      subAccountEmail: subEmail,
+      subAccountPassword: encrypt(newPassword),
+      subAccountId: accountId,
+      status: "CONNECTED",
+      errorMessage: null,
+    },
+    update: {
+      subAccountEmail: subEmail,
+      subAccountPassword: encrypt(newPassword),
+      subAccountId: accountId,
+      status: "CONNECTED",
+      errorMessage: null,
+    },
+  });
+
+  console.log(`[MyPlusLeads Repair] Credentials saved for userId=${userId}. Starting sync...`);
+  return syncLeadsForUser(userId);
 }
 
 export async function disableMyPlusLeadsAccount(subAccountId: string): Promise<void> {

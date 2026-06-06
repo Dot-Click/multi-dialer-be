@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
-import { syncLeadsForUser } from "../../services/myPlusLeads.service";
+import { syncLeadsForUser, repairAndSyncUser } from "../../services/myPlusLeads.service";
 
 export const getMyPlusLeadsConfig = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -56,6 +56,38 @@ export const deleteMyPlusLeadsConfig = async (req: Request, res: Response): Prom
     successResponse(res, 200, "Integration disconnected");
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error");
+  }
+};
+
+/**
+ * POST /integrations/myplusleads/repair
+ * Re-provisions broken MyPlusLeads credentials then runs an immediate sync.
+ * Use when the sub-account auth fails (401) or when status=FAILED.
+ */
+export const repairMyPlusLeads = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+    const result = await repairAndSyncUser(userId);
+    const config = await prisma.myPlusLeadsConfig.findUnique({
+      where: { userId },
+      select: { lastSyncAt: true, subAccountId: true },
+    });
+    successResponse(res, 200, "MyPlusLeads account repaired and synced", {
+      ...result,
+      lastSyncAt: config?.lastSyncAt ?? null,
+      subAccountId: config?.subAccountId ?? null,
+    });
+  } catch (error: any) {
+    const message = error.message || "MyPlusLeads repair failed";
+    console.error("[MyPlusLeads] Repair failed:", message);
+    const userId = (req as any).user?.id;
+    if (userId) {
+      await prisma.myPlusLeadsConfig.update({
+        where: { userId },
+        data: { errorMessage: message },
+      }).catch(() => undefined);
+    }
+    errorResponse(res, message, error.statusCode || 500);
   }
 };
 

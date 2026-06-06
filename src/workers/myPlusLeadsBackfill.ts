@@ -1,5 +1,5 @@
 import prisma from "../lib/prisma";
-import { syncLeadsForUser } from "../services/myPlusLeads.service";
+import { syncLeadsForUser, repairAndSyncUser } from "../services/myPlusLeads.service";
 
 /**
  * One-time backfill: sync leads for every existing user who has a connected
@@ -12,31 +12,42 @@ import { syncLeadsForUser } from "../services/myPlusLeads.service";
  * the MyPlusLeads API with concurrent requests.
  */
 export async function backfillMyPlusLeadsExistingUsers(): Promise<void> {
-  const unsynced = await prisma.myPlusLeadsConfig.findMany({
+  // Case 1: CONNECTED but never synced — try a straight sync first.
+  // Case 2: FAILED or missing credentials — use repair (re-provisions credentials).
+  const allPending = await prisma.myPlusLeadsConfig.findMany({
     where: {
-      status: "CONNECTED",
-      lastSyncAt: null,          // never synced
-      subAccountEmail: { not: null },
-      subAccountPassword: { not: null },
+      OR: [
+        // Never synced but apparently connected
+        { status: "CONNECTED", lastSyncAt: null },
+        // Failed provisioning — credentials may be missing
+        { status: "FAILED" },
+      ],
     },
-    select: { userId: true },
+    select: { userId: true, status: true, subAccountEmail: true, subAccountPassword: true },
   });
 
-  if (unsynced.length === 0) {
-    console.log("[MyPlusLeads Backfill] No unsynced users found. Nothing to do.");
+  if (allPending.length === 0) {
+    console.log("[MyPlusLeads Backfill] No pending users found. Nothing to do.");
     return;
   }
 
-  console.log(`[MyPlusLeads Backfill] Found ${unsynced.length} user(s) with no prior sync. Starting backfill...`);
+  console.log(`[MyPlusLeads Backfill] Found ${allPending.length} user(s) needing sync/repair.`);
 
-  for (const { userId } of unsynced) {
+  for (const cfg of allPending) {
+    const { userId } = cfg;
+    const needsRepair = cfg.status === "FAILED" || !cfg.subAccountEmail || !cfg.subAccountPassword;
+
     try {
-      const result = await syncLeadsForUser(userId);
+      let result;
+      if (needsRepair) {
+        console.log(`[MyPlusLeads Backfill] Repairing credentials for userId=${userId}...`);
+        result = await repairAndSyncUser(userId);
+      } else {
+        result = await syncLeadsForUser(userId);
+      }
       console.log(`[MyPlusLeads Backfill] ✅ userId=${userId} — imported: ${result.imported}, skipped: ${result.skipped}`);
     } catch (err: any) {
       console.error(`[MyPlusLeads Backfill] ❌ userId=${userId} — ${err?.message ?? err}`);
-      // Log the error on the config so the admin can see it in the UI,
-      // but don't let one failure stop the rest of the backfill.
       await prisma.myPlusLeadsConfig.update({
         where: { userId },
         data: { errorMessage: err?.message ?? String(err) },
