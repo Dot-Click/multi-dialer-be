@@ -180,7 +180,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
               userId: newUser.id,
               subAccountEmail: subEmail,
               subAccountPassword: encrypt(subPassword),
-              subAccountId: accountId,
+              subAccountId: String(accountId),
               status: "CONNECTED",
               errorMessage: null,
             },
