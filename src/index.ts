@@ -13,6 +13,7 @@ import { initJobs } from "@/jobs";
 import { handleStripeWebhook } from "@/routes/webhooks/stripe";
 import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
+import { backfillMyPlusLeadsExistingUsers } from "@/workers/myPlusLeadsBackfill";
 
 connectDB();
 if (process.env.ENABLE_CRON === "true") {
@@ -21,6 +22,16 @@ if (process.env.ENABLE_CRON === "true") {
   initJobs();
   startA2PStatusPoller();
   startMyPlusLeadsSyncWorker();
+
+  // One-time backfill: pulls leads for existing users who signed up before
+  // auto-sync was implemented (lastSyncAt = null). Safe to re-deploy — already
+  // synced users are skipped automatically. Run after a short delay so the
+  // server is fully ready before hitting the MyPlusLeads API.
+  setTimeout(() => {
+    backfillMyPlusLeadsExistingUsers().catch((err) =>
+      console.error("[MyPlusLeads Backfill] Unexpected error:", err)
+    );
+  }, 10_000); // 10-second delay after startup
 } else {
   console.log("⏭️ Cron jobs disabled - set ENABLE_CRON=true to enable");
 }
