@@ -5,7 +5,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber } from "../../services/twilio-account.service";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount } from "../../services/myPlusLeads.service";
+import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
 import { encryptEIN as encrypt } from "../../utils/encryption";
 
 function getStripeClient() {
@@ -185,6 +185,17 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
               errorMessage: null,
             },
           });
+
+          // Kick off initial lead pull in the background so the webhook can
+          // respond fast. Errors are caught and logged — they won't block signup.
+          syncLeadsForUser(newUser.id)
+            .then((result) => {
+              console.log(`[MyPlusLeads] Initial sync for ${email}: imported ${result.imported}, skipped ${result.skipped}`);
+            })
+            .catch((err) => {
+              console.error(`[MyPlusLeads] Initial sync failed for ${email}:`, err?.message ?? err);
+            });
+
         } catch (err) {
           console.error("[Stripe Webhook] MyPlusLeads account creation failed:", err);
           await prisma.myPlusLeadsConfig.create({
