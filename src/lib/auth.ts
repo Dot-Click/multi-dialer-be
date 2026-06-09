@@ -119,6 +119,44 @@ export const auth = betterAuth({
     enabled: true,
     requireEmailVerification: true,
 
+    sendResetPasswordEmail: async ({ user, url }: { user: AuthUser; url: string }) => {
+      const displayName = user.fullName ?? user.email?.split("@")[0] ?? "User";
+      await sendEmail(
+        user.email,
+        "Reset Your Slingvo Password",
+        `
+<div style="font-family:Arial,sans-serif;background:#f4f6f8;padding:20px;">
+  <div style="max-width:600px;margin:auto;background:#fff;border-radius:10px;padding:30px;box-shadow:0 2px 10px rgba(0,0,0,.1);">
+    <div style="text-align:center;margin-bottom:20px;">
+      <h1 style="color:#2c3e50;margin:0;">Slingvo</h1>
+    </div>
+    <p style="font-size:16px;color:#333;">Hi <strong>${displayName}</strong>,</p>
+    <p style="font-size:15px;color:#555;">
+      We received a request to reset the password for your account (<strong>${user.email}</strong>).
+      Click the button below to choose a new password. This link expires in <strong>1 hour</strong>.
+    </p>
+    <div style="text-align:center;margin:30px 0;">
+      <a href="${url}"
+         style="background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;
+                text-decoration:none;font-size:16px;font-weight:bold;display:inline-block;">
+        Reset Password
+      </a>
+    </div>
+    <p style="font-size:14px;color:#666;">
+      If you didn't request a password reset, you can safely ignore this email — your password will not change.
+    </p>
+    <p style="font-size:14px;color:#666;">
+      Or copy and paste this link into your browser:<br/>
+      <a href="${url}" style="color:#1D85F0;word-break:break-all;">${url}</a>
+    </p>
+    <hr style="border:none;border-top:1px solid #eee;margin:24px 0;"/>
+    <p style="font-size:12px;color:#999;text-align:center;">© 2026 Slingvo. All rights reserved.</p>
+  </div>
+</div>`,
+      );
+      console.log(`[Auth] Password reset email sent to ${user.email}`);
+    },
+
     password: {
       hash: async (password: string): Promise<string> => {
         if (!password) throw new Error("Password required");
