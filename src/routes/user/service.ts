@@ -377,6 +377,46 @@ export async function updateUserInDb(
     });
 }
 
+/**
+ * Updates a user's Stripe subscription to a new plan (price).
+ * - If user already has an active Stripe subscription → update it in-place.
+ * - If not → send a fresh payment setup email with the selected plan.
+ */
+export async function updateUserSubscriptionInDb(userId: string, planId: string) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throwHttp(404, "User not found");
+
+    // Try to find existing Stripe subscription via Prisma subscription record
+    const subRecord = await (prisma as any).subscription?.findFirst({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+    }).catch(() => null);
+
+    if (subRecord?.stripeSubscriptionId) {
+        // Update the existing Stripe subscription to the new price
+        const existing = await stripe.subscriptions.retrieve(subRecord.stripeSubscriptionId);
+        const itemId = existing.items.data[0]?.id;
+
+        if (itemId) {
+            await stripe.subscriptions.update(subRecord.stripeSubscriptionId, {
+                items: [{ id: itemId, price: planId }],
+                proration_behavior: "always_invoice",
+            });
+
+            console.log(`[UserService] Updated Stripe subscription ${subRecord.stripeSubscriptionId} to price ${planId} for user ${userId}`);
+            return { updated: true, method: "stripe_update" };
+        }
+    }
+
+    // No subscription found — send a new payment setup email
+    await sendPaymentSetupEmail(
+        { id: user!.id, email: user!.email, fullName: user!.fullName },
+        planId,
+    );
+    console.log(`[UserService] Sent new payment setup email to ${user!.email} with plan ${planId}`);
+    return { updated: true, method: "payment_email" };
+}
+
 export async function deleteUserFromDb(id: string) {
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throwHttp(404, "User not found");

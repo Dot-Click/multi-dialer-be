@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
 import { createUserSchema, updateUserSchema } from "../../schemas/user.schema";
-import { getAllUsersFromDb, createUserInDb, updateUserInDb, deleteUserFromDb, deleteAllUsersFromDb } from "./service";
+import { getAllUsersFromDb, createUserInDb, updateUserInDb, deleteUserFromDb, deleteAllUsersFromDb, updateUserSubscriptionInDb } from "./service";
 import { generateSecurePassword } from "../../utils/password";
 import { uploadToR2 } from "../../utils/r2-uploader";
 
@@ -123,6 +123,20 @@ export const deleteAllUsers = async (req: Request, res: Response): Promise<void>
     try {
         await deleteAllUsersFromDb();
         successResponse(res, 200, "All users deleted successfully", null);
+    } catch (error: any) {
+        errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+    }
+};
+
+export const updateUserSubscription = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const { planId } = req.body;
+        if (!id) { errorResponse(res, "User id is required", 400); return; }
+        if (!planId) { errorResponse(res, "planId is required", 400); return; }
+
+        const result = await updateUserSubscriptionInDb(id, planId.trim());
+        successResponse(res, 200, "Subscription updated successfully", result);
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
     }
