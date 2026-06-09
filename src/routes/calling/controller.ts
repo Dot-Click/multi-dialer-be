@@ -542,13 +542,18 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     }
 
     const isBusyBoolean = dialerService.isAgentBusy(agentId);
+    const isInPostCall = dialerService.isAgentInPostCall(agentId);
     const activeLockOwner = (dialerService as any).agentBridgedCallId.get(agentId);
     const isLockOwnerStale = activeLockOwner && !(dialerService as any).activeCalls.has(activeLockOwner);
 
-    const isActuallyBusy = isBusyBoolean && activeLockOwner && activeLockOwner !== currentCallSid && !isLockOwnerStale;
+    // Agent is busy if: actively bridged to another call OR in post-call disposition state
+    const isActuallyBusy =
+      isInPostCall ||
+      (isBusyBoolean && activeLockOwner && activeLockOwner !== currentCallSid && !isLockOwnerStale);
 
     if (isActuallyBusy) {
-      console.log(`[VoiceWebhook] Agent ${agentId} is busy (locked by ${activeLockOwner}). Putting ${currentCallSid} on hold.`);
+      const reason = isInPostCall ? "in post-call disposition" : `locked by ${activeLockOwner}`;
+      console.log(`[VoiceWebhook] Agent ${agentId} is busy (${reason}). Putting ${currentCallSid} on hold.`);
 
       // ── POWER DIALER: Mark as callback in metadata so the UI shows Amber instead of Green ──
       const existingMeta = (dialerService as any).activeCalls.get(currentCallSid);

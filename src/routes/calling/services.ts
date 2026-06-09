@@ -1082,6 +1082,11 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
     this.transcriptionLogs.delete(callSid);
   }
 
+  // Returns true if the agent is in post-call disposition state (must not accept new bridges)
+  public isAgentInPostCall(userId: string): boolean {
+    return this.agentPostCallState.has(userId);
+  }
+
   // Agent State Management
   setAgentBusy(userId: string, busy: boolean, callSid?: string) {
     if (busy && callSid) {
