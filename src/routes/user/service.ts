@@ -16,7 +16,7 @@ function throwHttp(statusCode: number, message: string): never {
 }
 
 export async function createUserInDb(payload: any) {
-    const { password, ...rest } = payload;
+    const { password, planId, ...rest } = payload;
 
     // Hash password if provided
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -123,8 +123,8 @@ export async function createUserInDb(payload: any) {
         },
     });
 
-    // Send payment setup email — non-blocking
-    sendPaymentSetupEmail(newUser).catch(err =>
+    // Send payment setup email — non-blocking, passes the admin-selected planId
+    sendPaymentSetupEmail(newUser, planId ?? undefined).catch(err =>
         console.error("[UserService] Failed to send payment setup email:", err?.message ?? err)
     );
 
@@ -135,17 +135,18 @@ export async function createUserInDb(payload: any) {
  * Creates a Stripe checkout session for a manually provisioned user and sends
  * them an email with the payment link so they can enter their card details.
  */
-async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }) {
-    const planId = envConfig.STRIPE_PRICE_BASIC || envConfig.STRIPE_PRICE_STANDARD;
-    if (!planId) {
-        console.warn("[UserService] No default Stripe price ID configured (STRIPE_PRICE_BASIC). Skipping payment email.");
+async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }, planId?: string) {
+    // Use the admin-selected plan, falling back to env defaults
+    const resolvedPlanId = planId || envConfig.STRIPE_PRICE_BASIC || envConfig.STRIPE_PRICE_STANDARD;
+    if (!resolvedPlanId) {
+        console.warn("[UserService] No Stripe price ID available (none selected and no default configured). Skipping payment email.");
         return;
     }
 
     const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         customer_email: user.email,
-        line_items: [{ price: planId, quantity: 1 }],
+        line_items: [{ price: resolvedPlanId, quantity: 1 }],
         mode: "subscription",
         subscription_data: { trial_period_days: 30 },
         success_url: `${envConfig.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
