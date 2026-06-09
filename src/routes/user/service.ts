@@ -1,8 +1,15 @@
 import bcrypt from "bcryptjs";
+import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount } from "../../services/twilio-account.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
+import { sendEmail } from "../../utils/email";
+import { envConfig } from "../../lib/config";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+    apiVersion: "2026-04-22.dahlia",
+});
 
 function throwHttp(statusCode: number, message: string): never {
     throw { message, statusCode };
@@ -116,7 +123,88 @@ export async function createUserInDb(payload: any) {
         },
     });
 
+    // Send payment setup email — non-blocking
+    sendPaymentSetupEmail(newUser).catch(err =>
+        console.error("[UserService] Failed to send payment setup email:", err?.message ?? err)
+    );
+
     return newUser;
+}
+
+/**
+ * Creates a Stripe checkout session for a manually provisioned user and sends
+ * them an email with the payment link so they can enter their card details.
+ */
+async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }) {
+    const planId = envConfig.STRIPE_PRICE_BASIC || envConfig.STRIPE_PRICE_STANDARD;
+    if (!planId) {
+        console.warn("[UserService] No default Stripe price ID configured (STRIPE_PRICE_BASIC). Skipping payment email.");
+        return;
+    }
+
+    const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        customer_email: user.email,
+        line_items: [{ price: planId, quantity: 1 }],
+        mode: "subscription",
+        subscription_data: { trial_period_days: 30 },
+        success_url: `${envConfig.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${envConfig.FRONTEND_URL}/signup`,
+        metadata: {
+            userId: user.id,
+            email: user.email,
+            fullName: user.fullName || "",
+            isManualProvision: "true",
+        },
+    });
+
+    if (!session.url) {
+        console.warn("[UserService] Stripe session URL was empty. No payment email sent.");
+        return;
+    }
+
+    const displayName = user.fullName || "there";
+    await sendEmail(
+        user.email,
+        "Complete Your Slingvo Account Setup — Payment Required",
+        `
+<div style="font-family: Arial, sans-serif; background:#f4f6f8; padding:20px;">
+  <div style="max-width:600px; margin:auto; background:#ffffff; border-radius:10px; padding:30px; box-shadow:0 2px 10px rgba(0,0,0,0.1);">
+
+    <div style="text-align:center; margin-bottom:20px;">
+      <h1 style="color:#2c3e50; margin:0;">Slingvo</h1>
+    </div>
+
+    <p style="font-size:16px; color:#333;">Hi <strong>${displayName}</strong>,</p>
+
+    <p style="font-size:15px; color:#555;">
+      Your Slingvo account has been created by your administrator. To activate it, please complete your payment setup by clicking the button below.
+    </p>
+
+    <div style="text-align:center; margin:30px 0;">
+      <a href="${session.url}"
+         style="background:#FFCA06; color:#1a1a1a; padding:14px 32px; border-radius:8px; text-decoration:none; font-size:16px; font-weight:bold; display:inline-block;">
+        Complete Payment Setup
+      </a>
+    </div>
+
+    <p style="font-size:14px; color:#666;">
+      Your account includes a <strong>30-day free trial</strong> — no charge until the trial ends. You can cancel anytime.
+    </p>
+
+    <p style="font-size:14px; color:#666;">
+      If the button doesn't work, copy and paste this link into your browser:<br/>
+      <a href="${session.url}" style="color:#1D85F0; word-break:break-all;">${session.url}</a>
+    </p>
+
+    <hr style="border:none; border-top:1px solid #eee; margin:24px 0;"/>
+    <p style="font-size:12px; color:#999; text-align:center;">© 2026 Slingvo. All rights reserved.</p>
+  </div>
+</div>
+        `.trim()
+    );
+
+    console.log(`[UserService] Payment setup email sent to ${user.email} (Stripe session: ${session.id})`);
 }
 
 /**

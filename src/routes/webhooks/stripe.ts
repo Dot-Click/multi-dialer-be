@@ -56,7 +56,21 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         // 0. Check for existing user (Idempotency)
         const existingUser = await prisma.user.findUnique({ where: { email } });
         if (existingUser) {
-            console.log(`[Stripe Webhook] User ${email} already exists, skipping provisioning.`);
+            // If this was a payment-setup email sent to a manually provisioned user,
+            // activate their subscription now that they've paid.
+            if (metadata?.isManualProvision === "true" || metadata?.userId) {
+                const stripeCustomerId = session.customer as string | null;
+                await prisma.user.update({
+                    where: { id: existingUser.id },
+                    data: {
+                        isSubscribed: true,
+                        ...(stripeCustomerId ? { stripeCustomerId } : {}),
+                    },
+                });
+                console.log(`[Stripe Webhook] Manual user ${email} subscription activated (customer: ${stripeCustomerId}).`);
+            } else {
+                console.log(`[Stripe Webhook] User ${email} already exists, skipping provisioning.`);
+            }
             res.json({ received: true });
             return;
         }
