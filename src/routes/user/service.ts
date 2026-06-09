@@ -135,11 +135,40 @@ export async function createUserInDb(payload: any) {
  * Creates a Stripe checkout session for a manually provisioned user and sends
  * them an email with the payment link so they can enter their card details.
  */
+async function getFirstAvailableStripePriceId(): Promise<string | null> {
+    try {
+        const products = await stripe.products.list({ active: true, limit: 10 });
+        for (const product of products.data) {
+            const prices = await stripe.prices.list({ product: product.id, active: true, type: "recurring", limit: 1 });
+            if (prices.data.length > 0) {
+                console.log(`[UserService] Auto-selected Stripe price: ${prices.data[0].id} (${product.name})`);
+                return prices.data[0].id;
+            }
+        }
+    } catch (err: any) {
+        console.warn("[UserService] Could not auto-fetch Stripe price:", err?.message);
+    }
+    return null;
+}
+
 async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }, planId?: string) {
-    // Use the admin-selected plan, falling back to env defaults
-    const resolvedPlanId = planId || envConfig.STRIPE_PRICE_BASIC || envConfig.STRIPE_PRICE_STANDARD;
+    // 1. Use the admin-selected plan
+    // 2. Fall back to env defaults
+    // 3. Auto-fetch the first active Stripe price as last resort
+    const trimmed = planId?.trim() || "";
+    let resolvedPlanId: string | null =
+        trimmed ||
+        envConfig.STRIPE_PRICE_BASIC?.trim() ||
+        envConfig.STRIPE_PRICE_STANDARD?.trim() ||
+        null;
+
     if (!resolvedPlanId) {
-        console.warn("[UserService] No Stripe price ID available (none selected and no default configured). Skipping payment email.");
+        console.log("[UserService] No planId or env default — auto-fetching first Stripe price...");
+        resolvedPlanId = await getFirstAvailableStripePriceId();
+    }
+
+    if (!resolvedPlanId) {
+        console.warn("[UserService] No active Stripe prices found. Skipping payment email.");
         return;
     }
 
