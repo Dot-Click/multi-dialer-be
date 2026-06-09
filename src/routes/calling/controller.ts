@@ -1317,15 +1317,29 @@ export const getCallStatus: RequestHandler = async (req: Request, res: Response)
       where: { callSid: sid },
     });
 
-    if (!callRecord) {
-      errorResponse(res, { message: "Call record not found" }, 404);
+    if (callRecord) {
+      successResponse(res, 200, "Call status fetched successfully", {
+        status: callRecord.status,
+        disposition: callRecord.disposition
+      });
       return;
     }
 
-    successResponse(res, 200, "Call status fetched successfully", {
-      status: callRecord.status,
-      disposition: callRecord.disposition
-    });
+    // No DB record — fall back to Twilio REST API for live call status
+    try {
+      const userId = (req as any).user?.id;
+      const userClient = userId ? await getTwilioClient(userId) : client;
+      const twilioCall = await userClient.calls(sid).fetch();
+      successResponse(res, 200, "Call status fetched successfully", {
+        status: twilioCall.status,
+        disposition: null
+      });
+      return;
+    } catch (twilioErr: any) {
+      // Call not found in Twilio either
+    }
+
+    errorResponse(res, { message: "Call record not found" }, 404);
     return;
   } catch (error: any) {
     console.error("Get call status failed:", error);
