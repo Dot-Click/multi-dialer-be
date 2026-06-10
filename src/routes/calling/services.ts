@@ -910,11 +910,14 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
       // Release agent busy lock ONLY if this specific SID or its ROOT is the lock owner
       if (lockOwner && (lockOwner === sid || lockOwner === rootSid)) {
         console.log(`[handleCallStatusUpdate] Releasing agent ${userId} lock owner match: ${lockOwner}.`);
-        if (this.agentReadyState.has(userId!)) {
-          this.agentReadyState.delete(userId!);
-        } else {
-          this.agentPostCallState.add(userId!);
-        }
+        // A bridged call has ended → ALWAYS require the agent to pick a disposition
+        // before the next call is dialed. `agentReadyState` (set by /calling/agent-ready
+        // when the agent applies a disposition) must NOT be used to skip the post-call
+        // pause here: it was set for the PREVIOUS call and leaks onto this one, which
+        // caused the agent to be bridged to the next customer with no disposition prompt.
+        // Clear it and always enter post-call; agentReady() lifts this state on demand.
+        this.agentReadyState.delete(userId!);
+        this.agentPostCallState.add(userId!);
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
         // Delete SID BEFORE processing queue so capacity is accurate
@@ -930,11 +933,11 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
         
         if (!hasOtherCalls && userId && this.isAgentBusy(userId)) {
            console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Clearing stuck lock.`);
-           if (this.agentReadyState.has(userId)) {
-             this.agentReadyState.delete(userId);
-           } else {
-             this.agentPostCallState.add(userId);
-           }
+           // Same rule as the lock-owner branch above: always enter post-call so the
+           // agent must disposition before the queue advances. Never let a stale
+           // `agentReadyState` from a prior call skip this gate.
+           this.agentReadyState.delete(userId);
+           this.agentPostCallState.add(userId);
            this.setAgentBusy(userId, false);
            this.agentBridgedCallId.delete(userId);
            // Delete SID BEFORE processing queue so capacity is accurate
