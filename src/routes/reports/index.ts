@@ -4,6 +4,7 @@ import { getCallDetailsReport } from "./call-details";
 import { getSessionReport } from "./sessions";
 import { getCallRecordingsReport } from "./call-recordings";
 import { getAgentTimesheetReport } from "./timesheet";
+import { getRecurringEventsReport } from "./recurring-events";
 import { protectRoute } from "@/middlewares/auth.middleware";
 
 const router = Router();
@@ -22,6 +23,9 @@ router.get("/call-recordings", protectRoute, getCallRecordingsReport);
 
 // Get agent timesheet report
 router.get("/agent-timesheet", protectRoute, getAgentTimesheetReport);
+
+// Get recurring events report (aggregated Email/SMS/Call-back per contact)
+router.get("/recurring-events", protectRoute, getRecurringEventsReport);
 
 // Get dialer health
 router.get("/dialer-health", protectRoute, getDialerHealth);

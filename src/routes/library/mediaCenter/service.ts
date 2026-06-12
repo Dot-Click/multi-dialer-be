@@ -2,6 +2,7 @@ import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { createMediaCenterSchema } from "../../../schemas/mediaCenter.schema";
 import { uploadToR2 } from "../../../utils/r2-uploader";
+import { resolveTenantRootId } from "../../../utils/tenant";
 import { Request } from "express";
 
 // Media type configurations
@@ -113,8 +114,10 @@ export async function insertMediaCenterInDb(payload: any, userId: string, file: 
     let duration: number | null = null;
     // Duration validation skipped for now - can be implemented later
 
-    // Upload file to R2
-    const r2Result = await uploadToR2(file.buffer, file.mimetype, "media-center");
+    // Upload file to R2 under a per-tenant prefix so storage is organised by
+    // tenant (logical separation in the shared bucket).
+    const tenantRootId = await resolveTenantRootId(userId);
+    const r2Result = await uploadToR2(file.buffer, file.mimetype, `tenant/${tenantRootId}/media-center`);
 
     // Insert MediaCenter into DB with libraryId
     const mediaCenter = await prisma.mediaCenter.create({

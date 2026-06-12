@@ -329,6 +329,12 @@ model ContactList {
   folderId String?
   folder   ContactFolder? @relation(fields: [folderId], references: [id])
 
+  // Sub-lists: a list may have a single-level set of child lists.
+  // onDelete: Cascade removes child lists automatically when the parent is deleted.
+  parentId String?
+  parent   ContactList?  @relation("SubLists", fields: [parentId], references: [id], onDelete: Cascade)
+  subLists ContactList[] @relation("SubLists")
+
   importContacts ImportContact[]
   exportContacts ExportContact[]
 

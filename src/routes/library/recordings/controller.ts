@@ -5,6 +5,7 @@ import { insertRecordingInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateRecordingSchema } from "../../../schemas/recording.schema";
 import { uploadToR2 } from "../../../utils/r2-uploader";
+import { resolveTenantUserIds } from "../../../utils/tenant";
 
 export const getAllRecordingsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.id;
@@ -35,7 +36,11 @@ export const getAllRecordingsOfAllUsers = async (
   res: Response
 ): Promise<void> => {
   try {
+    // SECURITY: scope to the caller's tenant pool so an ADMIN only sees their
+    // own tenant's recordings, never another tenant's. OWNER (null) = all.
+    const tenantUserIds = await resolveTenantUserIds(req.user!.id);
     const recordings = await prisma.recording.findMany({
+      where: tenantUserIds === null ? {} : { userId: { in: tenantUserIds } },
       include: {
         user: {
           select: { id: true, fullName: true, email: true },

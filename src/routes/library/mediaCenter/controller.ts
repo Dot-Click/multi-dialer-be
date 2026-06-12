@@ -4,42 +4,33 @@ import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertMediaCenterInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateMediaCenterSchema } from "../../../schemas/mediaCenter.schema";
+import { resolveTenantUserIds } from "../../../utils/tenant";
+
+const MEDIA_INCLUDE = {
+  library: {
+    include: {
+      user: {
+        select: { id: true, fullName: true, email: true },
+      },
+    },
+  },
+} as const;
 
 export const getAllMediaCenterOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId } = req.user!;
-    
-    // Get user's library
-    const library = await prisma.library.findFirst({
-      where: { userId },
-    });
 
-    if (!library) {
-      errorResponse(res, "Library not found for user", 404);
-      return;
-    }
+    // Media library is shared per TENANT (admin + their agents), never across
+    // tenants. OWNER (null) sees everything.
+    const tenantUserIds = await resolveTenantUserIds(userId);
+    const where = tenantUserIds === null
+      ? {}
+      : { library: { is: { userId: { in: tenantUserIds } } } };
 
-    // Get all media center items from user's library
     const mediaCenterItems = await prisma.mediaCenter.findMany({
-      where: {
-        libraryId: library.id,
-      },
-      include: {
-        library: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+      where,
+      include: MEDIA_INCLUDE,
+      orderBy: { createdAt: "desc" },
     });
     successResponse(res, 200, "Media center items fetched", mediaCenterItems);
   } catch (error: any) {
@@ -49,24 +40,19 @@ export const getAllMediaCenterOfSpecificUser = async (req: Request, res: Respons
 
 export const getAllMediaCenterOfAllUsers = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Get all media center items from all users
+    const { id: userId } = req.user!;
+
+    // SECURITY: scope to the caller's tenant pool so an ADMIN can only see media
+    // belonging to their own tenant (admin + their agents). OWNER (null) = all.
+    const tenantUserIds = await resolveTenantUserIds(userId);
+    const where = tenantUserIds === null
+      ? {}
+      : { library: { is: { userId: { in: tenantUserIds } } } };
+
     const mediaCenterItems = await prisma.mediaCenter.findMany({
-      include: {
-        library: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+      where,
+      include: MEDIA_INCLUDE,
+      orderBy: { createdAt: "desc" },
     });
     successResponse(res, 200, "All media center items fetched", mediaCenterItems);
   } catch (error: any) {
@@ -79,34 +65,17 @@ export const getMediaCenterById = async (req: Request, res: Response): Promise<v
     const { id } = req.params;
     const { id: userId } = req.user!;
 
-    // Get user's library
-    const library = await prisma.library.findFirst({
-      where: { userId },
-    });
-
-    if (!library) {
-      errorResponse(res, "Library not found for user", 404);
-      return;
-    }
+    // Scope to the caller's tenant pool (admin + agents); OWNER (null) = any.
+    const tenantUserIds = await resolveTenantUserIds(userId);
 
     const mediaCenterItem = await prisma.mediaCenter.findFirst({
-      where: { 
+      where: {
         id,
-        libraryId: library.id, // Ensure media center item belongs to user's library
+        ...(tenantUserIds === null
+          ? {}
+          : { library: { is: { userId: { in: tenantUserIds } } } }),
       },
-      include: {
-        library: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-              },
-            },
-          },
-        },
-      },
+      include: MEDIA_INCLUDE,
     });
     
     if (!mediaCenterItem) {

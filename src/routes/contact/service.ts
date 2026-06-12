@@ -5,6 +5,7 @@ import axios from "axios";
 import { uploadToR2 } from "../../utils/r2-uploader";
 import { randomUUID } from "crypto";
 import { createInternalNotification } from "../notification/controller";
+import { resolveTenantUserIds } from "../../utils/tenant";
 import { envConfig } from "@/lib/config";
 
 
@@ -735,14 +736,29 @@ export async function deleteAttachmentFromDb(attachmentId: string) {
 // ---------------------------------------------------------------------------
 
 export async function createContactListInDb(
-  payload: { name: string; contactIds: string[]; folderId?: string },
+  payload: { name: string; contactIds: string[]; folderId?: string; parentId?: string },
   userId: string,
 ) {
+  // Enforce single-level sub-lists: a sub-list cannot itself have a parent.
+  if (payload.parentId) {
+    const parent = await prisma.contactList.findUnique({
+      where: { id: payload.parentId },
+      select: { id: true, parentId: true },
+    });
+    if (!parent) {
+      throwHttp(404, "Parent list not found");
+    }
+    if (parent!.parentId) {
+      throwHttp(400, "Sub-lists can only be nested one level deep");
+    }
+  }
+
   return prisma.contactList.create({
     data: {
       name: payload.name,
       contactIds: payload.contactIds,
       folderId: payload.folderId,
+      parentId: payload.parentId,
       userId,
     },
   });
@@ -1503,9 +1519,17 @@ export async function bulkMoveToDncInDb(
   });
 }
 
-export async function getDncListFromDb() {
+export async function getDncListFromDb(userId: string) {
+  // Scope to the caller's tenant (admin + their agents) so each user only sees
+  // the contacts THEY (their tenant) marked as DNC — never the whole system.
+  // OWNER (null) sees everything.
+  const tenantUserIds = await resolveTenantUserIds(userId);
+
   return prisma.contact.findMany({
-    where: { status: "DO_NOT_CALL" },
+    where: {
+      status: "DO_NOT_CALL",
+      ...(tenantUserIds === null ? {} : { userId: { in: tenantUserIds } }),
+    },
     include: { phones: true, emails: true },
     orderBy: { updatedAt: "desc" },
   });
@@ -1547,104 +1571,128 @@ export async function importContactsInDb(args: {
   // Whether we should even run duplicate detection
   const checkDuplicates = dupFields.length > 0 && dupScope.length > 0;
 
-  return prisma.$transaction(
-    async (tx) => {
+  type IncomingContact = (typeof contacts)[number];
 
-      // ── Step 1: Resolve duplicates ────────────────────────────────────────
-      //
-      // For each incoming contact we collect its identifying values (phones /
-      // emails) and check whether a matching record already exists in the DB.
-      //
-      // Result buckets:
-      //   toInsert  – brand-new contacts that should be created
-      //   toUpdate  – existing contacts that should be overwritten (handling === "Overwrite")
-      //   toSkip    – contacts that are duplicates and should be dropped
+  // ── Step 1: Resolve duplicates (BULK, OUTSIDE the transaction) ────────────
+  //
+  // Previously this ran a `findFirst` per contact INSIDE the transaction. For
+  // large imports (1000+ rows) the sequential round-trips blew past the
+  // transaction timeout → "Transaction already closed". We now run a handful of
+  // bulk lookups up-front, scoped to the importing user's pool, and classify
+  // each contact in memory. Only the writes happen inside the transaction.
+  //
+  // Result buckets:
+  //   toInsert – brand-new contacts to create
+  //   toUpdate – existing contacts to overwrite (handling === "Overwrite")
+  //   (skipped) – duplicates dropped under "Keep Old"/"Skip"
 
-      type IncomingContact = (typeof contacts)[number];
+  const toInsert: IncomingContact[] = [];
+  const toUpdate: { existingId: string; incoming: IncomingContact }[] = [];
 
-      const toInsert: IncomingContact[] = [];
-      const toUpdate: { existingId: string; incoming: IncomingContact }[] = [];
+  // Only values that actually look like phone numbers (≥ 7 digits) are valid
+  // dedupe keys — protects against junk like "Y"/"N" DNC flags or ids.
+  const validNumbers = (c: IncomingContact): string[] =>
+    (c.phones || [])
+      .map((p: any) => p.number?.toString().trim())
+      .filter((n: string) => !!n && n.replace(/\D/g, "").length >= 7);
+  const validEmails = (c: IncomingContact): string[] =>
+    (c.emails || [])
+      .map((e: any) => e.email?.toString().toLowerCase().trim())
+      .filter(Boolean);
+  const addrKey = (a?: string | null, c?: string | null, s?: string | null, z?: string | null) =>
+    [a, c, s, z].map((x) => (x || "").trim().toLowerCase()).join("|");
 
-      for (const c of contacts) {
-        if (!checkDuplicates) {
-          toInsert.push(c);
-          continue;
-        }
+  if (!checkDuplicates) {
+    toInsert.push(...contacts);
+  } else {
+    // Scope duplicate detection to the importing user's pool (self + agents),
+    // NOT the whole database (which previously matched other tenants' data).
+    const poolUserIds = await getAdminUserPool(userId);
 
-        let existingContact: { id: string } | null = null;
+    const phoneOwner = new Map<string, string>(); // number -> contactId
+    const emailOwner = new Map<string, string>(); // email  -> contactId
+    const propOwner = new Map<string, string>();  // addrKey -> contactId
+    const mailOwner = new Map<string, string>();
 
-        // ── Check by Phone ──────────────────────────────────────────────────
-        if (!existingContact && dupFields.includes("Phone")) {
-          const incomingNumbers = (c.phones || []).map((p: any) =>
-            p.number?.toString().trim()
-          ).filter(Boolean);
+    if (dupFields.includes("Phone")) {
+      const allNumbers = [...new Set(contacts.flatMap(validNumbers))];
+      if (allNumbers.length > 0) {
+        const rows = await prisma.contactPhone.findMany({
+          where: { number: { in: allNumbers }, contact: { userId: { in: poolUserIds } } },
+          select: { number: true, contactId: true },
+        });
+        for (const r of rows) if (!phoneOwner.has(r.number)) phoneOwner.set(r.number, r.contactId);
+      }
+    }
 
-          if (incomingNumbers.length > 0) {
-            const match = await tx.contactPhone.findFirst({
-              where: { number: { in: incomingNumbers } },
-              select: { contactId: true },
-            });
-            if (match) existingContact = { id: match.contactId };
-          }
-        }
-
-        // ── Check by Email ──────────────────────────────────────────────────
-        if (!existingContact && dupFields.includes("Emails")) {
-          const incomingEmails = (c.emails || []).map((e: any) =>
-            e.email?.toLowerCase().trim()
-          ).filter(Boolean);
-
-          if (incomingEmails.length > 0) {
-            const match = await tx.contactEmail.findFirst({
-              where: { email: { in: incomingEmails } },
-              select: { contactId: true },
-            });
-            if (match) existingContact = { id: match.contactId };
-          }
-        }
-
-        // ── Check by Property Address (address + city + state + zip) ────────
-        if (!existingContact && dupFields.includes("Property Addresses")) {
-          if (c.address && c.city && c.state) {
-            const match = await tx.contact.findFirst({
-              where: {
-                address: c.address,
-                city: c.city,
-                state: c.state,
-                zip: c.zip || undefined,
-              },
-              select: { id: true },
-            });
-            if (match) existingContact = { id: match.id };
-          }
-        }
-
-        // ── Check by Mailing Address ────────────────────────────────────────
-        if (!existingContact && dupFields.includes("Mailing Addresses")) {
-          if (c.mailingAddress && c.mailingCity && c.mailingState) {
-            const match = await tx.contact.findFirst({
-              where: {
-                mailingAddress: c.mailingAddress,
-                mailingCity: c.mailingCity,
-                mailingState: c.mailingState,
-                mailingZip: c.mailingZip || undefined,
-              },
-              select: { id: true },
-            });
-            if (match) existingContact = { id: match.id };
-          }
-        }
-
-        // ── Route to the correct bucket ─────────────────────────────────────
-        if (!existingContact) {
-          // No match found → always insert
-          toInsert.push(c);
-        } else if (dupHandling === "Overwrite") {
-          toUpdate.push({ existingId: existingContact.id, incoming: c });
-        } else {
-          // "Keep Old" or "Skip" → drop the incoming record
+    if (dupFields.includes("Emails")) {
+      const allEmails = [...new Set(contacts.flatMap(validEmails))];
+      if (allEmails.length > 0) {
+        const rows = await prisma.contactEmail.findMany({
+          where: { email: { in: allEmails }, contact: { userId: { in: poolUserIds } } },
+          select: { email: true, contactId: true },
+        });
+        for (const r of rows) {
+          const k = r.email.toLowerCase();
+          if (!emailOwner.has(k)) emailOwner.set(k, r.contactId);
         }
       }
+    }
+
+    if (dupFields.includes("Property Addresses")) {
+      const addrs = [...new Set(contacts.map((c) => c.address).filter(Boolean))];
+      if (addrs.length > 0) {
+        const rows = await prisma.contact.findMany({
+          where: { userId: { in: poolUserIds }, address: { in: addrs } },
+          select: { id: true, address: true, city: true, state: true, zip: true },
+        });
+        for (const r of rows) {
+          const k = addrKey(r.address, r.city, r.state, r.zip);
+          if (!propOwner.has(k)) propOwner.set(k, r.id);
+        }
+      }
+    }
+
+    if (dupFields.includes("Mailing Addresses")) {
+      const addrs = [...new Set(contacts.map((c) => c.mailingAddress).filter(Boolean))];
+      if (addrs.length > 0) {
+        const rows = await prisma.contact.findMany({
+          where: { userId: { in: poolUserIds }, mailingAddress: { in: addrs } },
+          select: { id: true, mailingAddress: true, mailingCity: true, mailingState: true, mailingZip: true },
+        });
+        for (const r of rows) {
+          const k = addrKey(r.mailingAddress, r.mailingCity, r.mailingState, r.mailingZip);
+          if (!mailOwner.has(k)) mailOwner.set(k, r.id);
+        }
+      }
+    }
+
+    for (const c of contacts) {
+      let existingId: string | null = null;
+
+      if (!existingId && dupFields.includes("Phone")) {
+        for (const n of validNumbers(c)) { if (phoneOwner.has(n)) { existingId = phoneOwner.get(n)!; break; } }
+      }
+      if (!existingId && dupFields.includes("Emails")) {
+        for (const e of validEmails(c)) { if (emailOwner.has(e)) { existingId = emailOwner.get(e)!; break; } }
+      }
+      if (!existingId && dupFields.includes("Property Addresses") && c.address && c.city && c.state) {
+        const k = addrKey(c.address, c.city, c.state, c.zip);
+        if (propOwner.has(k)) existingId = propOwner.get(k)!;
+      }
+      if (!existingId && dupFields.includes("Mailing Addresses") && c.mailingAddress && c.mailingCity && c.mailingState) {
+        const k = addrKey(c.mailingAddress, c.mailingCity, c.mailingState, c.mailingZip);
+        if (mailOwner.has(k)) existingId = mailOwner.get(k)!;
+      }
+
+      if (!existingId) toInsert.push(c);
+      else if (dupHandling === "Overwrite") toUpdate.push({ existingId, incoming: c });
+      // else "Keep Old" / "Skip" → drop the incoming record
+    }
+  }
+
+  const importRecord = await prisma.$transaction(
+    async (tx) => {
 
       // ── Step 2: Bulk-insert new contacts ──────────────────────────────────
 
@@ -1843,8 +1891,17 @@ export async function importContactsInDb(args: {
         },
       });
     },
-    { timeout: 60000 },
+    { timeout: 120000 },
   );
+
+  // Surface what actually happened so the UI never shows a silent "success"
+  // when everything was skipped as a duplicate.
+  return {
+    ...importRecord,
+    inserted: toInsert.length,
+    updated: toUpdate.length,
+    skipped: contacts.length - toInsert.length - toUpdate.length,
+  };
 }
 
 export async function getAllImportContactsFromDb(userId: string) {

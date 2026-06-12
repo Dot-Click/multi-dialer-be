@@ -898,7 +898,7 @@ export const getDncList = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const dncList = await getDncListFromDb();
+    const dncList = await getDncListFromDb((req as any).user.id);
     successResponse(res, 200, "DNC list fetched", dncList);
   } catch (error: any) {
     errorResponse(
@@ -1061,11 +1061,18 @@ export const importContacts = async (
         const seenNumbers = new Set(phones.map(p => p.number));
         Object.keys(r).forEach((col) => {
           const lowerCol = col.toLowerCase();
-          const isPhoneKeyword = lowerCol.includes("phone") || lowerCol.includes("mobile") ||
-            lowerCol.includes("cell") || lowerCol.includes("contact");
+          // Treat a column as a phone column only if its NAME looks like a phone
+          // field — but NOT a DNC flag column (e.g. "phone1 DNC") and NOT an id
+          // column (e.g. "contactid"). We deliberately do NOT match on "contact"
+          // because that pulls in "contactid".
+          const isPhoneKeyword =
+            (lowerCol.includes("phone") || lowerCol.includes("mobile") || lowerCol.includes("cell")) &&
+            !lowerCol.includes("dnc");
           if (isPhoneKeyword && !mappedPhoneCols.has(col)) {
             const val = r[col]?.toString().trim();
-            if (val && !seenNumbers.has(val)) {
+            // Require something that actually looks like a phone number (≥ 7 digits)
+            // so flag values like "Y"/"N" never get stored as phone numbers.
+            if (val && val.replace(/\D/g, "").length >= 7 && !seenNumbers.has(val)) {
               phones.push({ number: val, type: "MOBILE", isPrimary: phones.length === 0 });
               seenNumbers.add(val);
             }

@@ -2,6 +2,7 @@ import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { createRecordingSchema } from "../../../schemas/recording.schema";
 import { uploadToR2 } from "../../../utils/r2-uploader";
+import { resolveTenantRootId } from "../../../utils/tenant";
 
 export async function insertRecordingInDb(
   payload: any,
@@ -55,8 +56,9 @@ export async function insertRecordingInDb(
       };
     }
 
-    // Upload to R2
-    const r2Result = await uploadToR2(file.buffer, file.mimetype, "recordings");
+    // Upload to R2 under a per-tenant prefix (logical separation in shared bucket)
+    const tenantRootId = await resolveTenantRootId(userId);
+    const r2Result = await uploadToR2(file.buffer, file.mimetype, `tenant/${tenantRootId}/recordings`);
 
     const recording = await prisma.recording.create({
       data: {
