@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/utils/handler";
+import { getPresignedUrlFromStoredUrl } from "@/utils/r2-uploader";
 import { RequestHandler } from "express";
 
 /**
@@ -51,18 +52,22 @@ export const getCallRecordingsReport: RequestHandler = async (req, res) => {
 
         const total = await prisma.callRecord.count({ where });
 
-        const reportData = calls.map(call => {
-            const entity = call.contact || call.lead;
+        const reportData = await Promise.all(
+            calls.map(async call => {
+                const entity = call.contact || call.lead;
 
-            return {
-                id: call.id,
-                agent: call.user?.fullName || "Unknown",
-                name: entity?.fullName || "Unknown",
-                duration: formatHHMMSS(call.duration || 0),
-                callResult: call.disposition || call.status,
-                recordingUrl: call.recordingUrl
-            };
-        });
+                return {
+                    id: call.id,
+                    agent: call.user?.fullName || "Unknown",
+                    name: entity?.fullName || "Unknown",
+                    duration: formatHHMMSS(call.duration || 0),
+                    callResult: call.disposition || call.status,
+                    // Stored URL points at R2's private S3 endpoint; sign it so the
+                    // browser's <audio> element can fetch it directly.
+                    recordingUrl: await getPresignedUrlFromStoredUrl(call.recordingUrl)
+                };
+            })
+        );
 
         successResponse(res, 200, "Call recordings report fetched successfully", {
             data: reportData,

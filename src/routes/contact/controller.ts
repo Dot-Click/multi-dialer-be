@@ -898,7 +898,9 @@ export const getDncList = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const dncList = await getDncListFromDb((req as any).user.id);
+    const page = parseInt(req.query.page as string, 10) || 1;
+    const pageSize = parseInt(req.query.pageSize as string, 10) || 10;
+    const dncList = await getDncListFromDb((req as any).user.id, page, pageSize);
     successResponse(res, 200, "DNC list fetched", dncList);
   } catch (error: any) {
     errorResponse(

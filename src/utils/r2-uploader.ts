@@ -1,4 +1,5 @@
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import r2 from "../lib/config";
 import { randomUUID } from "crypto";
 import { envConfig } from "../lib/config";
@@ -46,6 +47,41 @@ export async function uploadToR2(
   } catch (error) {
     console.error("[R2 Upload Error]", error);
     throw new Error(`Failed to upload file to R2: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+}
+
+/**
+ * Generate a short-lived presigned GET URL for an object stored in R2.
+ *
+ * Recordings (and other private objects) are stored against R2's S3 API
+ * endpoint (`<account>.r2.cloudflarestorage.com/<bucket>/<key>`), which rejects
+ * unsigned browser requests. The stored `recordingUrl` is therefore not
+ * directly playable. This parses the bucket + key back out of that stored URL
+ * and returns a signed URL the browser can fetch directly.
+ *
+ * @param storedUrl - the URL persisted at upload time
+ * @param expiresIn - signature lifetime in seconds (default 1 hour)
+ * @returns a presigned URL, or the original URL if it can't be parsed/signed
+ */
+export async function getPresignedUrlFromStoredUrl(
+  storedUrl: string | null | undefined,
+  expiresIn: number = 3600
+): Promise<string | null> {
+  if (!storedUrl) return storedUrl ?? null;
+
+  try {
+    const { pathname } = new URL(storedUrl);
+    // pathname is "/<bucket>/<key...>" (path-style addressing)
+    const segments = pathname.replace(/^\/+/, "").split("/");
+    const bucket = segments.shift() || envConfig.R2_BUCKET_NAME || "multi-dialer";
+    const key = segments.join("/");
+    if (!key) return storedUrl;
+
+    const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+    return await getSignedUrl(r2, command, { expiresIn });
+  } catch (error) {
+    console.error("[R2 Presign Error]", error);
+    return storedUrl;
   }
 }
 

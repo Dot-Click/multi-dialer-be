@@ -1519,20 +1519,42 @@ export async function bulkMoveToDncInDb(
   });
 }
 
-export async function getDncListFromDb(userId: string) {
+export async function getDncListFromDb(
+  userId: string,
+  page = 1,
+  pageSize = 10,
+) {
   // Scope to the caller's tenant (admin + their agents) so each user only sees
   // the contacts THEY (their tenant) marked as DNC — never the whole system.
   // OWNER (null) sees everything.
   const tenantUserIds = await resolveTenantUserIds(userId);
 
-  return prisma.contact.findMany({
-    where: {
-      status: "DO_NOT_CALL",
-      ...(tenantUserIds === null ? {} : { userId: { in: tenantUserIds } }),
-    },
-    include: { phones: true, emails: true },
-    orderBy: { updatedAt: "desc" },
-  });
+  const where = {
+    status: "DO_NOT_CALL" as const,
+    ...(tenantUserIds === null ? {} : { userId: { in: tenantUserIds } }),
+  };
+
+  const safePage = Math.max(1, page);
+  const safePageSize = Math.min(100, Math.max(1, pageSize));
+
+  const [items, total] = await prisma.$transaction([
+    prisma.contact.findMany({
+      where,
+      include: { phones: true, emails: true },
+      orderBy: { updatedAt: "desc" },
+      skip: (safePage - 1) * safePageSize,
+      take: safePageSize,
+    }),
+    prisma.contact.count({ where }),
+  ]);
+
+  return {
+    items,
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages: Math.max(1, Math.ceil(total / safePageSize)),
+  };
 }
 
 export async function importContactsInDb(args: {
