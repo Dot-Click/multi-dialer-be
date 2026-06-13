@@ -11,6 +11,7 @@ import {
   getDashboardSummaryInDb,
   getBusinessOverviewInDb,
   getRevenuePlansInDb,
+  getChurnRateInDb,
 } from "./service";
 
 export const getUserOverview = async (
@@ -280,6 +281,22 @@ export const revenuePlans = async (
   try {
     const data = await getRevenuePlansInDb();
     successResponse(res, 200, "Revenue plans fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const churnRate = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const data = await getChurnRateInDb();
+    successResponse(res, 200, "Churn rate fetched successfully", data);
   } catch (error: any) {
     errorResponse(
       res,

@@ -10,6 +10,7 @@ type User = {
   fullName: string | null;
   email: string;
   role: string;
+  status: string | null;
   image: string | null;
   emailVerified: boolean;
   createdById: string | null;
@@ -49,6 +50,7 @@ export const protectRoute = async (
           fullName: true,
           email: true,
           role: true,
+          status: true,
           image: true,
           emailVerified: true,
           trialStatus: true,
@@ -59,6 +61,9 @@ export const protectRoute = async (
       });
 
       if (user) {
+        if (user.status === "SUSPENDED") {
+          return errorResponse(res, "Account suspended. Contact support.", 403);
+        }
         req.user = user as User;
         return next();
       }
@@ -72,6 +77,7 @@ export const protectRoute = async (
           fullName: true,
           email: true,
           role: true,
+          status: true,
           image: true,
           emailVerified: true,
           createdById: true,
@@ -83,6 +89,9 @@ export const protectRoute = async (
       });
 
       if (user) {
+        if (user.status === "SUSPENDED") {
+          return errorResponse(res, "Account suspended. Contact support.", 403);
+        }
         req.user = user;
         return next();
       }
@@ -103,6 +112,7 @@ export const protectRoute = async (
           fullName: true,
           email: true,
           role: true,
+          status: true,
           image: true,
           emailVerified: true,
           trialStatus: true,
@@ -113,6 +123,9 @@ export const protectRoute = async (
       });
 
       if (dbUser) {
+        if (dbUser.status === "SUSPENDED") {
+          return errorResponse(res, "Account suspended. Contact support.", 403);
+        }
         req.user = dbUser as User;
         return next();
       }

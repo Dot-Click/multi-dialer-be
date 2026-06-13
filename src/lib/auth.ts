@@ -330,6 +330,12 @@ export const auth = betterAuth({
 
         if (!userFromDb) return resp;
 
+        if (userFromDb.status === "SUSPENDED") {
+          throw new APIError("FORBIDDEN", {
+            message: "Account suspended. Contact support.",
+          });
+        }
+
         const combinedResp = {
           ...resp,
           user: {

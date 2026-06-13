@@ -40,6 +40,11 @@ enum BillingCycle {
   YEARLY
 }
 
+enum BillingEventStatus {
+  PROCESSED
+  FAILED
+}
+
 enum SubscriptionStatus {
   ACTIVE
   CANCELLED
@@ -1493,4 +1498,15 @@ model DialListSession {
 
   @@unique([userId, listId])
   @@map("dial_list_sessions")
+}
+
+model BillingEvent {
+  id            String             @id @default(uuid())
+  stripeEventId String             @unique
+  type          String
+  payload       Json
+  status        BillingEventStatus
+  createdAt     DateTime           @default(now())
+
+  @@map("billing_events")
 }

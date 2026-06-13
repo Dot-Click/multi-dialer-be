@@ -261,6 +261,252 @@ export const getPlans = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+export const createPlan = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, description, monthlyAmount, yearlyAmount, currency = "usd", trialDays } = req.body;
+
+    if (!name || typeof name !== "string" || !name.trim()) {
+      errorResponse(res, "name is required", 400);
+      return;
+    }
+
+    const hasMonthly = monthlyAmount !== undefined && monthlyAmount !== "" && Number(monthlyAmount) > 0;
+    const hasYearly = yearlyAmount !== undefined && yearlyAmount !== "" && Number(yearlyAmount) > 0;
+
+    if (!hasMonthly && !hasYearly) {
+      errorResponse(res, "At least one of monthlyAmount or yearlyAmount is required", 400);
+      return;
+    }
+
+    const planKey = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+
+    const product = await stripe.products.create({
+      name: name.trim(),
+      description: description ? String(description).trim() : undefined,
+      active: true,
+      metadata: {
+        plan: planKey,
+        ...(trialDays && Number.isInteger(Number(trialDays)) && Number(trialDays) > 0
+          ? { trialDays: String(trialDays) }
+          : {}),
+      },
+    });
+
+    const createdPrices: any[] = [];
+
+    if (hasMonthly) {
+      const price = await stripe.prices.create({
+        product: product.id,
+        unit_amount: Math.round(Number(monthlyAmount)),
+        currency: currency || "usd",
+        recurring: { interval: "month" },
+        nickname: `${name.trim()} Monthly`,
+        metadata: { plan: planKey, interval: "month" },
+      });
+      createdPrices.push(price);
+    }
+
+    if (hasYearly) {
+      const price = await stripe.prices.create({
+        product: product.id,
+        unit_amount: Math.round(Number(yearlyAmount)),
+        currency: currency || "usd",
+        recurring: { interval: "year" },
+        nickname: `${name.trim()} Yearly`,
+        metadata: { plan: planKey, interval: "year" },
+      });
+      createdPrices.push(price);
+    }
+
+    const serialized = serializeStripePlan(product, createdPrices);
+    successResponse(res, 201, "Plan created successfully", serialized);
+  } catch (error: any) {
+    console.error("[Billing] Create Plan Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const deletePlan = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const productId = req.params.plan || "";
+    if (!productId.startsWith("prod_")) {
+      errorResponse(res, "Invalid Stripe product id", 400);
+      return;
+    }
+
+    // Archive all active prices first
+    const prices = await stripe.prices.list({ product: productId, active: true, limit: 100 });
+    await Promise.all(prices.data.map((p) => stripe.prices.update(p.id, { active: false })));
+
+    // Archive the product (Stripe does not allow hard-deleting products with prices)
+    await stripe.products.update(productId, { active: false });
+
+    successResponse(res, 200, "Plan archived successfully", { id: productId });
+  } catch (error: any) {
+    console.error("[Billing] Delete Plan Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const getFailedPayments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // "past_due" is stored as a raw string by the invoice.payment_failed webhook (outside the enum)
+    const records = await prisma.userSubscription.findMany({
+      where: { status: "past_due" as any },
+      include: { user: { select: { fullName: true, email: true } } },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    const data = records.map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      plan: r.plan,
+      amount: r.amount,
+      failedAt: r.updatedAt.toISOString(),
+      stripeCustomerId: r.stripeCustomerId,
+      user: r.user,
+    }));
+
+    successResponse(res, 200, "Failed payments retrieved successfully", data);
+  } catch (error: any) {
+    console.error("[Billing] Get Failed Payments Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const getUpcomingRenewals = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const records = await prisma.userSubscription.findMany({
+      where: { status: "ACTIVE" as any },
+      include: { user: { select: { fullName: true, email: true } } },
+    });
+
+    const now = new Date();
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const upcoming = records
+      .map((r) => {
+        const start = new Date(r.startDate);
+        const isYearly = r.billingCycle === "YEARLY";
+        const next = new Date(start);
+
+        // Advance to next future renewal anniversary
+        while (next <= now) {
+          if (isYearly) next.setFullYear(next.getFullYear() + 1);
+          else next.setMonth(next.getMonth() + 1);
+        }
+
+        return {
+          id: r.id,
+          userId: r.userId,
+          plan: r.plan,
+          amount: r.amount,
+          billingCycle: r.billingCycle,
+          nextRenewalDate: next.toISOString(),
+          user: r.user,
+        };
+      })
+      .filter((r) => {
+        const d = new Date(r.nextRenewalDate);
+        return d >= now && d <= in30Days;
+      })
+      .sort((a, b) => new Date(a.nextRenewalDate).getTime() - new Date(b.nextRenewalDate).getTime());
+
+    successResponse(res, 200, "Upcoming renewals retrieved successfully", upcoming);
+  } catch (error: any) {
+    console.error("[Billing] Get Upcoming Renewals Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const getInvoicesByCustomer = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { customerId } = req.query;
+
+    if (!customerId || typeof customerId !== "string") {
+      errorResponse(res, "customerId query param is required", 400);
+      return;
+    }
+
+    const invoiceList = await stripe.invoices.list({ customer: customerId, limit: 20 });
+
+    const invoices = invoiceList.data.map((inv) => ({
+      id: inv.id,
+      number: inv.number,
+      amount_paid: inv.amount_paid,
+      amount_due: inv.amount_due,
+      status: inv.status,
+      created: new Date(inv.created * 1000).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      }),
+      hosted_invoice_url: inv.hosted_invoice_url,
+      invoice_pdf: inv.invoice_pdf,
+    }));
+
+    successResponse(res, 200, "Invoices retrieved successfully", invoices);
+  } catch (error: any) {
+    console.error("[Billing] Get Invoices Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const changeSubscriptionPlan = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { subscriptionId } = req.params;
+    const { newPriceId } = req.body;
+
+    if (!subscriptionId || !newPriceId) {
+      errorResponse(res, "subscriptionId and newPriceId are required", 400);
+      return;
+    }
+
+    const stripeSub = await stripe.subscriptions.retrieve(subscriptionId);
+    if (!stripeSub || stripeSub.status === "canceled") {
+      errorResponse(res, "Stripe subscription not found or already canceled", 404);
+      return;
+    }
+
+    const existingItemId = stripeSub.items.data[0]?.id;
+    if (!existingItemId) {
+      errorResponse(res, "No subscription item found on this subscription", 400);
+      return;
+    }
+
+    const updatedStripeSub = await stripe.subscriptions.update(subscriptionId, {
+      items: [{ id: existingItemId, price: newPriceId }],
+      proration_behavior: "create_prorations",
+    });
+
+    // Resolve the new plan name from the price's product metadata
+    const newPrice = await stripe.prices.retrieve(newPriceId, { expand: ["product"] });
+    const product = newPrice.product as any;
+    const newPlanKey = product?.metadata?.plan
+      || product?.name?.toUpperCase().replace(/[^A-Z0-9]+/g, "_")
+      || "STARTER";
+
+    const dbSub = await prisma.userSubscription.findFirst({
+      where: { stripeSubscriptionId: subscriptionId },
+    });
+
+    if (dbSub) {
+      await prisma.userSubscription.update({
+        where: { id: dbSub.id },
+        data: { plan: newPlanKey as any },
+      });
+    }
+
+    successResponse(res, 200, "Subscription plan updated successfully", {
+      stripeSubscription: updatedStripeSub,
+      newPlan: newPlanKey,
+    });
+  } catch (error: any) {
+    console.error("[Billing] Change Subscription Plan Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 export const updatePlan = async (req: Request, res: Response): Promise<void> => {
   try {
     const productId = req.params.plan || "";

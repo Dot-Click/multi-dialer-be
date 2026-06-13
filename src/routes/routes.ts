@@ -36,6 +36,7 @@ import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
 import a2pRoutes from "./a2p";
 import { getMyPlusLeadsConfig, updateMyPlusLeadsConfig, deleteMyPlusLeadsConfig, syncMyPlusLeads, repairMyPlusLeads } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
+import superAdminCallerIdRoutes from "./super-admin/caller-ids"
 import { checkFeatureLocked } from "../middlewares/featureLock.middleware";
 import { envConfig } from "@/lib/config";
 import paymentRoutes from "./payment";
@@ -80,6 +81,7 @@ router.use("/reports", protectRoute, reportRoutes)
 
 router.use("/calling", callingRoutes)
 router.use("/report", protectRoute, checkRole(["OWNER"]), SuperAdminReportsRoutes)
+router.use("/super-admin/caller-ids", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), superAdminCallerIdRoutes)
 
 router.use("/billing", billingRouter)
 router.use("/push", protectRoute, pushRoutes)

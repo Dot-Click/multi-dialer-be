@@ -116,8 +116,9 @@ export async function getAlertsInDb() {
         },
       },
     }),
-    prisma.contact.count({
+    prisma.user.count({
       where: {
+        role: { not: "OWNER" },
         createdAt: {
           gte: startOfMonth,
           lte: endOfMonth,
@@ -329,32 +330,76 @@ export async function getDashboardSummaryInDb() {
 }
 
 export async function getBusinessOverviewInDb() {
-  const [revenueRecords, activeSubscriptions, activeUsers, totalAgents] = await Promise.all([
+  const [mrrRecords, activeSubscriptions, activeUsers, totalAgents] = await Promise.all([
     prisma.userSubscription.findMany({
-      where: { user: { role: { not: "OWNER" } } },
-      select: { amount: true }
+      where: { status: "ACTIVE", user: { role: { not: "OWNER" } } },
+      select: { amount: true, billingCycle: true },
+    }),
+    prisma.userSubscription.count({
+      where: { status: "ACTIVE", user: { role: { not: "OWNER" } } },
+    }),
+    prisma.user.count({
+      where: { status: "ACTIVE", role: { not: "OWNER" } },
+    }),
+    prisma.user.count({
+      where: { status: "ACTIVE", role: "AGENT" },
+    }),
+  ]);
+
+  const mrr = mrrRecords.reduce((sum, rec) => {
+    const raw = parseFloat(rec.amount || "0");
+    const monthly = rec.billingCycle === "YEARLY" ? raw / 12 : raw;
+    return sum + monthly;
+  }, 0);
+
+  return {
+    mrr: parseFloat(mrr.toFixed(2)),
+    activeSubscriptions,
+    activeUsers,
+    totalAgents,
+  };
+}
+
+export async function getChurnRateInDb() {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  // Subscriptions that were active at the start of this month:
+  // started before the 1st, and not cancelled/expired before the 1st.
+  const [activeAtStart, cancelledThisMonth] = await Promise.all([
+    prisma.userSubscription.count({
+      where: {
+        startDate: { lt: monthStart },
+        user: { role: { not: "OWNER" } },
+        // Exclude rows already churned before this month began
+        NOT: {
+          AND: [
+            { status: { in: ["CANCELLED", "EXPIRED"] } },
+            { updatedAt: { lt: monthStart } },
+          ],
+        },
+      },
     }),
     prisma.userSubscription.count({
       where: {
-        status: "ACTIVE",
-        user: { role: { not: "OWNER" } }
-      }
+        status: { in: ["CANCELLED", "EXPIRED"] },
+        updatedAt: { gte: monthStart, lte: monthEnd },
+        user: { role: { not: "OWNER" } },
+      },
     }),
-    prisma.user.count({
-      where: { status: "ACTIVE", role: { not: "OWNER" } }
-    }),
-    prisma.user.count({
-      where: { status: "ACTIVE", role: "AGENT" }
-    })
   ]);
 
-  const totalRevenue = revenueRecords.reduce((sum, rec) => sum + parseFloat(rec.amount || "0"), 0);
+  const churnRate =
+    activeAtStart > 0
+      ? parseFloat(((cancelledThisMonth / activeAtStart) * 100).toFixed(2))
+      : 0;
 
   return {
-    totalRevenue,
-    activeSubscriptions,
-    activeUsers,
-    totalAgents
+    churnRate,
+    cancelledThisMonth,
+    activeAtStart,
+    month: monthStart.toLocaleString("default", { month: "long", year: "numeric" }),
   };
 }
 

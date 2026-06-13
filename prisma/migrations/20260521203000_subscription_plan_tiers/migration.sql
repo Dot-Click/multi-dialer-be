@@ -1,0 +1,3 @@
+-- Migration file restored (original SQL was missing from the repo).
+-- This migration was already applied to the database; this file is a placeholder
+-- so Prisma's migration engine can continue tracking history.
