@@ -45,6 +45,8 @@ import {
   bulkDeleteContacts,
   mergeContacts,
   getRealtorLink,
+  markAsContacted,
+  getContactActivityLogs,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -68,6 +70,8 @@ router.get("/", getAllContacts);
 router.get("/dnc-list", getDncList);
 router.get("/contacts-list/:lid", getContactsByList);
 router.get("/:id/realtor-link", getRealtorLink);
+router.get("/:id/activity-logs", getContactActivityLogs);
+router.post("/:id/mark-as-contacted", markAsContacted);
 router.get("/:id", getContactById);
 router.put("/:id", updateContact);
 router.post("/:id/note", addContactNote);

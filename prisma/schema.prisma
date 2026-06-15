@@ -240,10 +240,11 @@ model User {
   // All recordings uploaded by this admin — reusable across any settings
   recordings Recording[]
 
-  contactLists      ContactList[]
-  contactFolders    ContactFolder[]
-  contactGroups     ContactGroups[]
-  contacts          Contact[]
+  contactLists         ContactList[]
+  contactFolders       ContactFolder[]
+  contactGroups        ContactGroups[]
+  contacts             Contact[]
+  contactActivityLogs  ContactActivityLog[]
   importContacts    ImportContact[]
   exportContacts    ExportContact[]
   backupContacts    BackupContacts[]
@@ -425,10 +426,11 @@ model Contact {
   miscFieldId     String?
   status          String         @default("PENDING")
 
-  calendar Calendar[]
-  emailLogs EmailLog[]
-  smsLogs   SmsLog[]
+  calendar        Calendar[]
+  emailLogs       EmailLog[]
+  smsLogs         SmsLog[]
   dispositionLogs ContactDispositionLog[]
+  activityLogs    ContactActivityLog[]
 
   folderIds    String[]       @default([])
 
@@ -1498,6 +1500,19 @@ model DialListSession {
 
   @@unique([userId, listId])
   @@map("dial_list_sessions")
+}
+
+model ContactActivityLog {
+  id        String   @id @default(uuid())
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@map("contact_activity_logs")
 }
 
 model BillingEvent {

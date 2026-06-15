@@ -57,6 +57,8 @@ import {
   bulkAssignContactsToFolderInDb,
   mergeContactsInDb,
   getRealtorLinkForContactInDb,
+  markAsContactedInDb,
+  getContactActivityLogsFromDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -1346,5 +1348,27 @@ export const mergeContacts = async (req: Request, res: Response) => {
       error?.message || "Internal server error",
       error?.statusCode || 500
     );
+  }
+};
+
+export const markAsContacted = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+    const log = await markAsContactedInDb(id, userId);
+    successResponse(res, 200, "Contact marked as contacted", log);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const getContactActivityLogs = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const logs = await getContactActivityLogsFromDb(id);
+    successResponse(res, 200, "Activity logs fetched", logs);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
 };

@@ -3031,3 +3031,24 @@ export async function mergeContactsInDb(
     timeout: 35000
   });
 }
+
+export async function markAsContactedInDb(contactId: string, userId: string) {
+  const [log] = await prisma.$transaction([
+    prisma.contactActivityLog.create({
+      data: { contactId, userId, action: "Marked as Contact" },
+    }),
+    prisma.contact.update({
+      where: { id: contactId },
+      data: { status: "CONTACTED" },
+    }),
+  ]);
+  return log;
+}
+
+export async function getContactActivityLogsFromDb(contactId: string) {
+  return prisma.contactActivityLog.findMany({
+    where: { contactId },
+    include: { user: { select: { fullName: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+}
