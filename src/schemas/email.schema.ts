@@ -12,6 +12,7 @@ export const createEmailSchema = z.object({
   content: z
     .string()
     .min(1, "Content is required"),
+  includeSignature: z.boolean().optional(),
 });
 
 export const updateEmailSchema = z.object({
@@ -19,6 +20,7 @@ export const updateEmailSchema = z.object({
   subject: z.string().min(1).max(500).optional(),
   content: z.string().min(1).optional(),
   status: z.boolean().optional(),
+  includeSignature: z.boolean().optional(),
 }).refine(
   (data) => Object.keys(data).length > 0,
   { message: "At least one field must be provided for update" }

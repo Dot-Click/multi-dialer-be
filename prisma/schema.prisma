@@ -610,6 +610,7 @@ model EmailTemplate {
   subject      String
   content      String
   status       Boolean  @default(true)
+  includeSignature Boolean @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   emailLogs    EmailLog[]

@@ -2515,14 +2515,52 @@ export async function getHotlistFromDb(userId: string, role: string) {
     .filter(Boolean);
 }
 
+// Replaces {{token}} merge fields with the contact's data. Used for both subject and body.
+export function applyMergeFields(text: string, contact: any): string {
+  if (!text) return text;
+  const fullName = contact.fullName || "";
+  const firstName = fullName.trim().split(/\s+/)[0] || "";
+  const lastName = fullName.trim().split(/\s+/).slice(1).join(" ") || "";
+  const primaryEmail =
+    contact.emails?.find((e: any) => e.isPrimary)?.email ||
+    contact.emails?.[0]?.email ||
+    "";
+  const primaryPhone =
+    contact.phones?.find((p: any) => p.isPrimary)?.number ||
+    contact.phones?.[0]?.number ||
+    "";
+
+  const map: Record<string, string> = {
+    fullName,
+    firstName,
+    lastName,
+    address: contact.address || "",
+    city: contact.city || "",
+    state: contact.state || "",
+    zip: contact.zip || "",
+    email: primaryEmail,
+    phone: primaryPhone,
+    agentName: contact.user?.fullName || "",
+  };
+
+  return text.replace(/{{\s*(\w+)\s*}}/g, (full, key) =>
+    key in map ? map[key] : full
+  );
+}
+
 export async function sendTemplateEmailInDb(contactId: string, templateId: string, userId: string) {
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
-    include: { emails: { where: { isPrimary: true } } },
+    include: {
+      emails: true,
+      phones: true,
+      user: { select: { fullName: true } },
+    },
   });
   if (!contact) throwHttp(404, "Contact not found");
 
-  const email = contact.emails[0]?.email;
+  const email =
+    contact.emails.find((e) => e.isPrimary)?.email || contact.emails[0]?.email;
   if (!email) throwHttp(400, "Contact has no primary email");
 
   const template = await prisma.emailTemplate.findUnique({
@@ -2530,12 +2568,23 @@ export async function sendTemplateEmailInDb(contactId: string, templateId: strin
   });
   if (!template) throwHttp(404, "Email template not found");
 
-  // Simple placeholder replacement logic
-  let content = template.content;
-  content = content.replace(/{{fullName}}/g, contact.fullName || "Friend");
-  content = content.replace(/{{city}}/g, contact.city || "");
+  // Read includeSignature via raw SQL (Prisma client may not be regenerated yet)
+  const flagRows = await prisma.$queryRaw<{ includeSignature: boolean }[]>`
+    SELECT "includeSignature" FROM email_templates WHERE id = ${templateId}
+  `;
+  const includeSignature = flagRows[0]?.includeSignature ?? false;
 
-  await sendEmail(email, template.subject, content, { userId, contactId, templateId });
+  const subject = applyMergeFields(template.subject, contact);
+  let content = applyMergeFields(template.content, contact);
+
+  if (includeSignature) {
+    const signature = await prisma.signature.findUnique({ where: { userId } });
+    if (signature?.content) {
+      content += `<br/><br/>${signature.content}`;
+    }
+  }
+
+  await sendEmail(email, subject, content, { userId, contactId, templateId });
 
   return true;
 }
