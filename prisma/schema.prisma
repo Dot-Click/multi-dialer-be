@@ -425,6 +425,7 @@ model Contact {
   miscFields      MiscField[]
   miscFieldId     String?
   status          String         @default("PENDING")
+  dialAttempts    Int            @default(0)
 
   calendar        Calendar[]
   emailLogs       EmailLog[]

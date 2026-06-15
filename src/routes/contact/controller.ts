@@ -59,6 +59,7 @@ import {
   getRealtorLinkForContactInDb,
   markAsContactedInDb,
   getContactActivityLogsFromDb,
+  updateDialAttemptsInDb,
 } from "./service";
 import {
   createContactListSchema,
@@ -1368,6 +1369,20 @@ export const getContactActivityLogs = async (req: Request, res: Response): Promi
     const { id } = req.params;
     const logs = await getContactActivityLogsFromDb(id);
     successResponse(res, 200, "Activity logs fetched", logs);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const updateDialAttempts = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { action } = req.body as { action: 'increment' | 'decrement' | 'reset' };
+    if (!['increment', 'decrement', 'reset'].includes(action)) {
+      errorResponse(res, "Invalid action", 400); return;
+    }
+    const result = await updateDialAttemptsInDb(id, action);
+    successResponse(res, 200, "Dial attempts updated", result);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

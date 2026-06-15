@@ -47,6 +47,7 @@ import {
   getRealtorLink,
   markAsContacted,
   getContactActivityLogs,
+  updateDialAttempts,
 } from "./controller";
 import { singleUpload } from "@/middlewares/multer.middleware";
 
@@ -72,6 +73,7 @@ router.get("/contacts-list/:lid", getContactsByList);
 router.get("/:id/realtor-link", getRealtorLink);
 router.get("/:id/activity-logs", getContactActivityLogs);
 router.post("/:id/mark-as-contacted", markAsContacted);
+router.patch("/:id/dial-attempts", updateDialAttempts);
 router.get("/:id", getContactById);
 router.put("/:id", updateContact);
 router.post("/:id/note", addContactNote);

@@ -3052,3 +3052,17 @@ export async function getContactActivityLogsFromDb(contactId: string) {
     orderBy: { createdAt: "desc" },
   });
 }
+
+export async function updateDialAttemptsInDb(contactId: string, action: 'increment' | 'decrement' | 'reset') {
+  if (action === 'reset') {
+    await prisma.$executeRaw`UPDATE contacts SET "dialAttempts" = 0 WHERE id = ${contactId}`;
+  } else if (action === 'increment') {
+    await prisma.$executeRaw`UPDATE contacts SET "dialAttempts" = "dialAttempts" + 1 WHERE id = ${contactId}`;
+  } else {
+    await prisma.$executeRaw`UPDATE contacts SET "dialAttempts" = GREATEST(0, "dialAttempts" - 1) WHERE id = ${contactId}`;
+  }
+  const rows = await prisma.$queryRaw<{ dialAttempts: number }[]>`
+    SELECT "dialAttempts" FROM contacts WHERE id = ${contactId}
+  `;
+  return { dialAttempts: rows[0]?.dialAttempts ?? 0 };
+}
