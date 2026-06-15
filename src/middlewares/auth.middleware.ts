@@ -62,7 +62,7 @@ export const protectRoute = async (
 
       if (user) {
         if (user.status === "SUSPENDED") {
-          return errorResponse(res, "Account suspended. Contact support.", 403);
+          errorResponse(res, "Account suspended. Contact support.", 403); return;
         }
         req.user = user as User;
         return next();
@@ -90,7 +90,7 @@ export const protectRoute = async (
 
       if (user) {
         if (user.status === "SUSPENDED") {
-          return errorResponse(res, "Account suspended. Contact support.", 403);
+          errorResponse(res, "Account suspended. Contact support.", 403); return;
         }
         req.user = user;
         return next();
@@ -124,7 +124,7 @@ export const protectRoute = async (
 
       if (dbUser) {
         if (dbUser.status === "SUSPENDED") {
-          return errorResponse(res, "Account suspended. Contact support.", 403);
+          errorResponse(res, "Account suspended. Contact support.", 403); return;
         }
         req.user = dbUser as User;
         return next();
