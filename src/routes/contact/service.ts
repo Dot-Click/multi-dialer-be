@@ -372,8 +372,9 @@ export async function getContactByIdFromDb(id: string) {
         },
         orderBy: { startTime: "desc" },
       },
-      emailLogs: { select: { id: true } },
+      emailLogs: { select: { id: true, createdAt: true }, orderBy: { createdAt: "desc" } },
       smsLogs: { select: { id: true } },
+      user: { select: { fullName: true, companies: { select: { defaultTimeZone: true }, take: 1 } } },
     },
   });
   if (!contact) throwHttp(404, "Contact not found");
