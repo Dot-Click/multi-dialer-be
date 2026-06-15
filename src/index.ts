@@ -10,6 +10,8 @@ import { envConfig, sessionMiddleware } from "@/lib/config";
 import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
 import { handleStripeWebhook } from "@/routes/webhooks/stripe";
+import { handleSesNotification } from "@/routes/webhooks/ses";
+import { handleUnsubscribe } from "@/routes/email/unsubscribe";
 import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
 import { backfillMyPlusLeadsExistingUsers } from "@/workers/myPlusLeadsBackfill";
@@ -60,6 +62,9 @@ app.use(morgan("dev"));
 // Stripe webhook must be parsed as raw buffer before express.json()
 app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), handleStripeWebhook);
 
+// SES bounce/complaint notifications arrive from SNS as text/plain JSON.
+app.post("/api/webhooks/ses", express.text({ type: "*/*" }), handleSesNotification);
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.static("public"));
@@ -69,6 +74,9 @@ app.all("/api/auth/*", toNodeHandler(auth));
 app.get("/", (_req: Request, res: Response) => {
   res.send("<h1>api</h1>");
 });
+
+// Public unsubscribe endpoint (no auth — accessed from email links)
+app.get("/api/email/unsubscribe", handleUnsubscribe);
 
 app.use("/api", routes);
 

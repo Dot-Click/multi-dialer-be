@@ -2,6 +2,7 @@ import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { envConfig } from "../lib/config";
 import prisma from "../lib/prisma";
 import { EmailStatus } from "@prisma/client";
+import { getSuppression, buildUnsubscribeUrl } from "../utils/emailSuppression";
 
 export interface SendEmailOptions {
   to: string;
@@ -10,6 +11,10 @@ export interface SendEmailOptions {
   subject: string;
   text: string;
   html?: string;
+
+  // Marketing emails (template sends) set this — adds an unsubscribe footer and
+  // makes the address eligible for UNSUBSCRIBE-based suppression.
+  includeUnsubscribe?: boolean;
 
   // Tracking (Optional: Only log if userId is provided)
   userId?: string;
@@ -44,11 +49,37 @@ export async function sendEmail(options: SendEmailOptions) {
   const fromName = options.fromName || envConfig.SES_FROM_NAME || "Dialer System";
   const fromHeader = `${fromName} <${fromEmail}>`;
 
-  console.log(`[EmailService] Sending email to ${to} from ${fromHeader} (replyTo: ${from})`);
-
   let status: EmailStatus = EmailStatus.SENT;
   let errorMsg: string | null = null;
   let messageId: string | null = null;
+
+  // Suppression gate. BOUNCE/COMPLAINT block ALL mail to the address.
+  // UNSUBSCRIBE blocks only marketing mail (transactional, e.g. OTP, still sends).
+  const suppression = await getSuppression(to);
+  if (suppression && (suppression !== "UNSUBSCRIBE" || options.includeUnsubscribe)) {
+    status = EmailStatus.FAILED;
+    errorMsg = `Recipient suppressed (${suppression})`;
+    console.warn(`[EmailService] Skipped send to ${to} — ${errorMsg}`);
+    if (userId) {
+      try {
+        await prisma.emailLog.create({
+          data: { to, from, subject, content: html || text, status, error: errorMsg, messageId: null, userId, contactId, leadId, templateId },
+        });
+      } catch (dbError) {
+        console.error("[EmailService] Failed to log suppressed email:", dbError);
+      }
+    }
+    return { success: false, error: errorMsg };
+  }
+
+  // Marketing emails get an unsubscribe footer (CAN-SPAM).
+  let htmlBody = html || text;
+  if (options.includeUnsubscribe) {
+    const url = buildUnsubscribeUrl(to);
+    htmlBody += `<br/><br/><div style="font-size:12px;color:#9ca3af;text-align:center;line-height:1.5;">If you no longer wish to receive these emails, <a href="${url}" style="color:#9ca3af;">unsubscribe here</a>.</div>`;
+  }
+
+  console.log(`[EmailService] Sending email to ${to} from ${fromHeader} (replyTo: ${from})`);
 
   try {
     const command = new SendEmailCommand({
@@ -62,7 +93,7 @@ export async function sendEmail(options: SendEmailOptions) {
         Simple: {
           Subject: { Data: subject, Charset: "UTF-8" },
           Body: {
-            Html: { Data: html || text, Charset: "UTF-8" },
+            Html: { Data: htmlBody, Charset: "UTF-8" },
             Text: { Data: text, Charset: "UTF-8" },
           },
         },

@@ -2584,7 +2584,7 @@ export async function sendTemplateEmailInDb(contactId: string, templateId: strin
     }
   }
 
-  await sendEmail(email, subject, content, { userId, contactId, templateId });
+  await sendEmail(email, subject, content, { userId, contactId, templateId, includeUnsubscribe: true });
 
   return true;
 }

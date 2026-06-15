@@ -629,6 +629,18 @@ model Signature {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+// Email addresses that must not be sent to. Populated by SES bounce/complaint
+// notifications and by unsubscribe requests. reason: BOUNCE | COMPLAINT | UNSUBSCRIBE | MANUAL
+model EmailSuppression {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  reason    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@map("email_suppressions")
+}
+
 model CallbackPrompt {
   id            String        @id @default(uuid())
   libraryId     String

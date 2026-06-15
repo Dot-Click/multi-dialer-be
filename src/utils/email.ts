@@ -257,10 +257,10 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
 import { sendEmail as trackedSendEmail } from "../services/email.service";
 
 export const sendEmail = async (
-    to: string, 
-    subject: string, 
-    html: string, 
-    tracking?: { userId: string; contactId?: string; leadId?: string; templateId?: string }
+    to: string,
+    subject: string,
+    html: string,
+    tracking?: { userId: string; contactId?: string; leadId?: string; templateId?: string; includeUnsubscribe?: boolean }
 ) => {
     try {
         return await trackedSendEmail({
@@ -273,6 +273,7 @@ export const sendEmail = async (
             contactId: tracking?.contactId,
             leadId: tracking?.leadId,
             templateId: tracking?.templateId,
+            includeUnsubscribe: tracking?.includeUnsubscribe,
         });
     }
     catch (error) {
