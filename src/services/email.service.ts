@@ -1,4 +1,4 @@
-import sgMail from "@sendgrid/mail";
+import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { envConfig } from "../lib/config";
 import prisma from "../lib/prisma";
 import { EmailStatus } from "@prisma/client";
@@ -10,7 +10,7 @@ export interface SendEmailOptions {
   subject: string;
   text: string;
   html?: string;
-  
+
   // Tracking (Optional: Only log if userId is provided)
   userId?: string;
   contactId?: string;
@@ -18,44 +18,66 @@ export interface SendEmailOptions {
   templateId?: string;
 }
 
+// SES v2 client (singleton). If explicit keys are provided we use them,
+// otherwise the SDK falls back to the default credential chain (env / IAM role).
+const ses = new SESv2Client({
+  region: envConfig.AWS_REGION,
+  ...(envConfig.AWS_ACCESS_KEY_ID && envConfig.AWS_SECRET_ACCESS_KEY
+    ? {
+        credentials: {
+          accessKeyId: envConfig.AWS_ACCESS_KEY_ID,
+          secretAccessKey: envConfig.AWS_SECRET_ACCESS_KEY,
+        },
+      }
+    : {}),
+});
+
 /**
- * Sends an email using SendGrid and logs it to EmailHistory if userId is provided.
+ * Sends an email using AWS SES and logs it to EmailLog if userId is provided.
+ * The verified SES identity is used as the From address; the caller-supplied
+ * `from` becomes the Reply-To so replies still reach the sender.
  */
 export async function sendEmail(options: SendEmailOptions) {
   const { to, from, subject, text, html, userId, contactId, leadId, templateId } = options;
 
-  const msg = {
-    to,
-    from: {
-      email: envConfig.EMAIL_USER || "noreply@dialersaas.com",
-      name: options.fromName || "Dialer System",
-    },
-    replyTo: from,
-    subject,
-    text,
-    html: html || text,
-  };
+  const fromEmail = envConfig.SES_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com";
+  const fromName = options.fromName || envConfig.SES_FROM_NAME || "Dialer System";
+  const fromHeader = `${fromName} <${fromEmail}>`;
 
-  console.log("[EmailService] Attempting to send email:", JSON.stringify({ ...msg, html: "[HTML_CONTENT]" }, null, 2));
+  console.log(`[EmailService] Sending email to ${to} from ${fromHeader} (replyTo: ${from})`);
 
   let status: EmailStatus = EmailStatus.SENT;
   let errorMsg: string | null = null;
   let messageId: string | null = null;
 
   try {
-    const [response] = await sgMail.send(msg);
-    // SendGrid v3 returns response with headers. Log message-id if available
-    messageId = response.headers['x-message-id'] as string || null;
-    console.log(`[EmailService] Email sent to ${to} from ${from}`);
+    const command = new SendEmailCommand({
+      FromEmailAddress: fromHeader,
+      Destination: { ToAddresses: [to] },
+      ReplyToAddresses: from ? [from] : undefined,
+      ...(envConfig.SES_CONFIGURATION_SET
+        ? { ConfigurationSetName: envConfig.SES_CONFIGURATION_SET }
+        : {}),
+      Content: {
+        Simple: {
+          Subject: { Data: subject, Charset: "UTF-8" },
+          Body: {
+            Html: { Data: html || text, Charset: "UTF-8" },
+            Text: { Data: text, Charset: "UTF-8" },
+          },
+        },
+      },
+    });
+
+    const response = await ses.send(command);
+    messageId = response.MessageId || null;
+    console.log(`[EmailService] Email sent to ${to} (messageId: ${messageId})`);
     return { success: true };
   } catch (error: any) {
     status = EmailStatus.FAILED;
-    errorMsg = error.message;
-    console.error("[EmailService] Error sending email:", error);
-    if (error.response) {
-      console.error(error.response.body);
-    }
-    return { success: false, error: error.message };
+    errorMsg = error?.message || "Unknown SES error";
+    console.error("[EmailService] Error sending email via SES:", error);
+    return { success: false, error: errorMsg };
   } finally {
     // Log to DB only if userId is provided
     if (userId) {

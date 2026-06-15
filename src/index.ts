@@ -7,7 +7,6 @@ import routes from "@/routes/routes";
 import { swaggerDocs } from "@/utils/handler";
 import { connectDB } from "@/lib/prisma";
 import { envConfig, sessionMiddleware } from "@/lib/config";
-import sgMail from "@sendgrid/mail";
 import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
 import { handleStripeWebhook } from "@/routes/webhooks/stripe";
@@ -64,8 +63,6 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), hand
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.static("public"));
-
-sgMail.setApiKey(envConfig.SENDGRID_API_KEY as string);
 
 app.all("/api/auth/*", toNodeHandler(auth));
 

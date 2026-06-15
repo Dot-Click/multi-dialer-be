@@ -16,6 +16,15 @@ export const envConfig = {
   SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
   GROK_API_KEY: process.env.GROK_API_KEY,
   EMAIL_USER: process.env.EMAIL_USER,
+
+  // AWS SES (email sending)
+  AWS_REGION: process.env.AWS_REGION || "us-east-1",
+  AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+  AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+  SES_FROM_EMAIL: process.env.SES_FROM_EMAIL,
+  SES_FROM_NAME: process.env.SES_FROM_NAME,
+  SES_CONFIGURATION_SET: process.env.SES_CONFIGURATION_SET,
+
   SESSION_SECRET: process.env.SESSION_SECRET,
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
