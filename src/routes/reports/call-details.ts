@@ -4,7 +4,7 @@ import { RequestHandler } from "express";
 
 /**
  * Get call details report
- * Includes: name, address, list, group, phone number, result
+ * Includes: name, address, list, folder, phone number, result
  */
 export const getCallDetailsReport: RequestHandler = async (req, res) => {
     try {
@@ -84,27 +84,18 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
                 .map(l => [l.id, l.name])
         );
 
-        // Fetch folders — guard hasSome the same way
+        // Fetch folders — a folder can own the contact's list (listIds) and/or
+        // contain the contact directly (contactIds). Guard hasSome on both.
         const foundListIds = lists.map(l => l.id).filter((id): id is string => !!id);
 
-        const folders = foundListIds.length > 0
-            ? await prisma.contactFolder.findMany({
-                where: {
-                    userId,
-                    listIds: { hasSome: foundListIds }
-                },
-                select: { id: true, name: true, listIds: true }
-            })
-            : [];
+        const folderOrClauses: any[] = [];
+        if (foundListIds.length > 0) folderOrClauses.push({ listIds: { hasSome: foundListIds } });
+        if (contactIds.length > 0) folderOrClauses.push({ contactIds: { hasSome: contactIds } });
 
-        // Fetch groups — guard hasSome
-        const groups = contactIds.length > 0
-            ? await prisma.contactGroups.findMany({
-                where: {
-                    userId,
-                    contactIds: { hasSome: contactIds }
-                },
-                select: { name: true, contactIds: true }
+        const folders = folderOrClauses.length > 0
+            ? await prisma.contactFolder.findMany({
+                where: { userId, OR: folderOrClauses },
+                select: { id: true, name: true, listIds: true, contactIds: true }
             })
             : [];
 
@@ -127,26 +118,26 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
                 if (list) listName = list.name;
             }
 
-            // ── Determine Folder / Group ────────────────────────────────────
-            let groupName = "N/A";
+            // ── Determine Folder ────────────────────────────────────────────
+            let folderName = "N/A";
 
             if (call.session?.listId) {
-                // 1. Try to find a folder that owns the session's list
+                // 1. Folder that owns the session's list
                 const folder = folders.find(f => f.listIds.includes(call.session!.listId!));
-                if (folder) groupName = folder.name;
+                if (folder) folderName = folder.name;
             }
 
-            if (groupName === "N/A" && contactId) {
-                // 2. Try a ContactGroup that contains this contact
-                const group = groups.find(g => g.contactIds.includes(contactId));
-                if (group) {
-                    groupName = group.name;
+            if (folderName === "N/A" && contactId) {
+                // 2. Folder that contains this contact directly
+                const direct = folders.find(f => f.contactIds.includes(contactId));
+                if (direct) {
+                    folderName = direct.name;
                 } else {
-                    // 3. Find a list for this contact, then a folder for that list
+                    // 3. Folder that owns a list this contact belongs to
                     const listForContact = lists.find(l => l.contactIds.includes(contactId));
                     if (listForContact?.id) {
                         const folder = folders.find(f => f.listIds.includes(listForContact.id));
-                        if (folder) groupName = folder.name;
+                        if (folder) folderName = folder.name;
                     }
                 }
             }
@@ -160,7 +151,7 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
                         .trim() || "N/A"
                     : "N/A",
                 list: listName,
-                group: groupName,
+                folder: folderName,
                 phoneNumber: phone || "N/A",
                 result: call.disposition || call.status,
                 startTime: call.startTime,

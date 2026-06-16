@@ -70,9 +70,19 @@ export async function getPresignedUrlFromStoredUrl(
   if (!storedUrl) return storedUrl ?? null;
 
   try {
-    const { pathname } = new URL(storedUrl);
+    const parsed = new URL(storedUrl);
+
+    // Only presign URLs that live in OUR R2. Anything else (e.g. a Twilio
+    // recording link) is returned untouched — otherwise we'd mangle its path
+    // into a bogus R2 key and produce a URL that 403s (which surfaces as
+    // "no supported sources" in the <audio> player).
+    const isOurR2 =
+      parsed.hostname.endsWith(".r2.cloudflarestorage.com") ||
+      (!!envConfig.R2_PUBLIC_URL && parsed.hostname === envConfig.R2_PUBLIC_URL);
+    if (!isOurR2) return storedUrl;
+
     // pathname is "/<bucket>/<key...>" (path-style addressing)
-    const segments = pathname.replace(/^\/+/, "").split("/");
+    const segments = parsed.pathname.replace(/^\/+/, "").split("/");
     const bucket = segments.shift() || envConfig.R2_BUCKET_NAME || "multi-dialer";
     const key = segments.join("/");
     if (!key) return storedUrl;
