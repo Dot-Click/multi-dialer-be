@@ -2,11 +2,10 @@ import { PhoneType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
 import axios from "axios";
-import { uploadToR2 } from "../../utils/r2-uploader";
+import { uploadToR2, getPresignedUrlFromStoredUrl } from "../../utils/r2-uploader";
 import { randomUUID } from "crypto";
 import { createInternalNotification } from "../notification/controller";
 import { resolveTenantUserIds } from "../../utils/tenant";
-import { presignR2Url } from "../../utils/r2-presign";
 import { envConfig } from "@/lib/config";
 
 
@@ -382,12 +381,12 @@ export async function getContactByIdFromDb(id: string) {
 
   // Recording URLs are stored as the private R2 S3 endpoint, which a browser
   // cannot play. Swap each into a short-lived presigned URL so the <audio>
-  // player can stream it directly.
+  // player can stream it directly (same helper the recordings report uses).
   if (contact.callRecords?.length) {
     await Promise.all(
       contact.callRecords.map(async (cr: any) => {
         if (cr.recordingUrl) {
-          cr.recordingUrl = await presignR2Url(cr.recordingUrl);
+          cr.recordingUrl = await getPresignedUrlFromStoredUrl(cr.recordingUrl);
         }
       }),
     );
