@@ -111,10 +111,10 @@ export const integrationController = {
         return;
       }
 
-      const { recipientName, address1, address2, city, postcode, country, message, template, automationId } = req.body;
+      const { recipientName, address1, address2, city, state, postcode, country, message, template, automationId } = req.body;
 
-      if (!recipientName || !address1 || !city || !postcode || !country) {
-        res.status(400).json({ error: "Recipient name, address, city, postcode and country are required." });
+      if (!recipientName || !address1 || !city || !state || !postcode || !country) {
+        res.status(400).json({ error: "Recipient name, address, city, state, postcode and country are required." });
         return;
       }
 
@@ -133,6 +133,7 @@ export const integrationController = {
         form.append("address1", address1);
         if (address2) form.append("address2", address2);
         form.append("city", city);
+        form.append("region", state); // Stannp's region field = state/province
         form.append("postcode", postcode);
         form.append("country", country);
 
@@ -149,6 +150,7 @@ export const integrationController = {
         form.append("recipient[address1]", address1);
         if (address2) form.append("recipient[address2]", address2);
         form.append("recipient[city]", city);
+        form.append("recipient[region]", state); // Stannp's region field = state/province
         form.append("recipient[postcode]", postcode);
         form.append("recipient[country]", country);
         form.append("message", message || "Hello from CallScout!");

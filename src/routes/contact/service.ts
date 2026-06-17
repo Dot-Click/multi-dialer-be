@@ -2915,10 +2915,40 @@ export async function bulkAssignContactsToFolderInDb(
 ) {
   return prisma.$transaction(async (tx) => {
     if (mode === "replace") {
+      // MOVE: each contact ends up in EXACTLY the target folder.
       await tx.contact.updateMany({
         where: { id: { in: contactIds } },
         data: { folderIds: [folderId] }
       });
+
+      // Strip the moved contacts out of every OTHER folder's contactIds mirror
+      // so the source folder (e.g. Expired) no longer lists them — otherwise the
+      // contacts appear in both folders (duplicate) in views/reports that read
+      // the mirror array.
+      const otherFolders = await tx.contactFolder.findMany({
+        where: { id: { not: folderId }, contactIds: { hasSome: contactIds } },
+        select: { id: true, contactIds: true },
+      });
+      await Promise.all(otherFolders.map((f) =>
+        tx.contactFolder.update({
+          where: { id: f.id },
+          data: { contactIds: f.contactIds.filter((id) => !contactIds.includes(id)) },
+        })
+      ));
+
+      // Also remove the moved contacts from every LIST they belong to. Moving a
+      // contact INTO a folder relocates it out of lists entirely — otherwise it
+      // stays visible in its old list as well (a copy, not a move).
+      const sourceLists = await tx.contactList.findMany({
+        where: { contactIds: { hasSome: contactIds } },
+        select: { id: true, contactIds: true },
+      });
+      await Promise.all(sourceLists.map((l) =>
+        tx.contactList.update({
+          where: { id: l.id },
+          data: { contactIds: l.contactIds.filter((id) => !contactIds.includes(id)) },
+        })
+      ));
     } else {
       // ADD mode: requires per-contact update because updateMany doesn't support array push
       await Promise.all(contactIds.map(async (id) => {
