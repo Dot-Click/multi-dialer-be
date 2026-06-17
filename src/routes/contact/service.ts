@@ -1411,6 +1411,11 @@ export async function bulkAssignContactsToListInDb(
   contactIds: string[],
   listId: string,
 ) {
+  if (!contactIds || contactIds.length === 0) {
+    return { success: true, listName: "" };
+  }
+  const movedSet = new Set(contactIds);
+
   return prisma.$transaction(async (tx) => {
     const newList = await tx.contactList.findUnique({
       where: { id: listId },
@@ -1418,35 +1423,34 @@ export async function bulkAssignContactsToListInDb(
     });
     if (!newList) throwHttp(404, "Target List not found");
 
-    await Promise.all(contactIds.map(async (contactId) => {
-      // Remove contact from every other list it currently belongs to
-      const currentLists = await tx.contactList.findMany({
-        where: { contactIds: { has: contactId } },
-        select: { id: true, contactIds: true },
+    // Remove ALL moved contacts from every OTHER list, ONE sequential update per
+    // list. The previous version looped per-contact with Promise.all and read
+    // each list's array concurrently — under production DB latency those reads
+    // overlapped and the last write (built from a stale array) dropped the other
+    // removals, leaving contacts in their old list (the "duplicate" bug).
+    const otherLists = await tx.contactList.findMany({
+      where: { id: { not: listId }, contactIds: { hasSome: contactIds } },
+      select: { id: true, contactIds: true },
+    });
+    for (const l of otherLists) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter((id) => !movedSet.has(id)) },
       });
-      await Promise.all(currentLists.map((l) => {
-        if (l.id !== listId) {
-          return tx.contactList.update({
-            where: { id: l.id },
-            data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
-          });
-        }
-        return Promise.resolve();
-      }));
+    }
 
-      // Add to target list if not already present
-      if (!newList.contactIds.includes(contactId)) {
-        await tx.contactList.update({
-          where: { id: listId },
-          data: { contactIds: { push: contactId } },
-        });
-      }
+    // Add all moved contacts to the target list (deduped), in one update.
+    const mergedTarget = Array.from(new Set([...newList.contactIds, ...contactIds]));
+    await tx.contactList.update({
+      where: { id: listId },
+      data: { contactIds: mergedTarget },
+    });
 
-      await tx.contact.update({
-        where: { id: contactId },
-        data: { source: newList.name },
-      });
-    }));
+    // Stamp the source on the moved contacts.
+    await tx.contact.updateMany({
+      where: { id: { in: contactIds } },
+      data: { source: newList.name },
+    });
 
     return { success: true, listName: newList.name };
   });
