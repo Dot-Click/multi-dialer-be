@@ -184,7 +184,7 @@ export const stopDialing: RequestHandler = async (req, res) => {
     }
     // Explicitly reset the agent block state so they aren't phantom-locked!
     (dialerService as any).setAgentBusy(userId, false);
-    dialerService.clearQueue(userId);
+    await dialerService.clearQueue(userId);
     console.log(`[stopDialing] Queue cleared and lock released for user ${userId}`);
     successResponse(res, 200, "Simultaneous dialing queue stopped", null);
     return;

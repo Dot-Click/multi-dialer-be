@@ -214,6 +214,9 @@ export const endSession: RequestHandler = async (req, res) => {
             }
         });
 
+        // Ending a session must also stop the dialer — clears the queue and hangs
+        // up any live calls so it can't keep auto-dialing after the agent leaves.
+        await dialerService.clearQueue(session.userId);
         dialerService.clearActiveSession(session.userId);
 
         successResponse(res, 200, "Session ended", updatedSession);

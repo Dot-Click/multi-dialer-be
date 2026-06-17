@@ -228,11 +228,20 @@ export class DialerService {
     this.processQueue(userId);
   }
 
-  clearQueue(userId: string) {
+  async clearQueue(userId: string) {
     const queue = this.userQueues.get(userId);
     if (queue) {
       queue.clear();
       console.log(`[DialerService] Cleared queue for user ${userId}`);
+    }
+
+    // Capture this user's live call SIDs BEFORE wiping the activeCalls map.
+    // Clearing the in-memory map does NOT terminate the Twilio calls — any
+    // already-dialed/ringing legs would keep ringing and could still bridge to
+    // the agent after they have left the session. We hang them up explicitly.
+    const sidsToHangup: string[] = [];
+    for (const [sid, metadata] of this.activeCalls.entries()) {
+      if (metadata.userId === userId) sidsToHangup.push(sid);
     }
 
     // HARD RESET states to unblock stuck sessions
@@ -243,12 +252,34 @@ export class DialerService {
     this.userActiveSessions.delete(userId);
     this.lastActivity.delete(userId);
     this.sessionPacing.delete(userId);
+    // Drop in-flight leads so an in-progress processQueue pass can't keep dialing
+    this.leadsInFlight.delete(userId);
     for (const [sid, metadata] of this.activeCalls.entries()) {
       if (metadata.userId === userId) {
         this.activeCalls.delete(sid);
         this.sidToRootSid.delete(sid);
       }
     }
+
+    // Best-effort: terminate any live Twilio calls for this user so nothing
+    // bridges to them after they leave.
+    if (sidsToHangup.length > 0) {
+      try {
+        const userClient = await getTwilioClient(userId);
+        await Promise.all(sidsToHangup.map(async (sid) => {
+          try {
+            await userClient.calls(sid).update({ status: "completed" });
+            console.log(`[DialerService] Hung up live call ${sid} for user ${userId}`);
+          } catch (e: any) {
+            // Call may already be completed/failed — safe to ignore.
+            console.warn(`[DialerService] Could not hang up call ${sid}: ${e?.message}`);
+          }
+        }));
+      } catch (e: any) {
+        console.warn(`[DialerService] Twilio client unavailable for hangup: ${e?.message}`);
+      }
+    }
+
     // Clear sticky caller ID mappings for this user's leads
     // We identify them by checking leads that belonged to this user's active calls
     // (leadToCallerIdMap is shared so we leave it — it persists per-lead across sessions)
