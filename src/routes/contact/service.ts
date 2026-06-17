@@ -5,7 +5,7 @@ import axios from "axios";
 import { uploadToR2, getPresignedUrlFromStoredUrl } from "../../utils/r2-uploader";
 import { randomUUID } from "crypto";
 import { createInternalNotification } from "../notification/controller";
-import { resolveTenantUserIds } from "../../utils/tenant";
+import { resolveTenantUserIds, resolveTenantRootId } from "../../utils/tenant";
 import { envConfig } from "@/lib/config";
 
 
@@ -1324,14 +1324,32 @@ export async function moveToDncInDb(
 
     if (!contact) throwHttp(404, "Contact not found");
 
-    // 1. Mark contact as DO_NOT_CALL and move to system DNC folder
-    const dncFolder = await ensureDncFolder(userId);
+    // 1. Mark contact as DO_NOT_CALL, remove it from every list (out of the
+    //    session/dial queue), and place it in the system DNC folder.
+    const dncFolder = await ensureDncFolder(userId, tx);
+
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: contactId } },
+      select: { id: true, contactIds: true },
+    });
+    for (const l of lists) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
+      });
+    }
+
+    // Flag all of the contact's numbers as DNC so none can be dialed.
+    await tx.contactPhone.updateMany({
+      where: { contactId },
+      data: { isDnc: true },
+    });
 
     await tx.contact.update({
       where: { id: contactId },
       data: {
         status: "DO_NOT_CALL",
-        folderIds: { push: dncFolder?.id || undefined }
+        folderIds: dncFolder ? [dncFolder.id] : [],
       },
     });
 
@@ -3129,17 +3147,80 @@ export async function mergeContactsInDb(
   });
 }
 
-export async function markAsContactedInDb(contactId: string, userId: string) {
-  const [log] = await prisma.$transaction([
-    prisma.contactActivityLog.create({
-      data: { contactId, userId, action: "Marked as Contact" },
-    }),
-    prisma.contact.update({
+// CONTACT outcome: reached → mark contacted, flag the dialed number as the best
+// number (green), and remove the contact from every list so it leaves the dial
+// queue (placed in the contacted state).
+export async function markAsContactedInDb(contactId: string, userId: string, phoneId?: string) {
+  return prisma.$transaction(async (tx) => {
+    if (phoneId) {
+      await tx.contactPhone.updateMany({ where: { contactId }, data: { isBestNumber: false } });
+      await tx.contactPhone.update({ where: { id: phoneId }, data: { isBestNumber: true } });
+    }
+
+    // Remove from every list it currently belongs to (out of the dial queue).
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: contactId } },
+      select: { id: true, contactIds: true },
+    });
+    for (const l of lists) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
+      });
+    }
+
+    await tx.contact.update({
       where: { id: contactId },
       data: { status: "CONTACTED" },
-    }),
-  ]);
-  return log;
+    });
+
+    return tx.contactActivityLog.create({
+      data: { contactId, userId, action: "Marked as Contact" },
+    });
+  });
+}
+
+// BAD_NUMBER outcome: mark just this number invalid so it is struck through in
+// the contact card and never dialed again. The contact stays dialable on its
+// other numbers (no DNC, no suppression).
+export async function markPhoneInvalidInDb(contactId: string, phoneId: string, userId: string) {
+  await prisma.contactPhone.update({
+    where: { id: phoneId },
+    data: { isValid: false },
+  });
+  await prisma.contactActivityLog.create({
+    data: { contactId, userId, action: "Bad Number marked" },
+  });
+  return { success: true };
+}
+
+// DNC_NUMBER outcome: globally suppress this phone number across ALL lists and
+// contacts in the tenant. Records it in SuppressedNumber (so future imports are
+// caught too) and flags every existing matching phone as DNC.
+export async function suppressNumberGloballyInDb(number: string, userId: string, contactId?: string) {
+  const rootId = await resolveTenantRootId(userId);
+
+  await prisma.suppressedNumber.upsert({
+    where: { userId_number: { userId: rootId, number } },
+    create: { userId: rootId, number, reason: "DNC Number" },
+    update: {},
+  });
+
+  const tenantUserIds = await resolveTenantUserIds(userId);
+  await prisma.contactPhone.updateMany({
+    where: {
+      number,
+      ...(tenantUserIds ? { contact: { userId: { in: tenantUserIds } } } : {}),
+    },
+    data: { isDnc: true },
+  });
+
+  if (contactId) {
+    await prisma.contactActivityLog.create({
+      data: { contactId, userId, action: `DNC Number suppressed: ${number}` },
+    });
+  }
+  return { success: true };
 }
 
 export async function getContactActivityLogsFromDb(contactId: string) {

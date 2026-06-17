@@ -58,6 +58,8 @@ import {
   mergeContactsInDb,
   getRealtorLinkForContactInDb,
   markAsContactedInDb,
+  markPhoneInvalidInDb,
+  suppressNumberGloballyInDb,
   getContactActivityLogsFromDb,
   updateDialAttemptsInDb,
 } from "./service";
@@ -1355,10 +1357,41 @@ export const mergeContacts = async (req: Request, res: Response) => {
 export const markAsContacted = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+    const { phoneId } = req.body as { phoneId?: string };
     const userId = (req as any).user?.id;
     if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
-    const log = await markAsContactedInDb(id, userId);
+    const log = await markAsContactedInDb(id, userId, phoneId);
     successResponse(res, 200, "Contact marked as contacted", log);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+// BAD_NUMBER outcome — mark the specific number invalid (struck through).
+export const markBadNumber = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { phoneId } = req.body as { phoneId?: string };
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+    if (!phoneId) { errorResponse(res, "phoneId is required", 400); return; }
+    const result = await markPhoneInvalidInDb(id, phoneId, userId);
+    successResponse(res, 200, "Number marked as bad", result);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+// DNC_NUMBER outcome — globally suppress the number across all lists.
+export const dncNumber = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { number } = req.body as { number?: string };
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+    if (!number) { errorResponse(res, "number is required", 400); return; }
+    const result = await suppressNumberGloballyInDb(number, userId, id);
+    successResponse(res, 200, "Number globally suppressed", result);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

@@ -6,6 +6,7 @@ import { uploadToR2 } from "@/utils/r2-uploader";
 import { envConfig } from "@/lib/config";
 import Groq from "groq-sdk";
 import { moveToDncInDb } from "../contact/service";
+import { resolveTenantRootId } from "../../utils/tenant";
 
 
 enum LeadCallStatus {
@@ -466,6 +467,43 @@ export class DialerService {
     }
   }
 
+  // Returns a reason string if this number must NOT be dialed, else null.
+  private async isDialBlocked(
+    userId: string,
+    contactId: string | undefined,
+    number: string,
+  ): Promise<string | null> {
+    try {
+      if (contactId) {
+        const contact = await prisma.contact.findUnique({
+          where: { id: contactId },
+          select: { status: true },
+        });
+        if (contact?.status === "DO_NOT_CALL") return "contact is DNC";
+      }
+
+      if (number) {
+        const phone = await prisma.contactPhone.findFirst({
+          where: { number, ...(contactId ? { contactId } : {}) },
+          select: { isValid: true, isDnc: true },
+        });
+        if (phone?.isValid === false) return "number marked Bad Number";
+        if (phone?.isDnc === true) return "number marked DNC";
+
+        const rootId = await resolveTenantRootId(userId);
+        const suppressed = await prisma.suppressedNumber.findFirst({
+          where: { userId: rootId, number },
+          select: { id: true },
+        });
+        if (suppressed) return "number globally suppressed";
+      }
+    } catch (e: any) {
+      // Fail open — a lookup error must not silently halt dialing.
+      console.warn(`[isDialBlocked] lookup failed: ${e?.message}`);
+    }
+    return null;
+  }
+
   private async makeCall(lead: Lead, preAssignedNumber?: string | null) {
     try {
 
@@ -542,6 +580,18 @@ export class DialerService {
           include: { phones: true }
         });
         dialTo = contact?.phones?.[lead.phoneIndex]?.number || "";
+      }
+
+      // Honor call-outcome suppression: never dial a DNC contact, an invalid
+      // (Bad Number) phone, a DNC-flagged phone, or a globally suppressed number.
+      const blockReason = await this.isDialBlocked(lead.userId, lead.originalContactId, dialTo);
+      if (blockReason) {
+        console.log(`[makeCall] SKIP lead ${lead.id} (${dialTo}) — ${blockReason}`);
+        await this.updateLeadStatusInDB(lead.id, "SKIPPED");
+        this.leadsInFlight.get(lead.userId)?.delete(lead.id);
+        // Fill the freed line with the next lead.
+        this.processQueue(lead.userId);
+        return;
       }
 
       // 3. Initiate Twilio Call

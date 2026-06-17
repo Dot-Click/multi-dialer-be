@@ -230,17 +230,16 @@ export class DispositionService {
             console.log(`[applyDisposition] Contact moved to folder ${resolvedFolderId}, removed from all lists`);
         }
 
-        // 4. If MANUAL — create ContactDispositionLog
-        if (source === 'MANUAL') {
-            await prisma.contactDispositionLog.create({
-                data: {
-                    contactId,
-                    dispositionId,
-                    appliedById,
-                    folderId: resolvedFolderId
-                }
-            });
-        }
+        // 4. Always log the disposition application (reporting needs CALL-sourced
+        //    dispositions too — e.g. "Contact" must count as a contact in reports).
+        await prisma.contactDispositionLog.create({
+            data: {
+                contactId,
+                dispositionId,
+                appliedById,
+                folderId: resolvedFolderId
+            }
+        });
 
         // 5. If CALL — update CallRecord with dispositionId + overrideFolderId
         if (source === 'CALL' && callRecordId) {

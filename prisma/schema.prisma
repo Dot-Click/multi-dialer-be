@@ -477,10 +477,28 @@ model ContactPhone {
   number        String
   type          PhoneType
   isBestNumber  Boolean   @default(false)
+  // Bad Number → marked invalid (struck through, never dialed). DNC Number →
+  // globally suppressed across all lists (see SuppressedNumber).
+  isValid       Boolean   @default(true)
+  isDnc         Boolean   @default(false)
   contactId     String
   contact       Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@index([number])
+}
+
+// Global phone-number suppression (DNC Number outcome). A number listed here is
+// never dialed for any contact in the tenant, across every list.
+model SuppressedNumber {
+  id        String   @id @default(cuid())
+  number    String
+  userId    String // tenant root id (admin/owner)
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, number])
+  @@index([number])
+  @@map("suppressed_numbers")
 }
 
 model Session {

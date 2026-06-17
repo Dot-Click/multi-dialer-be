@@ -46,6 +46,8 @@ import {
   mergeContacts,
   getRealtorLink,
   markAsContacted,
+  markBadNumber,
+  dncNumber,
   getContactActivityLogs,
   updateDialAttempts,
 } from "./controller";
@@ -73,6 +75,8 @@ router.get("/contacts-list/:lid", getContactsByList);
 router.get("/:id/realtor-link", getRealtorLink);
 router.get("/:id/activity-logs", getContactActivityLogs);
 router.post("/:id/mark-as-contacted", markAsContacted);
+router.post("/:id/mark-bad-number", markBadNumber);
+router.post("/:id/dnc-number", dncNumber);
 router.patch("/:id/dial-attempts", updateDialAttempts);
 router.get("/:id", getContactById);
 router.put("/:id", updateContact);
