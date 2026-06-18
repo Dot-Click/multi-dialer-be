@@ -37,6 +37,7 @@ import {
   deleteAttachmentFromDb,
   assignAgentsToListInDb,
   moveToDncInDb,
+  moveToTrashInDb,
   removeFromDncInDb,
   getDncListFromDb,
   getAllExportContactsFromDb,
@@ -777,6 +778,27 @@ export const moveToDnc = async (req: Request, res: Response): Promise<void> => {
 
     const result = await moveToDncInDb(id, userId, phoneIds);
     successResponse(res, 200, "Successfully moved to DNC", result);
+  } catch (error: any) {
+    errorResponse(
+      res,
+      error?.message || "Internal server error",
+      error?.statusCode || 500,
+    );
+  }
+};
+
+export const moveToTrash = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = (req as any).user.id;
+
+    if (!id) {
+      errorResponse(res, "Contact id is required", 400);
+      return;
+    }
+
+    const result = await moveToTrashInDb(id, userId);
+    successResponse(res, 200, "Successfully moved to Trash", result);
   } catch (error: any) {
     errorResponse(
       res,

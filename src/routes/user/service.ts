@@ -75,6 +75,15 @@ export async function createUserInDb(payload: any) {
             }
         });
 
+        // 6b. Ensure Trash folder exists (System Default Folder)
+        await tx.contactFolder.create({
+            data: {
+                name: "Trash",
+                isSystem: true,
+                userId: newUser.id
+            }
+        });
+
         // 7. Create Twilio Sub-Account (API CALL)
         // If this fails, the entire transaction (User, Account, etc.) will ROLL BACK
         try {
@@ -282,6 +291,16 @@ export async function initializeUserAccount(userId: string, fullName: string) {
         if (!dncFolder) {
             await prisma.contactFolder.create({
                 data: { name: "DNC", isSystem: true, userId }
+            });
+        }
+
+        // 4b. Ensure Trash folder exists
+        const trashFolder = await prisma.contactFolder.findFirst({
+            where: { userId, name: "Trash", isSystem: true }
+        });
+        if (!trashFolder) {
+            await prisma.contactFolder.create({
+                data: { name: "Trash", isSystem: true, userId }
             });
         }
 

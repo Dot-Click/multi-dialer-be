@@ -1003,6 +1003,37 @@ export async function ensureDncFolder(userId: string, tx?: any) {
   }
 }
 
+export async function ensureTrashFolder(userId: string, tx?: any) {
+  const client = tx || prisma;
+  try {
+    const trashFolder = await client.contactFolder.findFirst({
+      where: {
+        userId,
+        isSystem: true,
+        name: "Trash"
+      }
+    });
+
+    if (!trashFolder) {
+      const newFolder = await client.contactFolder.create({
+        data: {
+          name: "Trash",
+          isSystem: true,
+          userId,
+          listIds: [],
+          contactIds: []
+        }
+      });
+      console.log(`[ContactService] Initialized Trash system folder for user ${userId}`);
+      return newFolder;
+    }
+    return trashFolder;
+  } catch (error) {
+    console.error(`[ContactService] Failed to ensure Trash folder for ${userId}:`, error);
+    return null;
+  }
+}
+
 export async function createContactFolderInDb(
   payload: { name: string; listIds: string[]; contactIds?: string[]; parentId?: string },
   userId: string,
@@ -1392,6 +1423,55 @@ export async function moveToDncInDb(
     } catch (notifErr) {
       console.error("Failed to send DNC compliance alert:", notifErr);
     }
+
+    return { success: true };
+  });
+}
+
+// TRASH outcome: move the contact into the system "Trash" folder and pull it out
+// of every list so no further outbound dials remain for it. Unlike DNC this is a
+// non-compliance removal — it does NOT set DO_NOT_CALL or flag the numbers, so the
+// contact can be restored from Trash and dialed again later if needed.
+export async function moveToTrashInDb(contactId: string, userId: string) {
+  return prisma.$transaction(async (tx) => {
+    const contact = await tx.contact.findUnique({
+      where: { id: contactId },
+      include: { phones: true },
+    });
+
+    if (!contact) throwHttp(404, "Contact not found");
+
+    const trashFolder = await ensureTrashFolder(userId, tx);
+
+    // Remove the contact from every list it currently belongs to so it cannot be
+    // picked up by any current or future dial session.
+    const lists = await tx.contactList.findMany({
+      where: { contactIds: { has: contactId } },
+      select: { id: true, contactIds: true },
+    });
+    for (const l of lists) {
+      await tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
+      });
+    }
+
+    // Move the contact into the Trash folder (and only that folder).
+    await tx.contact.update({
+      where: { id: contactId },
+      data: {
+        folderIds: trashFolder ? [trashFolder.id] : [],
+      },
+    });
+
+    const phoneNumbers = contact.phones.map((p) => p.number).join(", ");
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: `Contact moved to Trash`,
+        details: `Contact: ${contact.fullName} (${phoneNumbers})`,
+      },
+    });
 
     return { success: true };
   });

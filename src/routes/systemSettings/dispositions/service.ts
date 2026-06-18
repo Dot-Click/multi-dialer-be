@@ -29,6 +29,7 @@ export class DispositionService {
             { label: "Voicemail", value: "VOICEMAIL", color: "blue", icon: "Mail", isSystem: true, isActive: true, order: 4 },
             { label: "DNC - Contact", value: "DNC_CONTACT", color: "orange", icon: "Ban", isSystem: true, isActive: true, order: 5 },
             { label: "DNC - Number", value: "DNC_NUMBER", color: "orange", icon: "Ban", isSystem: true, isActive: true, order: 6 },
+            { label: "Trash", value: "TRASH", color: "gray", icon: "Trash2", isSystem: true, isActive: true, order: 7 },
         ];
 
         // 1. Cleanup: Remove old system dispositions that are no longer in our defaults list
