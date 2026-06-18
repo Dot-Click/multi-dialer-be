@@ -22,6 +22,30 @@ export const startCalling: RequestHandler = async (req, res) => {
       errorResponse(res, { message: "Phone number is required" }, 400);
       return;
     }
+
+    // Hard guard: a number marked Bad Number (isValid=false), DNC (isDnc=true),
+    // belonging to a DNC contact, or globally suppressed must NOT be dialable
+    // from any path. The power dialer enforces this in makeCall(); the manual
+    // click-to-call path must enforce it here too.
+    const guardLast10 = to.replace(/\D/g, "").slice(-10);
+    if (guardLast10.length >= 7) {
+      const guardedPhone = await (prisma.contactPhone as any).findFirst({
+        where: {
+          number: { contains: guardLast10 },
+          ...(contactId ? { contactId } : {}),
+        },
+        select: { isValid: true, isDnc: true, contact: { select: { status: true } } },
+      });
+      if (guardedPhone?.isValid === false) {
+        errorResponse(res, { message: "This number is marked Bad Number and cannot be dialed." }, 409);
+        return;
+      }
+      if (guardedPhone?.isDnc === true || guardedPhone?.contact?.status === "DO_NOT_CALL") {
+        errorResponse(res, { message: "This number is on Do Not Call and cannot be dialed." }, 409);
+        return;
+      }
+    }
+
     const userClient = await getTwilioClient(agentId);
 
     // Fetch amdEnabled from CallSettings (Req 4.5, 4.6)
