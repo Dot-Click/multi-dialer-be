@@ -482,11 +482,26 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
         status: "initiated"
       });
 
+      // Best-effort: record which Caller ID (from number) was used, so the
+      // contact's Call History can show it for manual calls too.
+      let manualCallerIdId: string | null = null;
+      try {
+        const fromNum = typeof callerId === "string" ? callerId : "";
+        if (fromNum) {
+          const cid = await prisma.callerId.findFirst({
+            where: { twillioNumber: fromNum },
+            select: { id: true },
+          });
+          manualCallerIdId = cid?.id ?? null;
+        }
+      } catch { /* non-fatal */ }
+
       await prisma.callRecord.create({
         data: {
           callSid: body.CallSid,
           userId: agentId,
           contactId: contactId,
+          callerIdId: manualCallerIdId,
           status: "initiated",
           startTime: new Date(),
         }

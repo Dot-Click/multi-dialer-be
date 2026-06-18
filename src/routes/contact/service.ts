@@ -369,6 +369,7 @@ export async function getContactByIdFromDb(id: string) {
       callRecords: {
         include: {
           user: { select: { fullName: true } },
+          callerId: { select: { twillioNumber: true, label: true } },
         },
         orderBy: { startTime: "desc" },
       },
