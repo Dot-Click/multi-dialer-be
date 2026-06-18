@@ -890,12 +890,15 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
             let mappingValue: string | null = null;
             if (dbStatus === LeadCallStatus.CALLED) mappingValue = "CONTACT";
             else if (dbStatus === LeadCallStatus.NO_ANSWER) mappingValue = "NO_ANSWER";
-            else if (dbStatus === LeadCallStatus.FAILED) mappingValue = "BAD_NUMBER";
+            else if (dbStatus === LeadCallStatus.FAILED) mappingValue = "NO_ANSWER"; // A technical failure is a missed attempt, NOT a bad number. Bad Number is only ever set manually by an admin/agent.
             else if (dbStatus === LeadCallStatus.BUSY) mappingValue = "NO_ANSWER"; // Map busy to No Answer for folder purposes if needed, or omit
-            
-            // Map the dbStatus string exactly if it matches
+
+            // Map the dbStatus string exactly if it matches.
+            // NOTE: BAD_NUMBER, DNC_CONTACT, and DNC_NUMBER are intentionally excluded — those
+            // suppress dialing permanently and must only ever be applied by a deliberate user
+            // action (the dedicated mark-bad-number / dnc endpoints), never auto-applied here.
             if (!mappingValue) {
-                const knownValues = ["CONTACT", "NO_ANSWER", "BAD_NUMBER", "VOICEMAIL", "DNC_CONTACT", "DNC_NUMBER"];
+                const knownValues = ["CONTACT", "NO_ANSWER", "VOICEMAIL"];
                 if (knownValues.includes(dbStatus as string)) {
                     mappingValue = dbStatus as string;
                 }
