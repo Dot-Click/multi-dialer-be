@@ -135,6 +135,10 @@ export class DialerService {
   private leadToCallerIdMap: Map<string, string> = new Map();
   /** Maps userId -> session-level pacing override (max simultaneous calls). */
   private sessionPacing: Map<string, number> = new Map();
+  /** Maps userId -> (caller-ID number -> calls placed this session). Powers the
+   *  Caller ID Rotation usage counts shown in the power dialer. Reset when a new
+   *  caller-ID pool is set (i.e. at the start of a session). */
+  private userCallerIdCallCounts: Map<string, Map<string, number>> = new Map();
 
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
@@ -192,7 +196,8 @@ export class DialerService {
       this.userCallerIdPools.set(userId, pool);
       this.userCallerIdIndices.set(userId, 0);
       this.userCallerIdPrefs.delete(userId);
-      
+      this.userCallerIdCallCounts.set(userId, new Map()); // fresh usage counts for the session
+
       if (pool.length > 0) {
         console.log(`[DialerService] Caller ID pool set for user ${userId}: [${pool.join(', ')}]`);
       }
@@ -213,6 +218,7 @@ export class DialerService {
             this.userCallerIdPools.set(userId, numbers);
             this.userCallerIdIndices.set(userId, 0);
             this.userCallerIdPrefs.delete(userId);
+            this.userCallerIdCallCounts.set(userId, new Map()); // fresh usage counts for the session
             console.log(`[DialerService] Auto-filled rotation pool for user ${userId} with ${numbers.length} numbers.`);
           }
         }
@@ -641,6 +647,17 @@ export class DialerService {
         console.log(`[makeCall] Sticky Caller ID recorded: lead ${lead.id} -> ${normalised}`);
       }
 
+      // ── Caller ID usage: count this call against the number used, so the
+      //    power dialer's Caller ID Rotation widget shows real usage (X / max). ──
+      if (fromNumber) {
+        let counts = this.userCallerIdCallCounts.get(lead.userId);
+        if (!counts) {
+          counts = new Map();
+          this.userCallerIdCallCounts.set(lead.userId, counts);
+        }
+        counts.set(twilioFrom, (counts.get(twilioFrom) || 0) + 1);
+      }
+
       // 3. Create CallRecord in DB immediately
       try {
         await prisma.callRecord.create({
@@ -707,7 +724,7 @@ export class DialerService {
     const userId = userIdRaw?.toString().trim();
     if (!userId) {
       console.warn("[DialerService] getStatus called without userId");
-      return { queueSize: 0, activeCallsCount: 0, pendingRedialsCount: 0, leadStatuses: {}, leadSids: {} };
+      return { queueSize: 0, activeCallsCount: 0, pendingRedialsCount: 0, leadStatuses: {}, leadSids: {}, callerIdStats: {} };
     }
 
     const queue = this.userQueues.get(userId);
@@ -745,6 +762,12 @@ export class DialerService {
     const pendingRedialsCount = this.pendingRedials.get(userId)?.size || 0;
     const queueSize = queue?.size() || 0;
 
+    // Per-caller-ID usage counts for this session (powers the Caller ID Rotation widget).
+    const callerIdStats: Record<string, { callCount: number }> = {};
+    this.userCallerIdCallCounts.get(userId)?.forEach((count, number) => {
+      callerIdStats[number] = { callCount: count };
+    });
+
     if (activeCount === 0 && pendingRedialsCount === 0 && queueSize === 0) {
         console.log(`[getStatus] REPORTING EMPTY for ${userId}. activeCalls: ${userActiveCalls.length}, inFlight: ${inFlightCount}, pending: ${pendingRedialsCount}, queue: ${queueSize}`);
     }
@@ -756,7 +779,8 @@ export class DialerService {
       inFlightCount,
       currentQueue: queue?.getQueue() || [],
       leadStatuses,
-      leadSids
+      leadSids,
+      callerIdStats
     };
   }
 
