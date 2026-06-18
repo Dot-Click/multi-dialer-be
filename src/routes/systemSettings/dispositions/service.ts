@@ -1,4 +1,14 @@
 import prisma from "@/lib/prisma";
+import { ensureTrashFolder } from "../../contact/service";
+
+// Protected default dispositions: seeded for every account, shown in the user's
+// Dispositions list (NOT as system "Call Outcomes"), and cannot be edited or
+// deleted. Matched by their `value`.
+const PROTECTED_DEFAULT_VALUES = ["TRASH"];
+
+export function isProtectedDispositionValue(value?: string | null) {
+    return !!value && PROTECTED_DEFAULT_VALUES.includes(value.toUpperCase());
+}
 
 export class DispositionService {
     static async getDispositions(userId: string) {
@@ -29,7 +39,6 @@ export class DispositionService {
             { label: "Voicemail", value: "VOICEMAIL", color: "blue", icon: "Mail", isSystem: true, isActive: true, order: 4 },
             { label: "DNC - Contact", value: "DNC_CONTACT", color: "orange", icon: "Ban", isSystem: true, isActive: true, order: 5 },
             { label: "DNC - Number", value: "DNC_NUMBER", color: "orange", icon: "Ban", isSystem: true, isActive: true, order: 6 },
-            { label: "Trash", value: "TRASH", color: "gray", icon: "Trash2", isSystem: true, isActive: true, order: 7 },
         ];
 
         // 1. Cleanup: Remove old system dispositions that are no longer in our defaults list
@@ -59,6 +68,36 @@ export class DispositionService {
                 await prisma.disposition.update({
                     where: { id: existing.id },
                     data: { label: def.label, color: def.color, icon: def.icon }
+                });
+            }
+        }
+
+        // 2b. Ensure the protected default "Trash" disposition exists. It is NOT a
+        //     system call-outcome — it lives in the user's Dispositions list — but it
+        //     is seeded by default and cannot be edited/deleted. It links to the
+        //     system "Trash" folder so applying it moves the contact there and out of
+        //     every list.
+        const existingTrash = systemSetting.dispositions.find(d => d.value === "TRASH");
+        if (!existingTrash || !existingTrash.targetFolderId) {
+            const trashFolder = await ensureTrashFolder(targetUserId);
+            if (!existingTrash) {
+                await prisma.disposition.create({
+                    data: {
+                        label: "Trash",
+                        value: "TRASH",
+                        color: "gray",
+                        icon: "Trash2",
+                        isSystem: false,
+                        isActive: true,
+                        order: 99,
+                        targetFolderId: trashFolder ? trashFolder.id : null,
+                        systemSettingId: systemSetting.id,
+                    }
+                });
+            } else if (trashFolder && !existingTrash.targetFolderId) {
+                await prisma.disposition.update({
+                    where: { id: existingTrash.id },
+                    data: { targetFolderId: trashFolder.id },
                 });
             }
         }
@@ -114,6 +153,14 @@ export class DispositionService {
     }
 
     static async updateDisposition(id: string, data: any) {
+        const target = await prisma.disposition.findUnique({
+            where: { id },
+            select: { value: true }
+        });
+        if (isProtectedDispositionValue(target?.value)) {
+            throw new Error("The default Trash disposition cannot be modified");
+        }
+
         const { autoCreateFolder, ...updateData } = data;
 
         if (autoCreateFolder) {
@@ -154,6 +201,9 @@ export class DispositionService {
     static async deleteDisposition(id: string) {
         const disposition = await prisma.disposition.findUnique({ where: { id } });
         if (disposition?.isSystem) throw new Error("Cannot delete system disposition");
+        if (isProtectedDispositionValue(disposition?.value)) {
+            throw new Error("The default Trash disposition cannot be deleted");
+        }
 
         return await prisma.disposition.delete({
             where: { id }
