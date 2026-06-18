@@ -47,10 +47,6 @@ export const startAppointmentReminderJob = () => {
         },
       });
 
-      if (upcomingEvents.length === 0) {
-        return;
-      }
-
       for (const event of upcomingEvents) {
         try {
           // Calculate when the reminder should trigger
@@ -143,6 +139,78 @@ export const startAppointmentReminderJob = () => {
           }
         } catch (eventError) {
           console.error(`[Job] Error processing event ${event.id}:`, eventError);
+        }
+      }
+
+      // ── Task reminders ──────────────────────────────────────────────────
+      // Send a reminder for tasks coming due within 30 minutes (once each).
+      const taskReminderWindow = new Date(now.getTime() + 30 * 60 * 1000);
+      const dueTasks = await prisma.task.findMany({
+        where: {
+          reminderSent: false,
+          status: { in: ["OPEN", "IN_PROGRESS"] },
+          dueAt: { gt: now, lte: taskReminderWindow },
+        },
+        include: {
+          contact: { select: { fullName: true } },
+          agent: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+              systemSettings: { include: { notificationSetting: true } },
+            },
+          },
+        },
+      });
+
+      for (const task of dueTasks) {
+        try {
+          const dueStr = task.dueAt.toLocaleString();
+          const contactName = task.contact?.fullName ? ` for ${task.contact.fullName}` : "";
+
+          // In-app notification for the assigned agent.
+          await createInternalNotification(
+            task.agentId,
+            `⏰ Task due soon: ${task.title}`,
+            `Your task${contactName} is due at ${dueStr}.`,
+            "event"
+          );
+
+          // Reminder email — to the configured reminder address if set, else the
+          // agent's own email. Uses the existing SES-backed email service.
+          const settings = task.agent.systemSettings?.[0]?.notificationSetting;
+          const toEmail = settings?.appointmentReminderEmail || task.agent.email;
+          if (toEmail) {
+            try {
+              const htmlContent = getBaseEmailTemplate("Task Reminder", `
+                <p>Hello ${task.agent.fullName || "there"},</p>
+                <p>This is a reminder for an upcoming task:</p>
+                <div class="info-card">
+                    <div class="info-item"><span class="info-label">Task:</span><span class="info-value highlight">${task.title}</span></div>
+                    <div class="info-item"><span class="info-label">Due:</span><span class="info-value">${dueStr}</span></div>
+                    ${task.contact?.fullName ? `<div class="info-item"><span class="info-label">Contact:</span><span class="info-value">${task.contact.fullName}</span></div>` : ""}
+                    ${task.notes ? `<div class="info-item"><span class="info-label">Notes:</span><span class="info-value">${task.notes}</span></div>` : ""}
+                </div>
+              `);
+              await sendEmail({
+                to: toEmail,
+                from: "system@multidialer.com",
+                subject: `⏰ Task due soon: ${task.title}`,
+                text: `Reminder: your task "${task.title}" is due at ${dueStr}.`,
+                html: htmlContent,
+              });
+            } catch (e) {
+              console.error(`[Job] Task reminder email failed for task ${task.id}:`, e);
+            }
+          }
+
+          await prisma.task.update({
+            where: { id: task.id },
+            data: { reminderSent: true },
+          });
+        } catch (taskError) {
+          console.error(`[Job] Error processing task ${task.id}:`, taskError);
         }
       }
     } catch (error) {

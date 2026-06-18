@@ -430,11 +430,15 @@ export const getInvoicesByCustomer = async (req: Request, res: Response): Promis
 
     const invoiceList = await stripe.invoices.list({ customer: customerId, limit: 20 });
 
+    const productNames = await resolveProductNames(invoiceList.data);
+
     const invoices = invoiceList.data.map((inv) => ({
       id: inv.id,
       number: inv.number,
+      plan: planFromInvoice(inv, productNames) ?? "—",
       amount_paid: inv.amount_paid,
       amount_due: inv.amount_due,
+      currency: inv.currency,
       status: inv.status,
       created: new Date(inv.created * 1000).toLocaleDateString("en-US", {
         year: "numeric",
@@ -448,6 +452,459 @@ export const getInvoicesByCustomer = async (req: Request, res: Response): Promis
     successResponse(res, 200, "Invoices retrieved successfully", invoices);
   } catch (error: any) {
     console.error("[Billing] Get Invoices Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const getAllInvoices = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Build a lookup of every signed-up customer keyed by their Stripe customer id
+    const subscriptions = await prisma.userSubscription.findMany({
+      where: { stripeCustomerId: { not: null } },
+      include: { user: { select: { fullName: true, email: true } } },
+    });
+
+    const customerMap = new Map<
+      string,
+      { userId: string; fullName: string | null; email: string | null; plan: string }
+    >();
+    for (const sub of subscriptions) {
+      if (sub.stripeCustomerId && !customerMap.has(sub.stripeCustomerId)) {
+        customerMap.set(sub.stripeCustomerId, {
+          userId: sub.userId,
+          fullName: sub.user?.fullName ?? null,
+          email: sub.user?.email ?? null,
+          plan: String(sub.plan),
+        });
+      }
+    }
+
+    // Pull all account invoices via a single paginated list call (cap to avoid runaway).
+    // Expand the customer so we can label invoices even when they aren't linked to a
+    // platform subscription record (e.g. invoices created directly in Stripe).
+    const MAX_INVOICES = 300;
+    const collected: Awaited<ReturnType<typeof stripe.invoices.list>>["data"] = [];
+    let startingAfter: string | undefined;
+
+    while (collected.length < MAX_INVOICES) {
+      const page = await stripe.invoices.list({
+        limit: 100,
+        expand: ["data.customer"],
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      collected.push(...page.data);
+      if (!page.has_more || page.data.length === 0) break;
+      startingAfter = page.data[page.data.length - 1].id;
+    }
+
+    const productNames = await resolveProductNames(collected);
+
+    // Show every invoice in the connected Stripe account, enriching with platform
+    // customer details when a matching subscription exists.
+    const invoices = collected.map((inv) => {
+      const customerObj = inv.customer && typeof inv.customer === "object" ? inv.customer : null;
+      const customerId =
+        typeof inv.customer === "string" ? inv.customer : customerObj?.id ?? "";
+      const matched = customerId ? customerMap.get(customerId) : undefined;
+
+      // Fall back to the Stripe customer's own name/email, then the invoice's billing fields
+      const stripeName = customerObj && !("deleted" in customerObj) ? customerObj.name : null;
+      const stripeEmail = customerObj && !("deleted" in customerObj) ? customerObj.email : null;
+
+      return {
+        id: inv.id,
+        number: inv.number,
+        customerId,
+        customerName: matched?.fullName ?? stripeName ?? inv.customer_name ?? null,
+        customerEmail: matched?.email ?? stripeEmail ?? inv.customer_email ?? null,
+        plan: planFromInvoice(inv, productNames) ?? matched?.plan ?? "—",
+        amount_paid: inv.amount_paid,
+        amount_due: inv.amount_due,
+        currency: inv.currency,
+        status: inv.status,
+        createdAt: new Date(inv.created * 1000).toISOString(),
+        created: new Date(inv.created * 1000).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        }),
+        hosted_invoice_url: inv.hosted_invoice_url,
+        invoice_pdf: inv.invoice_pdf,
+      };
+    });
+
+    // Derive the active Stripe environment from the secret key prefix
+    const mode: "live" | "test" = (envConfig.STRIPE_SECRET_KEY || "").startsWith("sk_live_")
+      ? "live"
+      : "test";
+
+    successResponse(res, 200, "All invoices retrieved successfully", { mode, invoices });
+  } catch (error: any) {
+    console.error("[Billing] Get All Invoices Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+/**
+ * Resolve the card used to pay an invoice. The exact location of the charge shifts
+ * across Stripe API versions, so probe the common spots defensively and never throw.
+ */
+async function resolveInvoiceCard(inv: any): Promise<{
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+} | null> {
+  try {
+    let chargeId: string | undefined;
+
+    if (typeof inv.charge === "string") {
+      chargeId = inv.charge;
+    } else if (inv.charge?.id) {
+      chargeId = inv.charge.id;
+    }
+
+    // payments list (newer API): pull the payment intent, then its latest charge
+    let paymentIntentId: string | undefined =
+      typeof inv.payment_intent === "string" ? inv.payment_intent : inv.payment_intent?.id;
+
+    if (!paymentIntentId && Array.isArray(inv.payments?.data)) {
+      for (const p of inv.payments.data) {
+        const pi = p?.payment?.payment_intent ?? p?.payment_intent;
+        if (typeof pi === "string") {
+          paymentIntentId = pi;
+          break;
+        }
+      }
+    }
+
+    if (!chargeId && paymentIntentId) {
+      const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+      const latest = (pi as any).latest_charge;
+      chargeId = typeof latest === "string" ? latest : latest?.id;
+    }
+
+    if (!chargeId) return null;
+
+    const charge = await stripe.charges.retrieve(chargeId);
+    const card = (charge as any).payment_method_details?.card;
+    if (!card) return null;
+
+    return {
+      brand: card.brand ?? null,
+      last4: card.last4 ?? null,
+      expMonth: card.exp_month ?? null,
+      expYear: card.exp_year ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Extract the Stripe product id from an invoice line item. The field location moved
+// across API versions, so probe the known spots.
+function productIdFromLine(line: any): string | null {
+  if (!line) return null;
+  const candidates = [
+    line.price?.product,
+    line.pricing?.price_details?.product,
+    line.plan?.product,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string") return c;
+  }
+  return null;
+}
+
+// Build a productId -> productName map for the products referenced by a set of invoices.
+// Products are few, so retrieving each unique one is cheap and avoids expand-depth limits.
+async function resolveProductNames(invoices: any[]): Promise<Map<string, string>> {
+  const productIds = new Set<string>();
+  for (const inv of invoices) {
+    const pid = productIdFromLine(inv.lines?.data?.[0]);
+    if (pid) productIds.add(pid);
+  }
+
+  const names = new Map<string, string>();
+  await Promise.all(
+    [...productIds].map(async (pid) => {
+      try {
+        const product = await stripe.products.retrieve(pid);
+        if (product && !(product as any).deleted && (product as any).name) {
+          names.set(pid, (product as any).name);
+        }
+      } catch {
+        // ignore individual product lookup failures
+      }
+    }),
+  );
+  return names;
+}
+
+// Resolve the plan/product label for a single invoice from the resolved product map,
+// falling back to the line description.
+function planFromInvoice(inv: any, productNames: Map<string, string>): string | null {
+  const line = inv.lines?.data?.[0];
+  const pid = productIdFromLine(line);
+  if (pid && productNames.has(pid)) return productNames.get(pid)!;
+  if (line?.description) return line.description;
+  return null;
+}
+
+export const getInvoicesByUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      errorResponse(res, "userId is required", 400);
+      return;
+    }
+
+    const subscription = await prisma.userSubscription.findFirst({
+      where: { userId, stripeCustomerId: { not: null } },
+      include: { user: { select: { fullName: true, email: true } } },
+    });
+
+    const user =
+      subscription?.user ??
+      (await prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true, email: true },
+      }));
+
+    // Resolve every Stripe customer id tied to this user:
+    //  1. the id stored on their subscription, and
+    //  2. any customer Stripe knows under their email (covers invoices created/emailed
+    //     before the customer id was linked back to our DB).
+    const customerIds = new Set<string>();
+    if (subscription?.stripeCustomerId) {
+      customerIds.add(subscription.stripeCustomerId);
+    }
+    if (user?.email) {
+      try {
+        const matches = await stripe.customers.list({ email: user.email, limit: 100 });
+        matches.data.forEach((c) => customerIds.add(c.id));
+      } catch (e) {
+        console.error("[Billing] Customer lookup by email failed:", e);
+      }
+    }
+
+    console.log(
+      `[Billing] getInvoicesByUser userId=${userId} email=${user?.email ?? "none"} ` +
+        `matchedCustomers=${[...customerIds].join(",") || "none"}`,
+    );
+
+    if (customerIds.size === 0) {
+      successResponse(res, 200, "Invoices retrieved successfully", []);
+      return;
+    }
+
+    // Gather invoices across all matched customers
+    const collected = await Promise.all(
+      [...customerIds].map((customerId) =>
+        stripe.invoices
+          .list({ customer: customerId, limit: 100 })
+          .then((list) => list.data)
+          .catch(() => []),
+      ),
+    );
+
+    const flatInvoices = collected.flat().sort((a, b) => b.created - a.created);
+    const productNames = await resolveProductNames(flatInvoices);
+
+    const invoices = flatInvoices
+      .map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        customerId: typeof inv.customer === "string" ? inv.customer : "",
+        customerName: user?.fullName ?? inv.customer_name ?? null,
+        customerEmail: user?.email ?? inv.customer_email ?? null,
+        plan: planFromInvoice(inv, productNames) ?? (subscription ? String(subscription.plan) : "—"),
+        amount_paid: inv.amount_paid,
+        amount_due: inv.amount_due,
+        currency: inv.currency,
+        status: inv.status,
+        createdAt: new Date(inv.created * 1000).toISOString(),
+        created: new Date(inv.created * 1000).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        }),
+        hosted_invoice_url: inv.hosted_invoice_url,
+        invoice_pdf: inv.invoice_pdf,
+      }));
+
+    successResponse(res, 200, "Invoices retrieved successfully", invoices);
+  } catch (error: any) {
+    console.error("[Billing] Get Invoices By User Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+// Format a Stripe address into display lines, e.g.
+//   ["San Francisco, California 94103", "United States"]
+function formatAddressLines(address: any): string[] {
+  if (!address) return [];
+  const lines: string[] = [];
+  if (address.line1) lines.push(address.line1);
+  if (address.line2) lines.push(address.line2);
+
+  const cityLine = [
+    address.city,
+    [address.state, address.postal_code].filter(Boolean).join(" "),
+  ]
+    .filter(Boolean)
+    .join(", ");
+  if (cityLine) lines.push(cityLine);
+
+  if (address.country) {
+    let country = address.country;
+    try {
+      country = new Intl.DisplayNames(["en"], { type: "region" }).of(address.country) || address.country;
+    } catch {
+      // keep the raw country code
+    }
+    lines.push(country);
+  }
+  return lines;
+}
+
+// Best-effort retrieval of the connected account's seller details (never throws)
+async function getSellerInfo(): Promise<{
+  name: string | null;
+  addressLines: string[];
+  phone: string | null;
+}> {
+  try {
+    // No-arg retrieve hits GET /v1/account (the account tied to the API key)
+    const account: any = await (stripe.accounts as any).retrieve();
+    const name =
+      account?.business_profile?.name ||
+      account?.settings?.dashboard?.display_name ||
+      account?.company?.name ||
+      null;
+    const address =
+      account?.business_profile?.support_address ||
+      account?.company?.address ||
+      null;
+    const phone =
+      account?.business_profile?.support_phone ||
+      account?.company?.phone ||
+      null;
+    return { name, addressLines: formatAddressLines(address), phone };
+  } catch {
+    return { name: null, addressLines: [], phone: null };
+  }
+}
+
+// Lazily resolve just the payment card for a single invoice (used to fill the
+// Payment column in list modals without slowing down the initial list load).
+export const getInvoiceCard = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { invoiceId } = req.params;
+    if (!invoiceId || !invoiceId.startsWith("in_")) {
+      errorResponse(res, "Valid invoiceId is required", 400);
+      return;
+    }
+
+    const inv = await stripe.invoices.retrieve(invoiceId);
+    const paymentMethod = await resolveInvoiceCard(inv);
+
+    successResponse(res, 200, "Invoice card retrieved successfully", { paymentMethod });
+  } catch (error: any) {
+    console.error("[Billing] Get Invoice Card Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const getInvoiceById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { invoiceId } = req.params;
+
+    if (!invoiceId || !invoiceId.startsWith("in_")) {
+      errorResponse(res, "Valid invoiceId is required", 400);
+      return;
+    }
+
+    const inv = await stripe.invoices.retrieve(invoiceId, {
+      expand: ["customer", "lines.data.price.product"],
+    });
+
+    const customerObj = inv.customer && typeof inv.customer === "object" ? inv.customer : null;
+    const customerNotDeleted = customerObj && !("deleted" in customerObj) ? (customerObj as any) : null;
+    const stripeName = customerNotDeleted?.name ?? null;
+    const stripeEmail = customerNotDeleted?.email ?? null;
+
+    const seller = await getSellerInfo();
+
+    // Seller name on the invoice falls back to the live account profile
+    const accountName = (inv as any).account_name || seller.name || null;
+
+    // Customer billing block: prefer the invoice's snapshot, then the customer object
+    const customerAddressLines = formatAddressLines(
+      (inv as any).customer_address || customerNotDeleted?.address,
+    );
+    const customerPhone = (inv as any).customer_phone || customerNotDeleted?.phone || null;
+
+    const fmtDate = (epoch?: number | null) =>
+      epoch
+        ? new Date(epoch * 1000).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })
+        : null;
+
+    const paymentMethod = await resolveInvoiceCard(inv);
+
+    const lineItems = inv.lines.data.map((line) => {
+      const qty = line.quantity ?? 1;
+      const priceUnit = (line as any).price?.unit_amount;
+      const unitAmount =
+        typeof priceUnit === "number" ? priceUnit : qty ? Math.round(line.amount / qty) : line.amount;
+      return {
+        id: line.id,
+        description: line.description,
+        quantity: line.quantity,
+        unitAmount,
+        amount: line.amount,
+        periodStart: fmtDate(line.period?.start),
+        periodEnd: fmtDate(line.period?.end),
+      };
+    });
+
+    const detail = {
+      id: inv.id,
+      number: inv.number,
+      status: inv.status,
+      currency: inv.currency,
+      accountName,
+      sellerAddressLines: seller.addressLines,
+      sellerPhone: seller.phone,
+      customerName: stripeName ?? inv.customer_name ?? null,
+      customerEmail: stripeEmail ?? inv.customer_email ?? null,
+      customerAddressLines,
+      customerPhone,
+      description: inv.description,
+      created: fmtDate(inv.created),
+      dueDate: fmtDate(inv.due_date),
+      periodStart: fmtDate(inv.period_start),
+      periodEnd: fmtDate(inv.period_end),
+      subtotal: inv.subtotal,
+      tax: Array.isArray((inv as any).total_taxes)
+        ? (inv as any).total_taxes.reduce((sum: number, t: any) => sum + (t.amount ?? 0), 0)
+        : 0,
+      total: inv.total,
+      amountPaid: inv.amount_paid,
+      amountDue: inv.amount_due,
+      paymentMethod,
+      lineItems,
+      hosted_invoice_url: inv.hosted_invoice_url,
+      invoice_pdf: inv.invoice_pdf,
+    };
+
+    successResponse(res, 200, "Invoice retrieved successfully", detail);
+  } catch (error: any) {
+    console.error("[Billing] Get Invoice By Id Error:", error);
     errorResponse(res, error.message || "Internal server error", 500);
   }
 };

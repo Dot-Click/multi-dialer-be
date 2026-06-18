@@ -230,6 +230,57 @@ export const deleteCalendarEvent = async (req: Request, res: Response): Promise<
   }
 };
 
+// Unified feed for the calendar UI: callbacks + appointments + tasks for the
+// authenticated agent within [from, to]. Each item is tagged with `type` so the
+// frontend can render/colour them without inspecting the shape.
+export const getUnifiedCalendar = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id: agentId } = req.user!;
+    const { from, to } = req.query;
+
+    if (typeof from !== "string" || !from || isNaN(new Date(from).getTime())) {
+      errorResponse(res, "A valid `from` date is required", 400);
+      return;
+    }
+    if (typeof to !== "string" || !to || isNaN(new Date(to).getTime())) {
+      errorResponse(res, "A valid `to` date is required", 400);
+      return;
+    }
+
+    const gte = new Date(from);
+    const lte = new Date(to);
+
+    const [callbacks, appointments, tasks] = await Promise.all([
+      prisma.callback.findMany({
+        where: { agentId, scheduledAt: { gte, lte } },
+        include: {
+          contact: { select: { id: true, fullName: true } },
+          lead: { select: { id: true, fullName: true } },
+        },
+        orderBy: { scheduledAt: "asc" },
+      }),
+      prisma.appointment.findMany({
+        where: { agentId, scheduledAt: { gte, lte } },
+        include: { contact: { select: { id: true, fullName: true } } },
+        orderBy: { scheduledAt: "asc" },
+      }),
+      prisma.task.findMany({
+        where: { agentId, dueAt: { gte, lte } },
+        include: { contact: { select: { id: true, fullName: true } } },
+        orderBy: { dueAt: "asc" },
+      }),
+    ]);
+
+    successResponse(res, 200, "Unified calendar fetched", {
+      callbacks: callbacks.map((c) => ({ ...c, type: "CALLBACK" as const })),
+      appointments: appointments.map((a) => ({ ...a, type: "APPOINTMENT" as const })),
+      tasks: tasks.map((t) => ({ ...t, type: "TASK" as const })),
+    });
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 export const getCalendarEventsByContact = async (req: Request, res: Response): Promise<void> => {
   try {
     const { contactId } = req.params;

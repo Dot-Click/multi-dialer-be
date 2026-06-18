@@ -16,6 +16,9 @@ import dialerSettingRoute from "./systemSettings/dialersettings"
 import notificationRoute from "./systemSettings/notification"
 import IntegrationRoute from "./systemSettings/integration"
 import calendarRoutes from "./calender"
+import callbacksRoutes from "./callbacks"
+import appointmentsRoutes from "./appointments"
+import tasksRoutes from "./tasks"
 import actionplansRoutes from "./systemSettings/actionplan"
 import leadSheetRoutes from "./systemSettings/leadSheet"
 import regulatoryRoutes from "./systemSettings/regulatory"
@@ -46,6 +49,9 @@ const router = Router()
 
 
 router.use("/calendar", protectRoute, calendarRoutes)
+router.use("/callbacks", protectRoute, callbacksRoutes)
+router.use("/appointments", protectRoute, appointmentsRoutes)
+router.use("/tasks", protectRoute, tasksRoutes)
 router.use("/library/script", protectRoute, scriptRoutes)
 router.use("/library/sms", protectRoute, checkFeatureLocked, smsRoutes)
 router.use("/library/email", protectRoute, emailRoutes)

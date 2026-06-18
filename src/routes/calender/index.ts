@@ -7,6 +7,7 @@ import {
   updateCalendarEvent,
   deleteCalendarEvent,
   getCalendarEventsByContact,
+  getUnifiedCalendar,
 } from "./controller";
 import { checkRole } from "../../middlewares/auth.middleware";
 
@@ -15,6 +16,8 @@ const router = Router();
 router.post("/create", createCalendarEvent);
 router.get("/", getCalendarEvents);
 router.get("/all", checkRole(["ADMIN", "OWNER"]), getAllCalendarEvents);
+// Static segments declared before the `/:id` param route so they aren't captured.
+router.get("/unified", getUnifiedCalendar);
 router.get("/contact/:contactId", getCalendarEventsByContact);
 router.get("/:id", getCalendarEventById);
 router.put("/:id", updateCalendarEvent);
