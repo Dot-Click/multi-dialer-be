@@ -544,7 +544,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     const dial = twiml.dial({
       callerId: callerId,
       record: "record-from-answer-dual",
-      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
+      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(contactId || "")}&leadId=${encodeURIComponent(leadId || "")}`,
     });
     dial.number({
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
@@ -626,7 +626,10 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
       callerId: bridgeCallerId,
       answerOnBridge: true, // Customer is answered now, bridge to agent
       record: "record-from-answer-dual",
-      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status`,
+      // Pass contact/lead context so the recording can be attached to the right
+      // CallRecord even when the recording's CallSid is a bridge child leg (the
+      // power-dialer case, where SID-only matching was dropping recordings).
+      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(contactId || "")}&leadId=${encodeURIComponent(leadId || "")}`,
     });
 
     const clientNode = dial.client({
@@ -821,9 +824,11 @@ export const dropVoicemail: RequestHandler = async (req, res) => {
 export const handleRecordingStatus: RequestHandler = async (req, res) => {
   try {
     const { CallSid, RecordingUrl, RecordingStatus, RecordingSid } = req.body;
-    console.log(`Recording ready for Call ${CallSid}: ${RecordingUrl} (${RecordingStatus})`);
+    const contactId = (req.query.contactId as string) || "";
+    const leadId = (req.query.leadId as string) || "";
+    console.log(`Recording ready for Call ${CallSid}: ${RecordingUrl} (${RecordingStatus}) [contactId=${contactId || "-"} leadId=${leadId || "-"}]`);
     if (RecordingStatus === 'completed') {
-      await dialerService.handleRecordingUpdate(CallSid, RecordingUrl, RecordingSid);
+      await dialerService.handleRecordingUpdate(CallSid, RecordingUrl, RecordingSid, { contactId, leadId });
     }
 
     successResponse(res, 200, "Recording status received", req.body);

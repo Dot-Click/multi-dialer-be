@@ -1058,7 +1058,7 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
     }
   }
 
-  async handleRecordingUpdate(callSid: string, recordingUrl: string, RecordingSid: string) {
+  async handleRecordingUpdate(callSid: string, recordingUrl: string, RecordingSid: string, ctx?: { contactId?: string; leadId?: string }) {
     try {
       console.log(`[Recording] Updating for ${callSid}: ${recordingUrl}`);
 
@@ -1084,64 +1084,88 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
       const r2Result = await uploadToR2(audioBuffer, 'audio/mpeg', 'call-recordings');
       const r2Url = r2Result.url;
 
-      // RESOLVE ROOT SID: If this recording is for a child leg, find the parent
-      let targetSid = callSid;
-      if (!(await prisma.callRecord.findUnique({ where: { callSid } }))) {
+      // RESOLVE the CallRecord this recording belongs to. Prefer an exact SID
+      // match; then the parent SID; then the lead/contact passed in the callback
+      // URL. The last two cover the power-dialer bridge case, where the recording's
+      // CallSid is a child leg that has no CallRecord of its own — SID-only
+      // matching was silently dropping those recordings.
+      let callRecord = await prisma.callRecord.findUnique({ where: { callSid } });
+      if (!callRecord) {
         const root = this.sidToRootSid.get(callSid);
         if (root) {
           console.log(`[Recording] Resolving child SID ${callSid} to root ${root}`);
-          targetSid = root;
+          callRecord = await prisma.callRecord.findUnique({ where: { callSid: root } });
         }
       }
-
-      // 3. Transcribe using the audio buffer directly (not the private R2 URL)
-      const audioFile = new File([audioBuffer], `recording-${callSid}.mp3`, { type: 'audio/mpeg' });
-      const transcription = await groq.audio.transcriptions.create({
-        file: audioFile,
-        model: "whisper-large-v3",
-        temperature: 0,
-        response_format: "verbose_json",
-      }) as any;
-
-      // Build a richer transcript from segments (with timestamps) when available.
-      // This preserves conversational pacing and gives the LLM far more context than
-      // a single flat text blob — making sentiment and topic detection far more accurate.
-      let richTranscript: string;
-      if (transcription.segments && Array.isArray(transcription.segments) && transcription.segments.length > 0) {
-        richTranscript = transcription.segments
-          .map((seg: any) => {
-            const start = Math.floor(seg.start ?? 0);
-            const mm = String(Math.floor(start / 60)).padStart(2, "0");
-            const ss = String(start % 60).padStart(2, "0");
-            return `[${mm}:${ss}] ${(seg.text ?? "").trim()}`;
-          })
-          .join("\n");
-      } else {
-        richTranscript = transcription.text ?? "";
+      if (!callRecord && ctx?.leadId) {
+        callRecord = await prisma.callRecord.findFirst({
+          where: { leadId: ctx.leadId },
+          orderBy: { startTime: "desc" },
+        });
+      }
+      if (!callRecord && ctx?.contactId) {
+        callRecord = await prisma.callRecord.findFirst({
+          where: { contactId: ctx.contactId, recordingUrl: null },
+          orderBy: { startTime: "desc" },
+        });
       }
 
-      const sentimentAnalysis = await this.analyzeSentiment(richTranscript);
+      if (!callRecord) {
+        console.warn(`[Recording] No CallRecord found for SID ${callSid} (lead=${ctx?.leadId || "-"}, contact=${ctx?.contactId || "-"}). Recording NOT attached.`);
+        return;
+      }
 
-      await Promise.allSettled([
-        prisma.callRecord.update({
-          where: { callSid: targetSid },
-          data: { recordingUrl: r2Url },
-        }),
-        prisma.callAnalysis.upsert({
-          where: { callSid: targetSid },
+      // Save the recording URL FIRST, so a later transcription failure can never
+      // cause the recording to be lost.
+      await prisma.callRecord.update({
+        where: { id: callRecord.id },
+        data: { recordingUrl: r2Url },
+      });
+      console.log(`[R2] Recording saved to CallRecord ${callRecord.id} (callSid ${callRecord.callSid}): ${r2Url}`);
+
+      // 3. Transcription + sentiment are best-effort — never let a failure here
+      //    undo the recording attachment above.
+      try {
+        const audioFile = new File([audioBuffer], `recording-${callSid}.mp3`, { type: 'audio/mpeg' });
+        const transcription = await groq.audio.transcriptions.create({
+          file: audioFile,
+          model: "whisper-large-v3",
+          temperature: 0,
+          response_format: "verbose_json",
+        }) as any;
+
+        let richTranscript: string;
+        if (transcription.segments && Array.isArray(transcription.segments) && transcription.segments.length > 0) {
+          richTranscript = transcription.segments
+            .map((seg: any) => {
+              const start = Math.floor(seg.start ?? 0);
+              const mm = String(Math.floor(start / 60)).padStart(2, "0");
+              const ss = String(start % 60).padStart(2, "0");
+              return `[${mm}:${ss}] ${(seg.text ?? "").trim()}`;
+            })
+            .join("\n");
+        } else {
+          richTranscript = transcription.text ?? "";
+        }
+
+        const sentimentAnalysis = await this.analyzeSentiment(richTranscript);
+
+        await prisma.callAnalysis.upsert({
+          where: { callSid: callRecord.callSid },
           update: { recordingUrl: r2Url },
           create: {
-            callSid: targetSid,
-            leadId: "",
+            callSid: callRecord.callSid,
+            leadId: callRecord.leadId || "",
             recordingUrl: r2Url,
             sentiment: sentimentAnalysis?.sentiment || "neutral",
             confidence: sentimentAnalysis?.confidence || 0,
             aiSummary: buildAiSummary(sentimentAnalysis),
             transcript: richTranscript || transcription.text
           }
-        })
-      ]);
-      console.log(`[R2] Recording saved: ${r2Url}`);
+        });
+      } catch (txErr: any) {
+        console.error(`[Recording] Transcription/sentiment failed (recording still saved): ${txErr?.message}`);
+      }
     } catch (error) {
       console.error("Failed to handle recording update:", error);
     }
