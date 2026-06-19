@@ -557,36 +557,46 @@ async function resolveInvoiceCard(inv: any): Promise<{
 } | null> {
   try {
     let chargeId: string | undefined;
+    let paymentIntentId: string | undefined;
+    let charge: any = null;
 
-    if (typeof inv.charge === "string") {
-      chargeId = inv.charge;
-    } else if (inv.charge?.id) {
-      chargeId = inv.charge.id;
-    }
+    // Legacy API (<= ~2024): the charge / payment intent sat on the invoice root.
+    if (typeof inv.charge === "string") chargeId = inv.charge;
+    else if (inv.charge?.id) chargeId = inv.charge.id;
 
-    // payments list (newer API): pull the payment intent, then its latest charge
-    let paymentIntentId: string | undefined =
-      typeof inv.payment_intent === "string" ? inv.payment_intent : inv.payment_intent?.id;
+    if (typeof inv.payment_intent === "string") paymentIntentId = inv.payment_intent;
+    else if (inv.payment_intent?.id) paymentIntentId = inv.payment_intent.id;
 
-    if (!paymentIntentId && Array.isArray(inv.payments?.data)) {
+    // Current API (2026-04-22.dahlia): invoice.charge / invoice.payment_intent no
+    // longer exist — the payment is referenced via the invoice.payments list, each
+    // entry's `payment` carrying a payment_intent or charge (string or expanded).
+    if (!chargeId && !paymentIntentId && Array.isArray(inv.payments?.data)) {
       for (const p of inv.payments.data) {
-        const pi = p?.payment?.payment_intent ?? p?.payment_intent;
-        if (typeof pi === "string") {
-          paymentIntentId = pi;
-          break;
+        const pay = p?.payment;
+        const pi = pay?.payment_intent;
+        const ch = pay?.charge;
+        if (pi) {
+          paymentIntentId = typeof pi === "string" ? pi : pi.id;
+        } else if (ch) {
+          if (typeof ch === "string") chargeId = ch;
+          else { chargeId = ch.id; charge = ch; }
         }
+        if (paymentIntentId || chargeId) break;
       }
     }
 
+    // Resolve the charge from the payment intent when we only have the latter.
     if (!chargeId && paymentIntentId) {
       const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
       const latest = (pi as any).latest_charge;
       chargeId = typeof latest === "string" ? latest : latest?.id;
     }
 
-    if (!chargeId) return null;
+    if (!charge) {
+      if (!chargeId) return null;
+      charge = await stripe.charges.retrieve(chargeId);
+    }
 
-    const charge = await stripe.charges.retrieve(chargeId);
     const card = (charge as any).payment_method_details?.card;
     if (!card) return null;
 
@@ -806,7 +816,9 @@ export const getInvoiceCard = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const inv = await stripe.invoices.retrieve(invoiceId);
+    const inv = await stripe.invoices.retrieve(invoiceId, {
+      expand: ["payments.data.payment.payment_intent"],
+    });
     const paymentMethod = await resolveInvoiceCard(inv);
 
     successResponse(res, 200, "Invoice card retrieved successfully", { paymentMethod });
@@ -826,7 +838,7 @@ export const getInvoiceById = async (req: Request, res: Response): Promise<void>
     }
 
     const inv = await stripe.invoices.retrieve(invoiceId, {
-      expand: ["customer", "lines.data.price.product"],
+      expand: ["customer", "lines.data.price.product", "payments.data.payment.payment_intent"],
     });
 
     const customerObj = inv.customer && typeof inv.customer === "object" ? inv.customer : null;

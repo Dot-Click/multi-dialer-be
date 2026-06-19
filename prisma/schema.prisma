@@ -1038,7 +1038,9 @@ model UserSubscription {
   id     String             @id @default(uuid())
   userId String
   user   User               @relation(fields: [userId], references: [id])
-  plan   Plan
+  // The real (dynamic) Stripe product name this subscription is on
+  // (e.g. "pro", "Premium"). Free text — not the legacy fixed enum.
+  plan   String
   status SubscriptionStatus @default(ACTIVE)
 
   startDate            DateTime

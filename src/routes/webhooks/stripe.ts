@@ -75,7 +75,9 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     const metadata = session.metadata;
 
     if (metadata && metadata.email) {
-      const { fullName, email, hashedPassword, companyName } = metadata;
+      const { fullName, hashedPassword, companyName } = metadata;
+      // Normalize to match Better Auth's lowercased sign-in lookup.
+      const email = String(metadata.email).trim().toLowerCase();
       let newUser: any = null;
       let newUserSubscription: any = null;
 
@@ -195,19 +197,32 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         const stripeCustomerId = session.customer as string | null;
         const stripeSubscriptionId = session.subscription as string | null;
 
-        let planKey: any = "STARTER";
+        // plan holds the real (dynamic) Stripe product name — what the billing UI shows.
+        let planName: string = "STARTER";
         let billingCycle: any = "MONTHLY";
+        // amount is stored in whole dollars as a string (matches Plan.monthlyAmount
+        // and how the reporting/MRR sums it); usersCount = subscribed seat quantity.
+        let amountStr: string | null = null;
+        let usersCount = 1;
 
         if (stripeSubscriptionId) {
           try {
             const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
-            const interval = stripeSub.items.data[0]?.price?.recurring?.interval;
+            const item = stripeSub.items.data[0];
+            const interval = item?.price?.recurring?.interval;
             billingCycle = interval === "year" ? "YEARLY" : "MONTHLY";
-            const priceId = stripeSub.items.data[0]?.price?.id;
+
+            const quantity = item?.quantity ?? 1;
+            usersCount = quantity;
+            if (typeof item?.price?.unit_amount === "number") {
+              amountStr = String((item.price.unit_amount / 100) * quantity);
+            }
+
+            const priceId = item?.price?.id;
             if (priceId) {
               const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
               const product = price.product as any;
-              if (product?.metadata?.plan) planKey = product.metadata.plan;
+              if (product?.name) planName = product.name;
             }
           } catch (err) {
             console.error("[Stripe Webhook] Could not resolve plan from Stripe subscription:", err);
@@ -217,12 +232,14 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         newUserSubscription = await prisma.userSubscription.create({
           data: {
             userId: newUser.id,
-            plan: planKey,
+            plan: planName,
             status: "ACTIVE",
             startDate: new Date(),
             stripeCustomerId: stripeCustomerId || null,
             stripeSubscriptionId: stripeSubscriptionId || null,
             billingCycle,
+            amount: amountStr,
+            usersCount,
           },
         });
 
@@ -231,7 +248,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           data: { isSubscribed: true },
         });
 
-        console.log(`[Stripe Webhook] UserSubscription created for ${email}: plan=${planKey}, cycle=${billingCycle}`);
+        console.log(`[Stripe Webhook] UserSubscription created for ${email}: plan=${planName}, cycle=${billingCycle}`);
 
         const subEmail = `slingvo+${newUser.id}@slingvo.com`;
         const subPassword = crypto.randomBytes(12).toString("hex");
@@ -336,7 +353,8 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       const subscription = event.data.object as any;
       const stripeCustomerId = subscription.customer;
       const status = subscription.status;
-      const priceId = subscription.items.data[0].price.id;
+      const item = subscription.items.data[0];
+      const priceId = item.price.id;
 
       console.log(`[Stripe Webhook] customer.subscription.updated: customer=${stripeCustomerId}, status=${status}, priceId=${priceId}`);
 
@@ -345,16 +363,32 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       });
 
       if (subRecord) {
-        let mappedPlan: any = "STARTER";
-        if (priceId === process.env.STRIPE_PRICE_STANDARD) {
-          mappedPlan = "PROFESSIONAL";
-        } else if (priceId === process.env.STRIPE_PRICE_PREMIUM) {
-          mappedPlan = "ENTERPRISE";
+        // Keep money fields in sync on plan/quantity changes.
+        const quantity = item?.quantity ?? subRecord.usersCount ?? 1;
+        const billingCycle = item?.price?.recurring?.interval === "year" ? "YEARLY" : "MONTHLY";
+        const amountStr = typeof item?.price?.unit_amount === "number"
+          ? String((item.price.unit_amount / 100) * quantity)
+          : subRecord.amount;
+
+        // Capture the real (dynamic) product name for the new plan.
+        let planName: string = subRecord.plan;
+        try {
+          const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+          const product = price.product as any;
+          if (product?.name) planName = product.name;
+        } catch (err: any) {
+          console.error(`[Stripe Webhook] Could not resolve product name on update:`, err?.message);
         }
 
         await prisma.userSubscription.update({
           where: { id: subRecord.id },
-          data: { plan: mappedPlan, status: status as any },
+          data: {
+            plan: planName,
+            status: status as any,
+            amount: amountStr,
+            usersCount: quantity,
+            billingCycle: billingCycle as any,
+          },
         });
 
         await prisma.user.update({

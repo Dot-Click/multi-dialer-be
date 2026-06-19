@@ -18,6 +18,12 @@ function throwHttp(statusCode: number, message: string): never {
 export async function createUserInDb(payload: any) {
     const { password, planId, ...rest } = payload;
 
+    // Normalize the email the same way Better Auth does at sign-in (lowercased +
+    // trimmed). Without this, a mixed-case email like "Nate101h@gmail.com" is
+    // stored verbatim but the sign-in lookup queries "nate101h@gmail.com" and
+    // fails with "User not found".
+    rest.email = String(rest.email ?? "").trim().toLowerCase();
+
     // Hash password if provided
     const hashedPassword = await bcrypt.hash(password, 10);
 
