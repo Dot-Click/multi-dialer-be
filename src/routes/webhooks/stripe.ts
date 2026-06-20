@@ -7,11 +7,28 @@ import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
 import { encryptEIN as encrypt } from "../../utils/encryption";
+import { syncBillingFromInvoice } from "../../services/billingLedger.service";
 
 function getStripeClient() {
   const key = envConfig.STRIPE_SECRET_KEY;
   if (!key) throw new Error("STRIPE_SECRET_KEY is not set in environment variables.");
   return new Stripe(key, { apiVersion: "2026-04-22.dahlia" });
+}
+
+// Mirror a Stripe invoice into the local Billing ledger (shared with the backfill
+// script). Wrapped so ledger errors never break the main webhook flow.
+async function mirrorInvoiceToBilling(
+  invoice: any,
+  status: "PAID" | "FAILED" | "PENDING",
+): Promise<void> {
+  try {
+    const result = await syncBillingFromInvoice(invoice, status);
+    if (result === "upserted") {
+      console.log(`[Stripe Webhook] Billing ledger upserted: invoice=${invoice?.id} status=${status}`);
+    }
+  } catch (err: any) {
+    console.error(`[Stripe Webhook] Billing sync failed for invoice ${invoice?.id}:`, err.message);
+  }
 }
 
 // Important: Webhooks need raw body for signature verification.
@@ -468,6 +485,9 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
       console.log(`[Stripe Webhook] invoice.payment_failed: customer=${stripeCustomerId}`);
 
+      // Mirror into the local Billing ledger as a FAILED invoice.
+      await mirrorInvoiceToBilling(invoice, "FAILED");
+
       const subRecord = await prisma.userSubscription.findFirst({
         where: { stripeCustomerId },
       });
@@ -502,6 +522,9 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
       console.log(`[Stripe Webhook] invoice.paid: customer=${stripeCustomerId}, amount_paid=${invoice.amount_paid}`);
 
+      // Mirror into the local Billing ledger.
+      await mirrorInvoiceToBilling(invoice, "PAID");
+
       const subRecord = await prisma.userSubscription.findFirst({
         where: { stripeCustomerId },
       });
@@ -533,6 +556,8 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
   } else if (event.type === "invoice.created") {
     const invoice = event.data.object as any;
     console.log(`[Stripe Webhook] invoice.created: id=${invoice.id}, customer=${invoice.customer}, amount_due=${invoice.amount_due}`);
+    // Record the open invoice in the Billing ledger as PENDING.
+    await mirrorInvoiceToBilling(invoice, "PENDING");
     await persistEvent("PROCESSED");
 
   // ─── payment_intent.succeeded (log only) ──────────────────────────────────
@@ -551,6 +576,18 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
   } else if (event.type === "charge.refunded") {
     const charge = event.data.object as any;
     console.log(`[Stripe Webhook] charge.refunded: id=${charge.id}, amount_refunded=${charge.amount_refunded}, customer=${charge.customer}`);
+    // Mark the related invoice's Billing row as REFUNDED (if we have it).
+    try {
+      const invoiceId = typeof charge.invoice === "string" ? charge.invoice : charge.invoice?.id;
+      if (invoiceId) {
+        await prisma.billing.updateMany({
+          where: { stripeInvoiceId: invoiceId },
+          data: { status: "REFUNDED" as any },
+        });
+      }
+    } catch (err: any) {
+      console.error(`[Stripe Webhook] Billing refund sync failed for charge ${charge?.id}:`, err.message);
+    }
     await persistEvent("PROCESSED");
 
   } else {

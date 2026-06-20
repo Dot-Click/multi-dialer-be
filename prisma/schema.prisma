@@ -905,8 +905,14 @@ model Billing {
   userId               String
   user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   invoiceNumber        String            @unique
-  plan                 Plan
-  amount               Int
+  // Stripe invoice id (e.g. "in_..."). Stable idempotent key for webhook upserts.
+  stripeInvoiceId      String?           @unique
+  // Optional: set to the mapped Plan enum when the Stripe product name matches a
+  // known tier; left null otherwise (the full product name lives on UserSubscription).
+  plan                 Plan?
+  // Human-readable Stripe product name (dynamic), mirrors UserSubscription.plan.
+  planName             String?
+  amount               Int // in cents (Stripe minor units)
   date                 DateTime
   status               Status
   billingCycle         BillingCycle      @default(MONTHLY)

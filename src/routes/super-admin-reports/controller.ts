@@ -11,7 +11,7 @@ import {
   getDashboardSummaryInDb,
   getBusinessOverviewInDb,
   getRevenuePlansInDb,
-  getChurnRateInDb,
+  getCollectedRevenueGrowthInDb,
 } from "./service";
 
 export const getUserOverview = async (
@@ -117,10 +117,14 @@ export const revenueGrowth = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const rawData = await getRevenueGrowthInDb();
+    const [rawData, collectedData] = await Promise.all([
+      getRevenueGrowthInDb(), // contracted / MRR (from subscriptions)
+      getCollectedRevenueGrowthInDb(), // collected (from Billing ledger)
+    ]);
 
     const labels = rawData.map((d) => d.label);
     const revenue = rawData.map((d) => d.revenue);
+    const collected = collectedData.map((d) => d.revenue);
     const growth = revenue.map((curr, idx) => {
       if (idx === 0) return 0;
       const prev = revenue[idx - 1];
@@ -135,6 +139,7 @@ export const revenueGrowth = async (
       data: {
         labels,
         revenue,
+        collected,
         growth,
       },
     });
@@ -290,18 +295,3 @@ export const revenuePlans = async (
   }
 };
 
-export const churnRate = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
-  try {
-    const data = await getChurnRateInDb();
-    successResponse(res, 200, "Churn rate fetched successfully", data);
-  } catch (error: any) {
-    errorResponse(
-      res,
-      error?.message || "Internal server error",
-      error?.statusCode || 500,
-    );
-  }
-};

@@ -10,7 +10,6 @@ import {
   userSubscriptionStatus,
   businessOverview,
   revenuePlans,
-  churnRate,
 } from "./controller";
 
 const router = Router();
@@ -30,6 +29,5 @@ router.get("/user-reports-billing", userReportsBilling);
 //reporting
 router.get("/bussiness-overview", businessOverview);
 router.get("/revenue-plans", revenuePlans);
-router.get("/churn-rate", churnRate);
 
 export default router;

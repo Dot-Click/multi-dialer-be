@@ -4,9 +4,10 @@ import prisma from "../../lib/prisma";
 export async function getUserOverviewInDb() {
   try {
     const [newUsers, totalAgents, activeSubscriptions, subscriptionRecords] = await Promise.all([
+      // Customers only — count ADMIN accounts, excluding agent sub-accounts and OWNER.
       prisma.user.count({
         where: {
-          role: { not: "OWNER" },
+          role: "ADMIN",
         },
       }),
       prisma.user.count({
@@ -79,6 +80,9 @@ export async function getNewAccountsOverTimeInDb(range: "THIS_MONTH" | "LAST_MON
     weekBoundaries.map(async (week) => {
       return prisma.user.count({
         where: {
+          // New accounts = customers who signed up, i.e. ADMIN users.
+          // Excludes agent sub-accounts and the platform OWNER.
+          role: "ADMIN",
           createdAt: {
             gte: week.start,
             lte: week.end,
@@ -108,33 +112,42 @@ export async function getAlertsInDb() {
     activeSubscriptions,
     inactiveSubscriptions,
   ] = await Promise.all([
+    // Expiring soon = ACTIVE subscriptions whose endDate falls within 7 days.
+    // (Excludes already cancelled/expired subs and the platform OWNER.)
     prisma.userSubscription.count({
       where: {
+        status: "ACTIVE",
         endDate: {
           gte: now,
           lte: sevenDaysFromNow,
         },
+        user: { role: { not: "OWNER" } },
       },
     }),
+    // New customers = ADMIN accounts created this month (the ones who sign up).
     prisma.user.count({
       where: {
-        role: { not: "OWNER" },
+        role: "ADMIN",
         createdAt: {
           gte: startOfMonth,
           lte: endOfMonth,
         },
       },
     }),
-    prisma.userSubscription.count({
+    // Active = ADMIN customers who currently hold an ACTIVE subscription.
+    prisma.user.count({
       where: {
-        status: "ACTIVE",
+        role: "ADMIN",
+        userSubscriptions: { some: { status: "ACTIVE" } },
       },
     }),
-    prisma.userSubscription.count({
+    // Inactive = ADMIN customers with NO active subscription — this includes
+    // those whose subscription is cancelled/expired AND those with no
+    // subscription record at all.
+    prisma.user.count({
       where: {
-        status: {
-          not: "ACTIVE",
-        },
+        role: "ADMIN",
+        NOT: { userSubscriptions: { some: { status: "ACTIVE" } } },
       },
     }),
   ]);
@@ -180,16 +193,19 @@ export async function getUserSubscriptionDetailsInDb() {
 
 export async function getUserSubscriptionStatusInDb() {
   const [active, inactive] = await Promise.all([
-    prisma.userSubscription.count({
+    // Active = ADMIN customers holding an ACTIVE subscription.
+    prisma.user.count({
       where: {
-        status: "ACTIVE",
+        role: "ADMIN",
+        userSubscriptions: { some: { status: "ACTIVE" } },
       },
     }),
-    prisma.userSubscription.count({
+    // Inactive = ADMIN customers with no active subscription (cancelled/expired
+    // OR no subscription record at all).
+    prisma.user.count({
       where: {
-        status: {
-          not: "ACTIVE",
-        },
+        role: "ADMIN",
+        NOT: { userSubscriptions: { some: { status: "ACTIVE" } } },
       },
     }),
   ]);
@@ -209,21 +225,51 @@ export async function getRevenueGrowthInDb() {
     const startOfMonth = new Date(year, month, 1);
     const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
 
-    const aggregation = await prisma.billing.aggregate({
+    // Revenue is sourced from subscriptions (the Billing table is unused/empty).
+    // amount is stored as a string, so sum in JS. Recognised in the month the
+    // subscription was created. Excludes the platform OWNER.
+    const subs = await prisma.userSubscription.findMany({
       where: {
-        date: {
-          gte: startOfMonth,
-          lte: endOfMonth,
-        },
+        createdAt: { gte: startOfMonth, lte: endOfMonth },
+        user: { role: { not: "OWNER" } },
       },
-      _sum: {
-        amount: true,
-      },
+      select: { amount: true },
+    });
+
+    const revenue = subs.reduce(
+      (sum, s) => sum + (parseFloat(s.amount || "0") || 0),
+      0,
+    );
+
+    results.push({
+      label: date.toLocaleString("default", { month: "short" }),
+      revenue,
+    });
+  }
+
+  return results;
+}
+
+// Collected revenue = money actually captured, sourced from the Billing ledger
+// (PAID invoices mirrored from Stripe). amount is stored in cents → convert to
+// dollars to match the contracted figures.
+export async function getCollectedRevenueGrowthInDb() {
+  const now = new Date();
+  const results = [];
+
+  for (let i = 5; i >= 0; i--) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+    const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const agg = await prisma.billing.aggregate({
+      where: { status: "PAID", date: { gte: startOfMonth, lte: endOfMonth } },
+      _sum: { amount: true },
     });
 
     results.push({
       label: date.toLocaleString("default", { month: "short" }),
-      revenue: aggregation._sum.amount || 0,
+      revenue: (agg._sum.amount || 0) / 100,
     });
   }
 
@@ -357,49 +403,6 @@ export async function getBusinessOverviewInDb() {
     activeSubscriptions,
     activeUsers,
     totalAgents,
-  };
-}
-
-export async function getChurnRateInDb() {
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-  // Subscriptions that were active at the start of this month:
-  // started before the 1st, and not cancelled/expired before the 1st.
-  const [activeAtStart, cancelledThisMonth] = await Promise.all([
-    prisma.userSubscription.count({
-      where: {
-        startDate: { lt: monthStart },
-        user: { role: { not: "OWNER" } },
-        // Exclude rows already churned before this month began
-        NOT: {
-          AND: [
-            { status: { in: ["CANCELLED", "EXPIRED"] } },
-            { updatedAt: { lt: monthStart } },
-          ],
-        },
-      },
-    }),
-    prisma.userSubscription.count({
-      where: {
-        status: { in: ["CANCELLED", "EXPIRED"] },
-        updatedAt: { gte: monthStart, lte: monthEnd },
-        user: { role: { not: "OWNER" } },
-      },
-    }),
-  ]);
-
-  const churnRate =
-    activeAtStart > 0
-      ? parseFloat(((cancelledThisMonth / activeAtStart) * 100).toFixed(2))
-      : 0;
-
-  return {
-    churnRate,
-    cancelledThisMonth,
-    activeAtStart,
-    month: monthStart.toLocaleString("default", { month: "long", year: "numeric" }),
   };
 }
 
