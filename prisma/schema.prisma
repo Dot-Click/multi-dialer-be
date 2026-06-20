@@ -913,11 +913,19 @@ model Billing {
   // Human-readable Stripe product name (dynamic), mirrors UserSubscription.plan.
   planName             String?
   amount               Int // in cents (Stripe minor units)
+  currency             String            @default("usd")
   date                 DateTime
   status               Status
   billingCycle         BillingCycle      @default(MONTHLY)
   usersCount           Int               @default(1)
   nextBillingDate      DateTime?
+  // Card used to pay (mirrored from Stripe) so the invoice tables show the
+  // payment method straight from the ledger — no live Stripe call per row.
+  cardBrand            String?
+  cardLast4            String?
+  // Stripe-hosted links so the View / PDF actions still work off the ledger.
+  hostedInvoiceUrl     String?
+  invoicePdfUrl        String?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   stripeSubscriptionId String?

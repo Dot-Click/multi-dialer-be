@@ -8,6 +8,7 @@ import { triggerZapierWebhook } from "../../lib/zapier";
 import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
 import { encryptEIN as encrypt } from "../../utils/encryption";
 import { syncBillingFromInvoice } from "../../services/billingLedger.service";
+import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
 
 function getStripeClient() {
   const key = envConfig.STRIPE_SECRET_KEY;
@@ -18,11 +19,15 @@ function getStripeClient() {
 // Mirror a Stripe invoice into the local Billing ledger (shared with the backfill
 // script). Wrapped so ledger errors never break the main webhook flow.
 async function mirrorInvoiceToBilling(
+  stripe: any,
   invoice: any,
   status: "PAID" | "FAILED" | "PENDING",
 ): Promise<void> {
   try {
-    const result = await syncBillingFromInvoice(invoice, status);
+    // Capture the paying card for PAID invoices so the ledger powers the payment
+    // method column directly (no live Stripe call per row at read time).
+    const card = status === "PAID" ? await resolveInvoiceCard(stripe, invoice) : null;
+    const result = await syncBillingFromInvoice(invoice, status, card);
     if (result === "upserted") {
       console.log(`[Stripe Webhook] Billing ledger upserted: invoice=${invoice?.id} status=${status}`);
     }
@@ -486,7 +491,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       console.log(`[Stripe Webhook] invoice.payment_failed: customer=${stripeCustomerId}`);
 
       // Mirror into the local Billing ledger as a FAILED invoice.
-      await mirrorInvoiceToBilling(invoice, "FAILED");
+      await mirrorInvoiceToBilling(stripe, invoice, "FAILED");
 
       const subRecord = await prisma.userSubscription.findFirst({
         where: { stripeCustomerId },
@@ -523,7 +528,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       console.log(`[Stripe Webhook] invoice.paid: customer=${stripeCustomerId}, amount_paid=${invoice.amount_paid}`);
 
       // Mirror into the local Billing ledger.
-      await mirrorInvoiceToBilling(invoice, "PAID");
+      await mirrorInvoiceToBilling(stripe, invoice, "PAID");
 
       const subRecord = await prisma.userSubscription.findFirst({
         where: { stripeCustomerId },
@@ -557,7 +562,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     const invoice = event.data.object as any;
     console.log(`[Stripe Webhook] invoice.created: id=${invoice.id}, customer=${invoice.customer}, amount_due=${invoice.amount_due}`);
     // Record the open invoice in the Billing ledger as PENDING.
-    await mirrorInvoiceToBilling(invoice, "PENDING");
+    await mirrorInvoiceToBilling(stripe, invoice, "PENDING");
     await persistEvent("PROCESSED");
 
   // ─── payment_intent.succeeded (log only) ──────────────────────────────────

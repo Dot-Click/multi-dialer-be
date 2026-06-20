@@ -3,6 +3,7 @@ import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
 import Stripe from "stripe";
 import { envConfig } from "@/lib/config";
+import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
 
 // Initialize Stripe (requires STRIPE_SECRET_KEY in .env)
 const stripe = new Stripe(envConfig.STRIPE_SECRET_KEY || "", {
@@ -456,84 +457,53 @@ export const getInvoicesByCustomer = async (req: Request, res: Response): Promis
   }
 };
 
+// Billing.status (enum) -> the lowercase status string the frontend renders.
+function billingStatusToApi(s: string): string {
+  switch (s) {
+    case "PAID": return "paid";
+    case "PENDING": return "pending";
+    case "FAILED": return "failed";
+    case "REFUNDED": return "refunded";
+    default: return String(s).toLowerCase();
+  }
+}
+
+// Map a Billing ledger row (+ its user) into the invoice shape the frontend expects.
+function mapBillingRow(b: any) {
+  const paid = b.status === "PAID";
+  return {
+    id: b.stripeInvoiceId ?? b.id, // detail/PDF actions key off the Stripe invoice id
+    number: b.invoiceNumber,
+    customerId: b.userId,
+    customerName: b.user?.fullName ?? null,
+    customerEmail: b.user?.email ?? null,
+    plan: b.planName ?? (b.plan ? String(b.plan) : null) ?? "—",
+    paymentMethod:
+      b.cardBrand || b.cardLast4
+        ? { brand: b.cardBrand ?? null, last4: b.cardLast4 ?? null, expMonth: null, expYear: null }
+        : null,
+    amount_paid: paid ? b.amount : 0,
+    amount_due: paid ? 0 : b.amount,
+    currency: b.currency ?? "usd",
+    status: billingStatusToApi(b.status),
+    createdAt: b.date.toISOString(),
+    created: b.date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+    hosted_invoice_url: b.hostedInvoiceUrl ?? null,
+    invoice_pdf: b.invoicePdfUrl ?? null,
+  };
+}
+
 export const getAllInvoices = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Build a lookup of every signed-up customer keyed by their Stripe customer id
-    const subscriptions = await prisma.userSubscription.findMany({
-      where: { stripeCustomerId: { not: null } },
+    // Served from the local Billing ledger (mirrored from Stripe via webhook +
+    // backfill) — fast, no live Stripe call. Only real customers appear here.
+    const rows = await prisma.billing.findMany({
       include: { user: { select: { fullName: true, email: true } } },
+      orderBy: { date: "desc" },
     });
 
-    const customerMap = new Map<
-      string,
-      { userId: string; fullName: string | null; email: string | null; plan: string }
-    >();
-    for (const sub of subscriptions) {
-      if (sub.stripeCustomerId && !customerMap.has(sub.stripeCustomerId)) {
-        customerMap.set(sub.stripeCustomerId, {
-          userId: sub.userId,
-          fullName: sub.user?.fullName ?? null,
-          email: sub.user?.email ?? null,
-          plan: String(sub.plan),
-        });
-      }
-    }
+    const invoices = rows.map(mapBillingRow);
 
-    // Pull all account invoices via a single paginated list call (cap to avoid runaway).
-    // Expand the customer so we can label invoices even when they aren't linked to a
-    // platform subscription record (e.g. invoices created directly in Stripe).
-    const MAX_INVOICES = 300;
-    const collected: Awaited<ReturnType<typeof stripe.invoices.list>>["data"] = [];
-    let startingAfter: string | undefined;
-
-    while (collected.length < MAX_INVOICES) {
-      const page = await stripe.invoices.list({
-        limit: 100,
-        expand: ["data.customer"],
-        ...(startingAfter ? { starting_after: startingAfter } : {}),
-      });
-      collected.push(...page.data);
-      if (!page.has_more || page.data.length === 0) break;
-      startingAfter = page.data[page.data.length - 1].id;
-    }
-
-    const productNames = await resolveProductNames(collected);
-
-    // Show every invoice in the connected Stripe account, enriching with platform
-    // customer details when a matching subscription exists.
-    const invoices = collected.map((inv) => {
-      const customerObj = inv.customer && typeof inv.customer === "object" ? inv.customer : null;
-      const customerId =
-        typeof inv.customer === "string" ? inv.customer : customerObj?.id ?? "";
-      const matched = customerId ? customerMap.get(customerId) : undefined;
-
-      // Fall back to the Stripe customer's own name/email, then the invoice's billing fields
-      const stripeName = customerObj && !("deleted" in customerObj) ? customerObj.name : null;
-      const stripeEmail = customerObj && !("deleted" in customerObj) ? customerObj.email : null;
-
-      return {
-        id: inv.id,
-        number: inv.number,
-        customerId,
-        customerName: matched?.fullName ?? stripeName ?? inv.customer_name ?? null,
-        customerEmail: matched?.email ?? stripeEmail ?? inv.customer_email ?? null,
-        plan: planFromInvoice(inv, productNames) ?? matched?.plan ?? "—",
-        amount_paid: inv.amount_paid,
-        amount_due: inv.amount_due,
-        currency: inv.currency,
-        status: inv.status,
-        createdAt: new Date(inv.created * 1000).toISOString(),
-        created: new Date(inv.created * 1000).toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        }),
-        hosted_invoice_url: inv.hosted_invoice_url,
-        invoice_pdf: inv.invoice_pdf,
-      };
-    });
-
-    // Derive the active Stripe environment from the secret key prefix
     const mode: "live" | "test" = (envConfig.STRIPE_SECRET_KEY || "").startsWith("sk_live_")
       ? "live"
       : "test";
@@ -545,71 +515,8 @@ export const getAllInvoices = async (req: Request, res: Response): Promise<void>
   }
 };
 
-/**
- * Resolve the card used to pay an invoice. The exact location of the charge shifts
- * across Stripe API versions, so probe the common spots defensively and never throw.
- */
-async function resolveInvoiceCard(inv: any): Promise<{
-  brand: string | null;
-  last4: string | null;
-  expMonth: number | null;
-  expYear: number | null;
-} | null> {
-  try {
-    let chargeId: string | undefined;
-    let paymentIntentId: string | undefined;
-    let charge: any = null;
-
-    // Legacy API (<= ~2024): the charge / payment intent sat on the invoice root.
-    if (typeof inv.charge === "string") chargeId = inv.charge;
-    else if (inv.charge?.id) chargeId = inv.charge.id;
-
-    if (typeof inv.payment_intent === "string") paymentIntentId = inv.payment_intent;
-    else if (inv.payment_intent?.id) paymentIntentId = inv.payment_intent.id;
-
-    // Current API (2026-04-22.dahlia): invoice.charge / invoice.payment_intent no
-    // longer exist — the payment is referenced via the invoice.payments list, each
-    // entry's `payment` carrying a payment_intent or charge (string or expanded).
-    if (!chargeId && !paymentIntentId && Array.isArray(inv.payments?.data)) {
-      for (const p of inv.payments.data) {
-        const pay = p?.payment;
-        const pi = pay?.payment_intent;
-        const ch = pay?.charge;
-        if (pi) {
-          paymentIntentId = typeof pi === "string" ? pi : pi.id;
-        } else if (ch) {
-          if (typeof ch === "string") chargeId = ch;
-          else { chargeId = ch.id; charge = ch; }
-        }
-        if (paymentIntentId || chargeId) break;
-      }
-    }
-
-    // Resolve the charge from the payment intent when we only have the latter.
-    if (!chargeId && paymentIntentId) {
-      const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
-      const latest = (pi as any).latest_charge;
-      chargeId = typeof latest === "string" ? latest : latest?.id;
-    }
-
-    if (!charge) {
-      if (!chargeId) return null;
-      charge = await stripe.charges.retrieve(chargeId);
-    }
-
-    const card = (charge as any).payment_method_details?.card;
-    if (!card) return null;
-
-    return {
-      brand: card.brand ?? null,
-      last4: card.last4 ?? null,
-      expMonth: card.exp_month ?? null,
-      expYear: card.exp_year ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
+// resolveInvoiceCard now lives in services/stripeInvoiceCard.service.ts (shared
+// with the webhook + backfill); call it with the module's stripe client.
 
 // Extract the Stripe product id from an invoice line item. The field location moved
 // across API versions, so probe the known spots.
@@ -669,80 +576,14 @@ export const getInvoicesByUser = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const subscription = await prisma.userSubscription.findFirst({
-      where: { userId, stripeCustomerId: { not: null } },
+    // Served from the local Billing ledger for this user.
+    const rows = await prisma.billing.findMany({
+      where: { userId },
       include: { user: { select: { fullName: true, email: true } } },
+      orderBy: { date: "desc" },
     });
 
-    const user =
-      subscription?.user ??
-      (await prisma.user.findUnique({
-        where: { id: userId },
-        select: { fullName: true, email: true },
-      }));
-
-    // Resolve every Stripe customer id tied to this user:
-    //  1. the id stored on their subscription, and
-    //  2. any customer Stripe knows under their email (covers invoices created/emailed
-    //     before the customer id was linked back to our DB).
-    const customerIds = new Set<string>();
-    if (subscription?.stripeCustomerId) {
-      customerIds.add(subscription.stripeCustomerId);
-    }
-    if (user?.email) {
-      try {
-        const matches = await stripe.customers.list({ email: user.email, limit: 100 });
-        matches.data.forEach((c) => customerIds.add(c.id));
-      } catch (e) {
-        console.error("[Billing] Customer lookup by email failed:", e);
-      }
-    }
-
-    console.log(
-      `[Billing] getInvoicesByUser userId=${userId} email=${user?.email ?? "none"} ` +
-        `matchedCustomers=${[...customerIds].join(",") || "none"}`,
-    );
-
-    if (customerIds.size === 0) {
-      successResponse(res, 200, "Invoices retrieved successfully", []);
-      return;
-    }
-
-    // Gather invoices across all matched customers
-    const collected = await Promise.all(
-      [...customerIds].map((customerId) =>
-        stripe.invoices
-          .list({ customer: customerId, limit: 100 })
-          .then((list) => list.data)
-          .catch(() => []),
-      ),
-    );
-
-    const flatInvoices = collected.flat().sort((a, b) => b.created - a.created);
-    const productNames = await resolveProductNames(flatInvoices);
-
-    const invoices = flatInvoices
-      .map((inv) => ({
-        id: inv.id,
-        number: inv.number,
-        customerId: typeof inv.customer === "string" ? inv.customer : "",
-        customerName: user?.fullName ?? inv.customer_name ?? null,
-        customerEmail: user?.email ?? inv.customer_email ?? null,
-        plan: planFromInvoice(inv, productNames) ?? (subscription ? String(subscription.plan) : "—"),
-        amount_paid: inv.amount_paid,
-        amount_due: inv.amount_due,
-        currency: inv.currency,
-        status: inv.status,
-        createdAt: new Date(inv.created * 1000).toISOString(),
-        created: new Date(inv.created * 1000).toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        }),
-        hosted_invoice_url: inv.hosted_invoice_url,
-        invoice_pdf: inv.invoice_pdf,
-      }));
-
+    const invoices = rows.map(mapBillingRow);
     successResponse(res, 200, "Invoices retrieved successfully", invoices);
   } catch (error: any) {
     console.error("[Billing] Get Invoices By User Error:", error);
@@ -819,7 +660,7 @@ export const getInvoiceCard = async (req: Request, res: Response): Promise<void>
     const inv = await stripe.invoices.retrieve(invoiceId, {
       expand: ["payments.data.payment.payment_intent"],
     });
-    const paymentMethod = await resolveInvoiceCard(inv);
+    const paymentMethod = await resolveInvoiceCard(stripe, inv);
 
     successResponse(res, 200, "Invoice card retrieved successfully", { paymentMethod });
   } catch (error: any) {
@@ -866,7 +707,7 @@ export const getInvoiceById = async (req: Request, res: Response): Promise<void>
           })
         : null;
 
-    const paymentMethod = await resolveInvoiceCard(inv);
+    const paymentMethod = await resolveInvoiceCard(stripe, inv);
 
     const lineItems = inv.lines.data.map((line) => {
       const qty = line.quantity ?? 1;

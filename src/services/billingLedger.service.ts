@@ -19,6 +19,7 @@ export function mapPlanEnum(name?: string | null): "STARTER" | "PROFESSIONAL" | 
 export async function syncBillingFromInvoice(
   invoice: any,
   status: "PAID" | "FAILED" | "PENDING" | "REFUNDED",
+  card?: { brand: string | null; last4: string | null } | null,
 ): Promise<"upserted" | "skipped"> {
   if (!invoice?.id) return "skipped";
   const stripeCustomerId =
@@ -50,18 +51,29 @@ export async function syncBillingFromInvoice(
   const periodEnd = line?.period?.end ? new Date(line.period.end * 1000) : null;
   const invoiceNumber = invoice.number || invoice.id;
 
+  // Only overwrite card columns when we actually resolved one (avoids wiping a
+  // previously-stored card on a later non-card event for the same invoice).
+  const cardFields =
+    card && (card.brand || card.last4)
+      ? { cardBrand: card.brand ?? null, cardLast4: card.last4 ?? null }
+      : {};
+
   const data = {
     userId: sub.userId,
     invoiceNumber,
     plan: mapPlanEnum(planName) as any,
     planName,
     amount,
+    currency: invoice.currency || "usd",
     date,
     status: status as any,
     billingCycle: billingCycle as any,
     usersCount: quantity,
     nextBillingDate: periodEnd,
     stripeSubscriptionId,
+    hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+    invoicePdfUrl: invoice.invoice_pdf ?? null,
+    ...cardFields,
   };
 
   await prisma.billing.upsert({

@@ -9,6 +9,7 @@ import path from "path";
 import Stripe from "stripe";
 import prisma from "../src/lib/prisma";
 import { syncBillingFromInvoice } from "../src/services/billingLedger.service";
+import { resolveInvoiceCard } from "../src/services/stripeInvoiceCard.service";
 
 // Load .env into process.env (no dotenv dependency required).
 function loadEnv() {
@@ -67,7 +68,8 @@ function statusFor(invoice: any): "PAID" | "FAILED" | "PENDING" | null {
       scanned++;
       const status = statusFor(invoice as any);
       if (!status) { skipped++; continue; }
-      const result = await syncBillingFromInvoice(invoice as any, status);
+      const card = status === "PAID" ? await resolveInvoiceCard(stripe, invoice as any) : null;
+      const result = await syncBillingFromInvoice(invoice as any, status, card);
       if (result === "upserted") upserted++; else skipped++;
     }
 
