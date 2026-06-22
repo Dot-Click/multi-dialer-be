@@ -369,6 +369,16 @@ export async function getAllUsersFromDb(where: any = {}) {
                 }
             },
             createdUsers: true,
+            userSubscriptions: {
+                orderBy: { createdAt: "desc" },
+                take: 1,
+                select: { plan: true, status: true },
+            },
+            billings: {
+                orderBy: { date: "desc" },
+                take: 1,
+                select: { planName: true },
+            },
             // Excluding password
         },
     });
@@ -411,11 +421,12 @@ export async function updateUserSubscriptionInDb(userId: string, planId: string)
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throwHttp(404, "User not found");
 
-    // Try to find existing Stripe subscription via Prisma subscription record
-    const subRecord = await (prisma as any).subscription?.findFirst({
+    // Try to find existing Stripe subscription via UserSubscription record
+    const subRecord = await prisma.userSubscription.findFirst({
         where: { userId },
         orderBy: { createdAt: "desc" },
-    }).catch(() => null);
+        select: { stripeSubscriptionId: true },
+    });
 
     if (subRecord?.stripeSubscriptionId) {
         // Update the existing Stripe subscription to the new price
