@@ -17,7 +17,10 @@ export async function createAuditLog(userId: string, action: string, details?: s
 export async function getAuditLogsFromDb(userId: string, role: string, limit: number = 100) {
     let whereClause: any = { userId };
 
-    if (role === 'ADMIN' || role === 'OWNER') {
+    if (role === 'OWNER') {
+        // Super admin sees all platform audit logs
+        whereClause = {};
+    } else if (role === 'ADMIN') {
         const agents = await prisma.user.findMany({
             where: { createdById: userId },
             select: { id: true }
