@@ -165,24 +165,34 @@ export async function getAlertsInDb() {
 }
 
 export async function getUserSubscriptionDetailsInDb() {
+  // Primary source: Billing (most recent row per user) for plan name and date.
+  // Subscription lifecycle status comes from UserSubscription (ACTIVE/CANCELLED/EXPIRED).
+  // Users with no billing row yet are still included via the User query.
   const users = await prisma.user.findMany({
-    where: {
-      role: { not: "OWNER" },
-    },
+    where: { role: { not: "OWNER" } },
+    orderBy: { createdAt: "desc" },
+    take: 5,
     include: {
+      billings: {
+        orderBy: { date: "desc" },
+        take: 1,
+        select: { planName: true, plan: true, date: true },
+      },
       userSubscriptions: {
         orderBy: { createdAt: "desc" },
         take: 1,
+        select: { status: true, plan: true, createdAt: true },
       },
     },
   });
 
   return users.map((u) => {
+    const billing = u.billings[0];
     const sub = u.userSubscriptions[0];
     return {
-      plan: sub?.plan || "No Plan",
-      status: sub?.status || "PENDING",
-      createdAt: sub?.createdAt || u.createdAt,
+      plan: billing?.planName || billing?.plan || sub?.plan || "No Plan",
+      status: u.status,
+      createdAt: billing?.date || sub?.createdAt || u.createdAt,
       user: {
         fullName: u.fullName,
         email: u.email,

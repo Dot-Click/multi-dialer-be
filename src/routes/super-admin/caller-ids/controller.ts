@@ -38,18 +38,24 @@ export const listCallerIds = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const systemSetting = await prisma.system_Setting.findFirst({ where: { userId } });
-    if (!systemSetting) {
-      successResponse(res, 200, "Caller IDs fetched", []);
-      return;
-    }
+    // Collect ALL System_Setting IDs for this user — no @unique on userId so there
+    // can be multiple rows (created via different flows). A nested relation filter
+    // or findFirst would silently miss numbers stored under other setting rows.
+    const systemSettings = await prisma.system_Setting.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const systemSettingIds = systemSettings.map((s) => s.id);
 
     const callerIds = await prisma.callerId.findMany({
-      where: { systemSettingId: systemSetting.id },
+      where: { systemSettingId: { in: systemSettingIds } },
       select: CALLER_ID_SELECT,
       orderBy: { createdAt: "desc" },
     });
 
+    // Prevent 304 caching — different users can return identical-looking bodies
+    // (e.g. both return []), causing Express ETag to serve a stale cached response.
+    res.set("Cache-Control", "no-store");
     successResponse(res, 200, "Caller IDs fetched", callerIds);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
