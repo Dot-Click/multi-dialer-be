@@ -219,40 +219,32 @@ export async function getRevenueGrowthInDb() {
 
   for (let i = 5; i >= 0; i--) {
     const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const month = date.getMonth();
-    const year = date.getFullYear();
+    const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+    const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
 
-    const startOfMonth = new Date(year, month, 1);
-    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
-
-    // Revenue is sourced from subscriptions (the Billing table is unused/empty).
-    // amount is stored as a string, so sum in JS. Recognised in the month the
-    // subscription was created. Excludes the platform OWNER.
-    const subs = await prisma.userSubscription.findMany({
-      where: {
-        createdAt: { gte: startOfMonth, lte: endOfMonth },
-        user: { role: { not: "OWNER" } },
-      },
-      select: { amount: true },
+    // Contracted revenue = all billing rows (any status) for the month, normalised
+    // to a monthly figure so YEARLY rows don't distort the bar chart.
+    const rows = await prisma.billing.findMany({
+      where: { date: { gte: startOfMonth, lte: endOfMonth } },
+      select: { amount: true, billingCycle: true },
     });
 
-    const revenue = subs.reduce(
-      (sum, s) => sum + (parseFloat(s.amount || "0") || 0),
-      0,
-    );
+    const revenue = rows.reduce((sum, r) => {
+      const monthly = r.billingCycle === "YEARLY" ? r.amount / 12 : r.amount;
+      return sum + monthly;
+    }, 0);
 
     results.push({
       label: date.toLocaleString("default", { month: "short" }),
-      revenue,
+      revenue: parseFloat(revenue.toFixed(2)),
     });
   }
 
   return results;
 }
 
-// Collected revenue = money actually captured, sourced from the Billing ledger
-// (PAID invoices mirrored from Stripe). amount is stored in cents → convert to
-// dollars to match the contracted figures.
+// Collected revenue = money actually captured from PAID invoices in the Billing
+// ledger. amount is stored as whole dollars — no unit conversion needed.
 export async function getCollectedRevenueGrowthInDb() {
   const now = new Date();
   const results = [];
@@ -269,7 +261,7 @@ export async function getCollectedRevenueGrowthInDb() {
 
     results.push({
       label: date.toLocaleString("default", { month: "short" }),
-      revenue: (agg._sum.amount || 0) / 100,
+      revenue: agg._sum.amount || 0,
     });
   }
 
@@ -277,32 +269,67 @@ export async function getCollectedRevenueGrowthInDb() {
 }
 
 export async function getBillingReportDetailInDb() {
-  const users = await prisma.user.findMany({
-    where: {
-      role: { not: "OWNER" },
-    },
+  // Pull all billing rows, newest first, with user + latest subscription status.
+  const billingRows = await prisma.billing.findMany({
     include: {
-      userSubscriptions: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
+      user: {
+        include: {
+          userSubscriptions: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { status: true },
+          },
+        },
       },
     },
+    orderBy: { date: "desc" },
   });
 
-  return users.map((u) => {
-    const sub = u.userSubscriptions[0];
-    return {
-      plan: sub?.plan || "No Plan",
-      createdAt: sub?.createdAt || u.createdAt,
-      status: sub?.status || "PENDING",
-      amount: sub?.amount || "0",
-      user: {
-        fullName: u.fullName,
-        email: u.email,
-        status: u.status,
-      },
-    };
-  });
+  // Aggregate per user: first row seen is the newest (plan name, invoice status).
+  // Accumulate total billed and last payment date across all PAID rows.
+  const grouped = new Map<string, {
+    userName: string;
+    email: string;
+    plan: string;
+    status: string;        // subscription status from UserSubscription
+    invoiceStatus: string; // most recent billing row status
+    totalBilled: number;
+    lastPaymentDate: Date | null;
+  }>();
+
+  for (const row of billingRows) {
+    const uid = row.userId;
+    if (!grouped.has(uid)) {
+      grouped.set(uid, {
+        userName: row.user.fullName || "N/A",
+        email: row.user.email,
+        plan: row.planName || row.plan || "No Plan",
+        status: row.user.userSubscriptions[0]?.status || "PENDING",
+        invoiceStatus: row.status,
+        totalBilled: 0,
+        lastPaymentDate: null,
+      });
+    }
+    if (row.status === "PAID") {
+      const entry = grouped.get(uid)!;
+      entry.totalBilled += row.amount;
+      if (!entry.lastPaymentDate || row.date > entry.lastPaymentDate) {
+        entry.lastPaymentDate = row.date;
+      }
+    }
+  }
+
+  return Array.from(grouped.values()).map((g) => ({
+    userName: g.userName,
+    email: g.email,
+    plan: g.plan,
+    status: g.status,
+    invoiceStatus: g.invoiceStatus,
+    totalBilled: g.totalBilled,
+    lastPayment: g.lastPaymentDate
+      ? g.lastPaymentDate.toISOString().split("T")[0]
+      : "—",
+  }));
 }
 
 export async function getDashboardSummaryInDb() {
@@ -315,63 +342,56 @@ export async function getDashboardSummaryInDb() {
   const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
   const [
-    currRevRecords, prevRevRecords,
-    currSubs, prevSubs,
+    currRevAgg, prevRevAgg,
+    currActivePayers, prevActivePayers,
     currSignups, prevSignups,
-    currCalls, prevCalls
+    currCalls, prevCalls,
   ] = await Promise.all([
-    // Revenue (Fetching records to sum in memory because amount is String)
-    prisma.userSubscription.findMany({
+    // Total Revenue — sum of PAID billing rows by invoice date
+    prisma.billing.aggregate({
+      where: { status: "PAID", date: { gte: currentMonthStart, lte: currentMonthEnd } },
+      _sum: { amount: true },
+    }),
+    prisma.billing.aggregate({
+      where: { status: "PAID", date: { gte: previousMonthStart, lte: previousMonthEnd } },
+      _sum: { amount: true },
+    }),
+    // Active Subscriptions — distinct users with a PAID invoice this month
+    prisma.billing.groupBy({
+      by: ["userId"],
+      where: { status: "PAID", date: { gte: currentMonthStart, lte: currentMonthEnd } },
+    }),
+    prisma.billing.groupBy({
+      by: ["userId"],
+      where: { status: "PAID", date: { gte: previousMonthStart, lte: previousMonthEnd } },
+    }),
+    // New Signups — stays on User (signup is not a billing event)
+    prisma.user.count({
+      where: { createdAt: { gte: currentMonthStart, lte: currentMonthEnd }, role: { not: "OWNER" } },
+    }),
+    prisma.user.count({
+      where: { createdAt: { gte: previousMonthStart, lte: previousMonthEnd }, role: { not: "OWNER" } },
+    }),
+    // Total Calls — stays on CallRecord
+    prisma.callRecord.count({
       where: { createdAt: { gte: currentMonthStart, lte: currentMonthEnd } },
-      select: { amount: true }
     }),
-    prisma.userSubscription.findMany({
+    prisma.callRecord.count({
       where: { createdAt: { gte: previousMonthStart, lte: previousMonthEnd } },
-      select: { amount: true }
     }),
-    // Active Subscriptions
-    prisma.userSubscription.count({
-      where: { status: "ACTIVE", createdAt: { gte: currentMonthStart, lte: currentMonthEnd } }
-    }),
-    prisma.userSubscription.count({
-      where: { status: "ACTIVE", createdAt: { gte: previousMonthStart, lte: previousMonthEnd } }
-    }),
-    // New Signups
-    prisma.user.count({
-      where: { createdAt: { gte: currentMonthStart, lte: currentMonthEnd }, role: { not: "OWNER" } }
-    }),
-    prisma.user.count({
-      where: { createdAt: { gte: previousMonthStart, lte: previousMonthEnd }, role: { not: "OWNER" } }
-    }),
-    // Total Calls
-    prisma.callRecord.count({
-      where: { createdAt: { gte: currentMonthStart, lte: currentMonthEnd } }
-    }),
-    prisma.callRecord.count({
-      where: { createdAt: { gte: previousMonthStart, lte: previousMonthEnd } }
-    })
   ]);
-
-  const sumAmount = (records: { amount: string | null }[]) =>
-    records.reduce((sum, rec) => sum + parseFloat(rec.amount || "0"), 0);
 
   return {
     revenue: {
-      current: sumAmount(currRevRecords),
-      previous: sumAmount(prevRevRecords)
+      current: currRevAgg._sum.amount || 0,
+      previous: prevRevAgg._sum.amount || 0,
     },
     activeSubscriptions: {
-      current: currSubs,
-      previous: prevSubs
+      current: currActivePayers.length,
+      previous: prevActivePayers.length,
     },
-    newSignups: {
-      current: currSignups,
-      previous: prevSignups
-    },
-    totalCallsProcessed: {
-      current: currCalls,
-      previous: prevCalls
-    }
+    newSignups: { current: currSignups, previous: prevSignups },
+    totalCallsProcessed: { current: currCalls, previous: prevCalls },
   };
 }
 

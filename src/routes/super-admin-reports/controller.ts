@@ -125,9 +125,10 @@ export const revenueGrowth = async (
     const labels = rawData.map((d) => d.label);
     const revenue = rawData.map((d) => d.revenue);
     const collected = collectedData.map((d) => d.revenue);
-    const growth = revenue.map((curr, idx) => {
+    // Growth line tracks month-over-month change in collected (actually received) revenue.
+    const growth = collected.map((curr, idx) => {
       if (idx === 0) return 0;
-      const prev = revenue[idx - 1];
+      const prev = collected[idx - 1];
       if (prev === 0) return curr > 0 ? 100 : 0;
       return parseFloat((((curr - prev) / prev) * 100).toFixed(2));
     });
@@ -157,48 +158,7 @@ export const billingReportDetail = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const rawData = await getBillingReportDetailInDb();
-
-    // Grouping logic: userId + plan
-    const groupedData: Record<string, any> = {};
-
-    rawData.forEach((item) => {
-      const user = item.user;
-      if (!user) return;
-
-      const key = `${user.email}_${item.plan}`;
-
-      if (!groupedData[key]) {
-        groupedData[key] = {
-          userName: user.fullName || "N/A",
-          email: user.email,
-          plan: item.plan,
-          status: user.status,
-          totalBilled: 0,
-          lastPayment: item.createdAt,
-          invoiceStatus: item.status,
-        };
-      }
-
-      // Summing billed amount (amount is String? in schema)
-      const billedAmount = parseFloat(item.amount || "0");
-      groupedData[key].totalBilled += billedAmount;
-
-      // Update last payment if this record is newer
-      if (new Date(item.createdAt) > new Date(groupedData[key].lastPayment)) {
-        groupedData[key].lastPayment = item.createdAt;
-        groupedData[key].invoiceStatus = item.status;
-      }
-    });
-
-    // Formatting for frontend
-    const data = Object.values(groupedData).map((group) => ({
-      ...group,
-      lastPayment: group.lastPayment instanceof Date
-        ? group.lastPayment.toISOString().split("T")[0]
-        : new Date(group.lastPayment).toISOString().split("T")[0],
-    }));
-
+    const data = await getBillingReportDetailInDb();
     successResponse(res, 200, "Billing report detail fetched successfully", data);
   } catch (error: any) {
     errorResponse(

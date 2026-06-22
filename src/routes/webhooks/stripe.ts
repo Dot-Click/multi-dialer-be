@@ -24,12 +24,28 @@ async function mirrorInvoiceToBilling(
   status: "PAID" | "FAILED" | "PENDING",
 ): Promise<void> {
   try {
+    // The webhook payload's invoice is NOT expanded. On the current Stripe API
+    // (2026-04-22.dahlia) the paying card lives behind
+    // invoice.payments → payment_intent → charge, which must be expanded — so
+    // re-fetch the invoice here. Without this, resolveInvoiceCard found nothing
+    // and cardBrand/cardLast4 were never written to the ledger.
+    let full = invoice;
+    if (invoice?.id) {
+      try {
+        full = await stripe.invoices.retrieve(invoice.id, {
+          expand: ["payments.data.payment.payment_intent"],
+        });
+      } catch (e: any) {
+        console.warn(`[Stripe Webhook] Could not expand invoice ${invoice.id}: ${e?.message}`);
+      }
+    }
+
     // Capture the paying card for PAID invoices so the ledger powers the payment
     // method column directly (no live Stripe call per row at read time).
-    const card = status === "PAID" ? await resolveInvoiceCard(stripe, invoice) : null;
-    const result = await syncBillingFromInvoice(invoice, status, card);
+    const card = status === "PAID" ? await resolveInvoiceCard(stripe, full) : null;
+    const result = await syncBillingFromInvoice(full, status, card);
     if (result === "upserted") {
-      console.log(`[Stripe Webhook] Billing ledger upserted: invoice=${invoice?.id} status=${status}`);
+      console.log(`[Stripe Webhook] Billing ledger upserted: invoice=${full?.id} status=${status} card=${card?.brand ?? "none"}`);
     }
   } catch (err: any) {
     console.error(`[Stripe Webhook] Billing sync failed for invoice ${invoice?.id}:`, err.message);

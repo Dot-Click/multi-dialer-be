@@ -68,8 +68,20 @@ function statusFor(invoice: any): "PAID" | "FAILED" | "PENDING" | null {
       scanned++;
       const status = statusFor(invoice as any);
       if (!status) { skipped++; continue; }
-      const card = status === "PAID" ? await resolveInvoiceCard(stripe, invoice as any) : null;
-      const result = await syncBillingFromInvoice(invoice as any, status, card);
+
+      // invoices.list can't expand the full payments chain (exceeds Stripe's
+      // 4-level expand limit), so listed invoices carry no card. Re-fetch each
+      // PAID invoice with the payment chain expanded so resolveInvoiceCard works.
+      let full: any = invoice;
+      if (status === "PAID" && invoice.id) {
+        try {
+          full = await stripe.invoices.retrieve(invoice.id, {
+            expand: ["payments.data.payment.payment_intent"],
+          });
+        } catch { /* fall back to the listed invoice */ }
+      }
+      const card = status === "PAID" ? await resolveInvoiceCard(stripe, full) : null;
+      const result = await syncBillingFromInvoice(full, status, card);
       if (result === "upserted") upserted++; else skipped++;
     }
 
