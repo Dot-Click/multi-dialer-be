@@ -421,30 +421,58 @@ export async function updateUserSubscriptionInDb(userId: string, planId: string)
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throwHttp(404, "User not found");
 
-    // Try to find existing Stripe subscription via UserSubscription record
+    // 1. Try stripeSubscriptionId directly on UserSubscription
+    let stripeSubscriptionId: string | null = null;
+
     const subRecord = await prisma.userSubscription.findFirst({
         where: { userId },
         orderBy: { createdAt: "desc" },
-        select: { stripeSubscriptionId: true },
+        select: { stripeSubscriptionId: true, stripeCustomerId: true },
     });
 
     if (subRecord?.stripeSubscriptionId) {
-        // Update the existing Stripe subscription to the new price
-        const existing = await stripe.subscriptions.retrieve(subRecord.stripeSubscriptionId);
+        stripeSubscriptionId = subRecord.stripeSubscriptionId;
+    }
+
+    // 2. Fall back: look up the latest Billing invoice and retrieve subscription from Stripe
+    if (!stripeSubscriptionId) {
+        const latestBilling = await prisma.billing.findFirst({
+            where: { userId, stripeInvoiceId: { not: null } },
+            orderBy: { date: "desc" },
+            select: { stripeInvoiceId: true },
+        });
+        if (latestBilling?.stripeInvoiceId) {
+            const invoice = await stripe.invoices.retrieve(latestBilling.stripeInvoiceId) as any;
+            const sub = invoice.subscription;
+            stripeSubscriptionId = typeof sub === "string" ? sub : (sub?.id ?? null);
+        }
+    }
+
+    // 3. Fall back: list active subscriptions by Stripe customer ID
+    if (!stripeSubscriptionId && subRecord?.stripeCustomerId) {
+        const subs = await stripe.subscriptions.list({
+            customer: subRecord.stripeCustomerId,
+            status: "active",
+            limit: 1,
+        });
+        stripeSubscriptionId = subs.data[0]?.id ?? null;
+    }
+
+    if (stripeSubscriptionId) {
+        const existing = await stripe.subscriptions.retrieve(stripeSubscriptionId);
         const itemId = existing.items.data[0]?.id;
 
         if (itemId) {
-            await stripe.subscriptions.update(subRecord.stripeSubscriptionId, {
+            await stripe.subscriptions.update(stripeSubscriptionId, {
                 items: [{ id: itemId, price: planId }],
                 proration_behavior: "always_invoice",
             });
-
-            console.log(`[UserService] Updated Stripe subscription ${subRecord.stripeSubscriptionId} to price ${planId} for user ${userId}`);
+            console.log(`[UserService] Updated Stripe subscription ${stripeSubscriptionId} to price ${planId} for user ${userId}`);
             return { updated: true, method: "stripe_update" };
         }
     }
 
-    // No subscription found — send a new payment setup email
+    // 4. No active Stripe subscription found — send a payment setup email
     await sendPaymentSetupEmail(
         { id: user!.id, email: user!.email, fullName: user!.fullName },
         planId,
