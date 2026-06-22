@@ -468,6 +468,25 @@ export async function updateUserSubscriptionInDb(userId: string, planId: string)
                 proration_behavior: "always_invoice",
             });
             console.log(`[UserService] Updated Stripe subscription ${stripeSubscriptionId} to price ${planId} for user ${userId}`);
+
+            // Resolve the new plan name and update UserSubscription immediately —
+            // don't rely on the webhook which may not be configured for this env.
+            let newPlanName: string | null = null;
+            try {
+                const price = await stripe.prices.retrieve(planId, { expand: ["product"] });
+                newPlanName = (price.product as any)?.name ?? null;
+            } catch (e: any) {
+                console.error(`[UserService] Could not resolve product name for price ${planId}:`, e.message);
+            }
+
+            if (newPlanName && subRecord) {
+                await prisma.userSubscription.updateMany({
+                    where: { userId, stripeCustomerId: subRecord.stripeCustomerId ?? undefined },
+                    data: { plan: newPlanName, stripeSubscriptionId },
+                });
+                console.log(`[UserService] UserSubscription.plan updated to "${newPlanName}" for user ${userId}`);
+            }
+
             return { updated: true, method: "stripe_update" };
         }
     }
