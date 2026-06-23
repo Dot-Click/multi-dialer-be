@@ -258,33 +258,50 @@ export class DialerService {
 
       const records = await prisma.callerId.findMany({
         where: { twillioNumber: { in: pool }, systemSettingId: settings.id },
-        select: { twillioNumber: true, numberOfLines: true, frozenAt: true, unfreezeAt: true }
+        select: { twillioNumber: true, numberOfLines: true, frozenAt: true, unfreezeAt: true, callCount: true }
       });
 
       const limitMap = new Map<string, number>();
       const freezeMap = new Map<string, number>();
+      const callCountMap = new Map<string, number>();
       const nowMs = Date.now();
 
       for (const r of records) {
         if (!r.twillioNumber) continue;
+        // Normalise to E.164 (matches twilioFrom key used in makeCall)
+        const normalised = r.twillioNumber.startsWith('+') ? r.twillioNumber : `+${r.twillioNumber}`;
+
         // numberOfLines > 1 means a real dials-per-CID limit is configured
         if (r.numberOfLines && r.numberOfLines > 1) {
-          limitMap.set(r.twillioNumber, r.numberOfLines);
+          limitMap.set(normalised, r.numberOfLines);
         }
         // Restore DB freeze state for numbers still in cooldown
         if (r.unfreezeAt) {
           const unfreezeMs = new Date(r.unfreezeAt).getTime();
           if (unfreezeMs > nowMs) {
-            freezeMap.set(r.twillioNumber, unfreezeMs);
+            freezeMap.set(normalised, unfreezeMs);
           }
+        }
+        // Seed in-memory call count from DB so the UI shows the cumulative count
+        // across sessions, not just the current session's calls
+        const dbCount = (r as any).callCount ?? 0;
+        if (dbCount > 0) {
+          callCountMap.set(normalised, dbCount);
         }
       }
 
       this.callerIdPerNumberLimits.set(userId, limitMap);
       this.callerIdFreezeState.set(userId, freezeMap);
+      // Merge DB counts into the session map (which was just reset to empty by addLeadsToQueue)
+      const existingMap = this.userCallerIdCallCounts.get(userId) ?? new Map<string, number>();
+      callCountMap.forEach((count, num) => existingMap.set(num, count));
+      this.userCallerIdCallCounts.set(userId, existingMap);
 
       if (limitMap.size > 0) {
         console.log(`[DialerService] Caller ID limits loaded for user ${userId}:`, Object.fromEntries(limitMap));
+      }
+      if (callCountMap.size > 0) {
+        console.log(`[DialerService] Caller ID counts seeded from DB for user ${userId}:`, Object.fromEntries(callCountMap));
       }
     } catch (e) {
       console.error(`[DialerService] Failed to load caller ID limits for ${userId}:`, e);
