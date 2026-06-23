@@ -733,7 +733,8 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
         const metadata = (dialerService as any).activeCalls.get(CallSid);
         const userId = callRecord?.userId || metadata?.userId || agentId;
-        const leadId = metadata?.leadId;
+        // Fall back to callRecord when call-status webhook already deleted metadata
+        const leadId = metadata?.leadId || callRecord?.leadId;
 
         // 1. Stamp as machine-detected so a racing call-status webhook skips redial,
         //    then remove from activeCalls BEFORE processQueue (Req 3.2)
@@ -750,12 +751,16 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
         // 2b. Purge this lead from pendingRedials and the queue in case a racing
         //     call-status webhook already scheduled a redial before AMD fired.
+        //     cancelPendingRedial clears the actual setTimeout handle — deleting the
+        //     guard key alone does NOT stop an already-scheduled timer, which is what
+        //     caused the same machine number to be dialed 2-3 times before dropping.
         if (userId) {
-          const contactId = metadata?.contactId;
-          const guardKey = metadata?.queueCardId || contactId || leadId;
-          if (guardKey) {
-            (dialerService as any).pendingRedials.get(userId)?.delete(guardKey);
-          }
+          const contactId = metadata?.contactId || callRecord?.contactId;
+          // metadata (and thus queueCardId) may already be gone, so cancel by every
+          // candidate key the redial could have been scheduled under.
+          [metadata?.queueCardId, contactId, leadId].forEach((key) => {
+            if (key) dialerService.cancelPendingRedial(userId, key);
+          });
           if (contactId) {
             dialerService.removeQueuedContactCards(userId, contactId);
           }

@@ -122,6 +122,7 @@ export class DialerService {
   private userCallerIdPrefs: Map<string, string> = new Map(); // userId -> callerId
   private userCallerIdPools: Map<string, string[]> = new Map(); // userId -> list of Twilio numbers
   private pendingRedials: Map<string, Set<string>> = new Map(); // userId -> Set of leadIds
+  private redialTimers: Map<string, ReturnType<typeof setTimeout>> = new Map(); // `${userId}:${guardKey}` -> pending redial timer
   private userCallerIdIndices: Map<string, number> = new Map(); // userId -> last used index
   private userProcessingLocks: Map<string, boolean> = new Map(); // userId -> is currently processing queue
   private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
@@ -1431,7 +1432,9 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
     console.log(`[DialerService] Scheduling redial for lead ${leadId} (contact: ${contactId}) in ${delayMs}ms. Attempts so far: ${attempts}`);
     userRedials.add(guardKey);
 
-    setTimeout(async () => {
+    const timerKey = `${userId}:${guardKey}`;
+    const timer = setTimeout(async () => {
+      this.redialTimers.delete(timerKey);
       try {
         // If AMD detected this as a machine during the delay window, don't re-queue
         const currentLead = await prisma.lead.findUnique({ where: { id: leadId } });
@@ -1478,6 +1481,25 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
         console.error('[DialerService] Failed to requeue lead for redial:', e);
       }
     }, delayMs);
+
+    this.redialTimers.set(timerKey, timer);
+  }
+
+  /**
+   * Cancels a pending redial outright — clears the scheduled timer AND removes the
+   * guard key. Used when AMD detects a machine so a redial that was scheduled by a
+   * racing call-status webhook never fires (the DB-MACHINE check alone loses the race).
+   */
+  cancelPendingRedial(userId: string, guardKey: string) {
+    if (!guardKey) return;
+    const timerKey = `${userId}:${guardKey}`;
+    const timer = this.redialTimers.get(timerKey);
+    if (timer) {
+      clearTimeout(timer);
+      this.redialTimers.delete(timerKey);
+      console.log(`[DialerService] Cancelled pending redial timer for ${timerKey}.`);
+    }
+    this.pendingRedials.get(userId)?.delete(guardKey);
   }
 
   /** @deprecated Use requeueLeadForRedial instead */
