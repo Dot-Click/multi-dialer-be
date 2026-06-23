@@ -123,7 +123,7 @@ export const integrationController = {
       const axios = (await import("axios")).default;
 
       const form = new FormData();
-      form.append("test", "1"); // Change to "0" for live send
+      form.append("test", "0");
       
       if (automationId) {
         // Trigger Automation (Add to Group)

@@ -610,7 +610,7 @@ export class DialerService {
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
         ...(amdEnabled ? {
-          machineDetection: "DetectMessageEnd",
+          machineDetection: "Enable",
           asyncAmd: "true",
           asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}&amdEnabled=true`,
           asyncAmdStatusCallbackMethod: "POST",
@@ -717,6 +717,15 @@ export class DialerService {
       }
     } catch (error: any) {
       console.error(`Error updating lead ${leadId} status in DB:`, error.message);
+    }
+  }
+
+  private async isLeadMachineDetected(leadId: string): Promise<boolean> {
+    try {
+      const lead = await prisma.lead.findFirst({ where: { id: leadId } });
+      return lead?.status === "MACHINE";
+    } catch {
+      return false;
     }
   }
 
@@ -967,11 +976,15 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
       // When isChildLeg=true, a 'no-answer' means the agent's BROWSER didn't connect,
       // NOT that the customer hung up. The parent 'completed' event handles real teardown.
       if (!isChildLeg) {
-        // 1. Redial on overflow (agent busy)
-        if (metadata?.status === 'callback') {
+        // 1. Redial on overflow (agent busy) — but never redial a machine-detected call
+        const isMachineDetected = metadata?.status === 'machine-detected' ||
+          (leadId && await this.isLeadMachineDetected(leadId));
+        if (isMachineDetected) {
+          console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} was machine-detected. Skipping redial.`);
+        } else if (metadata?.status === 'callback') {
           console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
           this.requeueLeadForRedial(userId, leadId, contactId, 2000, currentAttempts, queueCardId);
-        } 
+        }
         // 2. Redial on technical failure or no-answer (Power Dialer behavior)
         else if (["busy", "no-answer", "failed"].includes(twilioStatus)) {
           if (currentAttempts < maxAttempts) {

@@ -734,7 +734,12 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
         const userId = callRecord?.userId || metadata?.userId || agentId;
         const leadId = metadata?.leadId;
 
-        // 1. Remove from activeCalls BEFORE processQueue (Req 3.2)
+        // 1. Stamp as machine-detected so a racing call-status webhook skips redial,
+        //    then remove from activeCalls BEFORE processQueue (Req 3.2)
+        if (metadata) {
+          metadata.status = "machine-detected";
+          (dialerService as any).activeCalls.set(CallSid, metadata);
+        }
         (dialerService as any).activeCalls.delete(CallSid);
 
         // 2. Update lead status to MACHINE (Req 6.1)
