@@ -735,15 +735,6 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
         const userId = callRecord?.userId || metadata?.userId || agentId;
         const leadId = metadata?.leadId;
 
-        // Guard: if the bridge is already live (agent connected), do not kill the call.
-        // The voice webhook sets status="in-progress" the moment the agent accepts.
-        // AMD firing after that point means detection raced the bridge — ignore it.
-        if (metadata?.status === "in-progress") {
-          console.log(`[AMD] Call ${CallSid} is already bridged (status=in-progress). Ignoring machine detection to protect live call.`);
-          res.sendStatus(200);
-          return;
-        }
-
         // 1. Stamp as machine-detected so a racing call-status webhook skips redial,
         //    then remove from activeCalls BEFORE processQueue (Req 3.2)
         if (metadata) {
