@@ -747,6 +747,19 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
           await dialerService.updateLeadStatusInDB(leadId, "MACHINE");
         }
 
+        // 2b. Purge this lead from pendingRedials and the queue in case a racing
+        //     call-status webhook already scheduled a redial before AMD fired.
+        if (userId) {
+          const contactId = metadata?.contactId;
+          const guardKey = metadata?.queueCardId || contactId || leadId;
+          if (guardKey) {
+            (dialerService as any).pendingRedials.get(userId)?.delete(guardKey);
+          }
+          if (contactId) {
+            dialerService.removeQueuedContactCards(userId, contactId);
+          }
+        }
+
         // 3. Hang up the call (Req 3.1)
         try {
           const userClient = await getTwilioClient(userId || agentId);

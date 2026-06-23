@@ -1298,6 +1298,14 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
 
     setTimeout(async () => {
       try {
+        // If AMD detected this as a machine during the delay window, don't re-queue
+        const currentLead = await prisma.lead.findUnique({ where: { id: leadId } });
+        if (currentLead?.status === 'MACHINE') {
+          console.log(`[DialerService] Lead ${leadId} was machine-detected during redial delay. Skipping re-queue.`);
+          this.pendingRedials.get(userId)?.delete(guardKey);
+          return;
+        }
+
         // Mark as CALL_BACK status in DB for UI amber color
         await this.updateLeadStatusInDB(leadId, "CALL_BACK");
 
