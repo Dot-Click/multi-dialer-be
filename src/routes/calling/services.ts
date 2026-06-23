@@ -906,7 +906,8 @@ export class DialerService {
       currentQueue: queue?.getQueue() || [],
       leadStatuses,
       leadSids,
-      callerIdStats
+      callerIdStats,
+      isPostCall: this.agentPostCallState.has(userId),
     };
   }
 
