@@ -144,6 +144,8 @@ export class DialerService {
   private callerIdFreezeState: Map<string, Map<string, number>> = new Map();
   /** Maps userId -> (caller-ID number -> maxCallsBeforeFreeze). Populated when pool is set. 0 = no limit. */
   private callerIdPerNumberLimits: Map<string, Map<string, number>> = new Map();
+  /** Maps userId -> session-level dials-per-caller-ID limit (sent by frontend as maxCallsPerId). */
+  private callerIdSessionMaxCalls: Map<string, number> = new Map();
 
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
@@ -177,11 +179,17 @@ export class DialerService {
    * Add leads to queue and trigger processing for that user.
    * @param pacing - optional session pacing override (max simultaneous calls)
    */
-  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string | string[], pacing?: number) {
+  async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string | string[], pacing?: number, maxCallsPerId?: number) {
     // ── Store session pacing ──────────────────────────────────────────────────
     if (pacing && pacing > 0) {
       this.sessionPacing.set(userId, pacing);
       console.log(`[DialerService] Session pacing set to ${pacing} for user ${userId}`);
+    }
+
+    // ── Store session-level dials-per-caller-ID limit ─────────────────────────
+    if (maxCallsPerId && maxCallsPerId > 0) {
+      this.callerIdSessionMaxCalls.set(userId, maxCallsPerId);
+      console.log(`[DialerService] Dials-per-caller-ID limit set to ${maxCallsPerId} for user ${userId}`);
     }
 
     // ── Normalise Caller ID into a pool (always) ──────────────────────────────
@@ -727,8 +735,12 @@ export class DialerService {
         const newCount = (counts.get(twilioFrom) || 0) + 1;
         counts.set(twilioFrom, newCount);
 
-        const maxCalls = this.callerIdPerNumberLimits.get(lead.userId)?.get(twilioFrom);
-        if (maxCalls && maxCalls > 0 && newCount >= maxCalls) {
+        // Use session-level limit (from frontend maxCallsPerId) or fall back to per-number DB limit
+        const maxCalls = this.callerIdSessionMaxCalls.get(lead.userId)
+          || this.callerIdPerNumberLimits.get(lead.userId)?.get(twilioFrom)
+          || 0;
+
+        if (maxCalls > 0 && newCount >= maxCalls) {
           const unfreezeAtMs = Date.now() + 20 * 60 * 1000; // 20 min cooldown
           if (!this.callerIdFreezeState.has(lead.userId)) {
             this.callerIdFreezeState.set(lead.userId, new Map());
@@ -740,7 +752,7 @@ export class DialerService {
         }
 
         // Sync usage to DB in background (fire-and-forget)
-        if (maxCalls && maxCalls > 0) {
+        if (maxCalls > 0) {
           resolveAdminId(lead.userId)
             .then(adminId => recordCallAndRotateIfNeeded(adminId, twilioFrom, maxCalls))
             .catch(err => console.error(`[Dialer] Failed to sync caller ID usage to DB:`, err));

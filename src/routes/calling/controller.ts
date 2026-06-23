@@ -263,7 +263,7 @@ export const agentReady: RequestHandler = async (req, res) => {
  */
 export const addLeadsToDialer: RequestHandler = async (req, res) => {
   try {
-    const { leads, callerId, callerIds, pacing }: { leads: any[], callerId?: string, callerIds?: string | string[], pacing?: number } = req.body;
+    const { leads, callerId, callerIds, pacing, maxCallsPerId }: { leads: any[], callerId?: string, callerIds?: string | string[], pacing?: number, maxCallsPerId?: number } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -394,7 +394,8 @@ export const addLeadsToDialer: RequestHandler = async (req, res) => {
         });
       }),
       callerIds || callerId, // Pass selected caller IDs (array) or ID (string) to service
-      pacing              // Pass session-level pacing override
+      pacing,             // Pass session-level pacing override
+      maxCallsPerId       // Pass dials-per-caller-ID limit
     );
 
     successResponse(res, 200, "Leads saved to DB and added to queue!", {
