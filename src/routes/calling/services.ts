@@ -7,6 +7,7 @@ import { envConfig } from "@/lib/config";
 import Groq from "groq-sdk";
 import { moveToDncInDb } from "../contact/service";
 import { resolveTenantRootId } from "../../utils/tenant";
+import { resolveAdminId, recordCallAndRotateIfNeeded } from "../systemSettings/callerId/service";
 
 
 enum LeadCallStatus {
@@ -139,6 +140,10 @@ export class DialerService {
    *  Caller ID Rotation usage counts shown in the power dialer. Reset when a new
    *  caller-ID pool is set (i.e. at the start of a session). */
   private userCallerIdCallCounts: Map<string, Map<string, number>> = new Map();
+  /** Maps userId -> (caller-ID number -> unfreezeAtMs). Power dialer skips frozen numbers during round-robin. */
+  private callerIdFreezeState: Map<string, Map<string, number>> = new Map();
+  /** Maps userId -> (caller-ID number -> maxCallsBeforeFreeze). Populated when pool is set. 0 = no limit. */
+  private callerIdPerNumberLimits: Map<string, Map<string, number>> = new Map();
 
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
@@ -200,6 +205,7 @@ export class DialerService {
 
       if (pool.length > 0) {
         console.log(`[DialerService] Caller ID pool set for user ${userId}: [${pool.join(', ')}]`);
+        await this.loadCallerIdLimits(userId, pool);
       }
     } else {
       // No callerId provided — auto-fetch all available numbers for this user
@@ -220,6 +226,7 @@ export class DialerService {
             this.userCallerIdPrefs.delete(userId);
             this.userCallerIdCallCounts.set(userId, new Map()); // fresh usage counts for the session
             console.log(`[DialerService] Auto-filled rotation pool for user ${userId} with ${numbers.length} numbers.`);
+            await this.loadCallerIdLimits(userId, numbers);
           }
         }
       } catch (poolError) {
@@ -233,6 +240,47 @@ export class DialerService {
 
     // Process queue immediately
     this.processQueue(userId);
+  }
+
+  private async loadCallerIdLimits(userId: string, pool: string[]): Promise<void> {
+    if (pool.length === 0) return;
+    try {
+      const settings = await prisma.system_Setting.findFirst({ where: { userId } });
+      if (!settings) return;
+
+      const records = await prisma.callerId.findMany({
+        where: { twillioNumber: { in: pool }, systemSettingId: settings.id },
+        select: { twillioNumber: true, numberOfLines: true, frozenAt: true, unfreezeAt: true }
+      });
+
+      const limitMap = new Map<string, number>();
+      const freezeMap = new Map<string, number>();
+      const nowMs = Date.now();
+
+      for (const r of records) {
+        if (!r.twillioNumber) continue;
+        // numberOfLines > 1 means a real dials-per-CID limit is configured
+        if (r.numberOfLines && r.numberOfLines > 1) {
+          limitMap.set(r.twillioNumber, r.numberOfLines);
+        }
+        // Restore DB freeze state for numbers still in cooldown
+        if (r.unfreezeAt) {
+          const unfreezeMs = new Date(r.unfreezeAt).getTime();
+          if (unfreezeMs > nowMs) {
+            freezeMap.set(r.twillioNumber, unfreezeMs);
+          }
+        }
+      }
+
+      this.callerIdPerNumberLimits.set(userId, limitMap);
+      this.callerIdFreezeState.set(userId, freezeMap);
+
+      if (limitMap.size > 0) {
+        console.log(`[DialerService] Caller ID limits loaded for user ${userId}:`, Object.fromEntries(limitMap));
+      }
+    } catch (e) {
+      console.error(`[DialerService] Failed to load caller ID limits for ${userId}:`, e);
+    }
   }
 
   async clearQueue(userId: string) {
@@ -354,11 +402,33 @@ export class DialerService {
         let assignedNumber: string | null = null;
 
         if (pool.length > 0) {
-          // ROUND-ROBIN: Use the current index and increment
-          const currentIndex = this.userCallerIdIndices.get(userId) || 0;
-          assignedNumber = pool[currentIndex % pool.length];
-          this.userCallerIdIndices.set(userId, (currentIndex + 1) % pool.length);
-          console.log(`[processQueue] Round-robin assignment: lead ${lead.id} -> ${assignedNumber} (index ${currentIndex})`);
+          // ROUND-ROBIN with freeze-skip: find the next non-frozen number
+          const nowMs = Date.now();
+          const freezeMap = this.callerIdFreezeState.get(userId);
+          const startIndex = this.userCallerIdIndices.get(userId) || 0;
+          let foundIdx = -1;
+
+          for (let attempt = 0; attempt < pool.length; attempt++) {
+            const idx = (startIndex + attempt) % pool.length;
+            const candidate = pool[idx];
+            const unfreezeAt = freezeMap?.get(candidate);
+            if (!unfreezeAt || nowMs >= unfreezeAt) {
+              foundIdx = idx;
+              break;
+            }
+          }
+
+          if (foundIdx >= 0) {
+            assignedNumber = pool[foundIdx];
+            this.userCallerIdIndices.set(userId, (foundIdx + 1) % pool.length);
+            console.log(`[processQueue] Round-robin assignment: lead ${lead.id} -> ${assignedNumber} (index ${foundIdx})`);
+          } else {
+            // All numbers frozen — use fallback round-robin to avoid blocking the dialer
+            const fallbackIdx = startIndex % pool.length;
+            assignedNumber = pool[fallbackIdx];
+            this.userCallerIdIndices.set(userId, (fallbackIdx + 1) % pool.length);
+            console.log(`[processQueue] All caller IDs frozen for user ${userId}, using fallback ${assignedNumber}`);
+          }
         }
 
         // Track as "in-flight" to prevent the "empty session" gap during async makeCall setup
@@ -647,15 +717,34 @@ export class DialerService {
         console.log(`[makeCall] Sticky Caller ID recorded: lead ${lead.id} -> ${normalised}`);
       }
 
-      // ── Caller ID usage: count this call against the number used, so the
-      //    power dialer's Caller ID Rotation widget shows real usage (X / max). ──
+      // ── Caller ID usage: count this call and freeze when the per-number limit is hit ──
       if (fromNumber) {
         let counts = this.userCallerIdCallCounts.get(lead.userId);
         if (!counts) {
           counts = new Map();
           this.userCallerIdCallCounts.set(lead.userId, counts);
         }
-        counts.set(twilioFrom, (counts.get(twilioFrom) || 0) + 1);
+        const newCount = (counts.get(twilioFrom) || 0) + 1;
+        counts.set(twilioFrom, newCount);
+
+        const maxCalls = this.callerIdPerNumberLimits.get(lead.userId)?.get(twilioFrom);
+        if (maxCalls && maxCalls > 0 && newCount >= maxCalls) {
+          const unfreezeAtMs = Date.now() + 20 * 60 * 1000; // 20 min cooldown
+          if (!this.callerIdFreezeState.has(lead.userId)) {
+            this.callerIdFreezeState.set(lead.userId, new Map());
+          }
+          this.callerIdFreezeState.get(lead.userId)!.set(twilioFrom, unfreezeAtMs);
+          // Reset count so it starts fresh after the cooldown
+          counts.set(twilioFrom, 0);
+          console.log(`[Dialer] Caller ID ${twilioFrom} frozen for user ${lead.userId} after ${newCount}/${maxCalls} dials. Unfreezes at ${new Date(unfreezeAtMs).toISOString()}`);
+        }
+
+        // Sync usage to DB in background (fire-and-forget)
+        if (maxCalls && maxCalls > 0) {
+          resolveAdminId(lead.userId)
+            .then(adminId => recordCallAndRotateIfNeeded(adminId, twilioFrom, maxCalls))
+            .catch(err => console.error(`[Dialer] Failed to sync caller ID usage to DB:`, err));
+        }
       }
 
       // 3. Create CallRecord in DB immediately
