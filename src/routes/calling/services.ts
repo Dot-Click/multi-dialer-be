@@ -872,10 +872,26 @@ export class DialerService {
     const pendingRedialsCount = this.pendingRedials.get(userId)?.size || 0;
     const queueSize = queue?.size() || 0;
 
-    // Per-caller-ID usage counts for this session (powers the Caller ID Rotation widget).
-    const callerIdStats: Record<string, { callCount: number }> = {};
+    // Per-caller-ID usage counts and freeze state for this session (powers the Caller ID Rotation widget).
+    const callerIdStats: Record<string, { callCount: number; isFrozen: boolean; unfreezeAt: number | null }> = {};
+    const freezeMap = this.callerIdFreezeState.get(userId);
+    const nowMs = Date.now();
+    const maxCalls = this.callerIdSessionMaxCalls.get(userId) || 0;
+    // Include all pool numbers, not just those with non-zero counts
+    const pool = this.userCallerIdPools.get(userId) || [];
+    pool.forEach(number => {
+      const count = this.userCallerIdCallCounts.get(userId)?.get(number) || 0;
+      const unfreezeAtMs = freezeMap?.get(number) ?? null;
+      const isFrozen = unfreezeAtMs !== null && unfreezeAtMs > nowMs;
+      callerIdStats[number] = { callCount: isFrozen ? maxCalls : count, isFrozen, unfreezeAt: unfreezeAtMs };
+    });
+    // Also include any numbers tracked in callCounts but not in pool (safety net)
     this.userCallerIdCallCounts.get(userId)?.forEach((count, number) => {
-      callerIdStats[number] = { callCount: count };
+      if (!callerIdStats[number]) {
+        const unfreezeAtMs = freezeMap?.get(number) ?? null;
+        const isFrozen = unfreezeAtMs !== null && unfreezeAtMs > nowMs;
+        callerIdStats[number] = { callCount: isFrozen ? maxCalls : count, isFrozen, unfreezeAt: unfreezeAtMs };
+      }
     });
 
     if (activeCount === 0 && pendingRedialsCount === 0 && queueSize === 0) {
