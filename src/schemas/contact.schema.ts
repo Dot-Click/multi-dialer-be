@@ -56,6 +56,8 @@ export const updateContactSchema = z.object({
   emails: z.array(contactEmailSchema).optional(),
   phones: z.array(contactPhoneSchema).optional(),
   notes: z.array(z.string()).optional(),
+  description: z.string().nullable().optional(),
+  agentRemarks: z.string().nullable().optional(),
   miscValues: z.record(z.string(), z.any()).optional(),
   leadsheetValues: z.record(z.string(), z.any()).optional(),
   status: z.string().optional(),
