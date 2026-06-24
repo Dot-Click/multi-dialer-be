@@ -115,7 +115,7 @@ function buildAiSummary(a: any): string {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; queueCardId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean; attempts?: number }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; queueCardId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean; attempts?: number; amdPending?: boolean }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
