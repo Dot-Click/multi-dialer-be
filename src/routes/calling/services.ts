@@ -147,6 +147,8 @@ export class DialerService {
   private callerIdPerNumberLimits: Map<string, Map<string, number>> = new Map();
   /** Maps userId -> session-level dials-per-caller-ID limit (sent by frontend as maxCallsPerId). */
   private callerIdSessionMaxCalls: Map<string, number> = new Map();
+  /** Users who have explicitly stopped their dialer session — blocks in-flight processQueue batches. */
+  private stoppedUsers: Set<string> = new Set();
 
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
@@ -181,6 +183,9 @@ export class DialerService {
    * @param pacing - optional session pacing override (max simultaneous calls)
    */
   async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string | string[], pacing?: number, maxCallsPerId?: number) {
+    // Clear any previous stop signal so a fresh session can dial normally.
+    this.stoppedUsers.delete(userId);
+
     // ── Store session pacing ──────────────────────────────────────────────────
     if (pacing && pacing > 0) {
       this.sessionPacing.set(userId, pacing);
@@ -310,6 +315,9 @@ export class DialerService {
   }
 
   async clearQueue(userId: string) {
+    // Signal any in-progress processQueue batch to stop firing new calls immediately.
+    this.stoppedUsers.add(userId);
+
     const queue = this.userQueues.get(userId);
     if (queue) {
       queue.clear();
@@ -467,6 +475,12 @@ export class DialerService {
 
       // 2. Now fire calls with their pre-assigned numbers
       for (const { lead, assignedNumber } of callBatch) {
+        // If the agent clicked "Hangup & Leave" while this batch was building,
+        // abort immediately so no more Twilio calls get initiated.
+        if (this.stoppedUsers.has(userId)) {
+          console.log(`[processQueue] User ${userId} stopped mid-batch — aborting remaining ${callBatch.length} call(s)`);
+          break;
+        }
         this.makeCall(lead, assignedNumber);
         await new Promise(r => setTimeout(r, 250));
       }
