@@ -3189,18 +3189,6 @@ export async function markAsContactedInDb(contactId: string, userId: string, pho
       await tx.contactPhone.update({ where: { id: phoneId }, data: { isBestNumber: true } });
     }
 
-    // Remove from every list it currently belongs to (out of the dial queue).
-    const lists = await tx.contactList.findMany({
-      where: { contactIds: { has: contactId } },
-      select: { id: true, contactIds: true },
-    });
-    for (const l of lists) {
-      await tx.contactList.update({
-        where: { id: l.id },
-        data: { contactIds: l.contactIds.filter((id) => id !== contactId) },
-      });
-    }
-
     await tx.contact.update({
       where: { id: contactId },
       data: { status: "CONTACTED" },
