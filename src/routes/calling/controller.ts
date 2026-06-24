@@ -572,6 +572,18 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
   else {
     console.log(`[VoiceWebhook] Bridge request for ${currentCallSid} -> Agent ${agentId}`);
 
+    // AsyncAMD is running — hold the contact here instead of immediately bridging.
+    // handleAmdStatus will redirect the call to bridge the agent once the AMD result
+    // confirms it's a human. Without this the agent hears 2-5 seconds of machine audio.
+    if (req.query.amdEnabled === 'true') {
+      console.log(`[VoiceWebhook] AsyncAMD pending for ${currentCallSid} — holding call for AMD result.`);
+      twiml.pause({ length: 10 });
+      twiml.hangup();
+      res.type("text/xml");
+      res.send(twiml.toString());
+      return;
+    }
+
     if (!agentId || agentId === 'undefined' || agentId === 'null') {
       console.error("[VoiceWebhook] Missing or invalid agentId for bridge request.");
       twiml.say("We are unable to connect you to an agent right now.");
@@ -804,8 +816,61 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
       }
 
     } else {
-      // Human or unknown — no action (Req 3.5, 4.4)
-      console.log(`[AMD] Human/unknown answered ${CallSid}. No action taken.`);
+      // Human confirmed — bridge the agent now that we know it's a person.
+      // The voice webhook returned <Pause> so the agent was never connected yet.
+      console.log(`[AMD] Human/unknown confirmed for ${CallSid} — bridging to agent ${agentId}.`);
+
+      const amdContactId  = (req.query.contactId  as string) || '';
+      const amdLeadId     = (req.query.leadId      as string) || '';
+      const amdQueueCardId = (req.query.queueCardId as string) || '';
+      const callerFrom    = (req.query.callerFrom  as string) || '';
+      const amdBusyUrl    = (req.query.busyRecordingUrl as string) || '';
+
+      if (!agentId) {
+        console.warn(`[AMD] No agentId for ${CallSid} — cannot bridge.`);
+        res.sendStatus(200);
+        return;
+      }
+
+      try {
+        const userClient = await getTwilioClient(agentId);
+        const isBusy = dialerService.isAgentBusy(agentId);
+        const isInPostCall = dialerService.isAgentInPostCall(agentId);
+
+        if (isBusy || isInPostCall) {
+          // Agent took another call during the AMD wait — hold this contact for redial.
+          const holdUrl = amdBusyUrl || "https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
+          await userClient.calls(CallSid).update({
+            twiml: `<Response><Play>${holdUrl}</Play><Hangup/></Response>`
+          });
+          console.log(`[AMD] Agent ${agentId} busy — playing hold for ${CallSid}, redial will follow.`);
+        } else {
+          // Acquire agent lock and update metadata before bridging
+          dialerService.setAgentBusy(agentId, true, CallSid);
+          const existingMeta = (dialerService as any).activeCalls.get(CallSid);
+          (dialerService as any).activeCalls.set(CallSid, {
+            userId: agentId,
+            leadId:      existingMeta?.leadId      || amdLeadId,
+            contactId:   existingMeta?.contactId   || amdContactId,
+            queueCardId: existingMeta?.queueCardId || amdQueueCardId || amdContactId,
+            sessionId:   existingMeta?.sessionId   || null,
+            isBrowserCall: false,
+            status: 'in-progress',
+          });
+
+          const bridgeCallerId = callerFrom || envConfig.TWILIO_PHONE_NUMBER;
+          const effectiveQueueCardId = existingMeta?.queueCardId || amdQueueCardId;
+          const recordingCb = `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(amdContactId)}&leadId=${encodeURIComponent(amdLeadId)}`;
+          const statusCb    = `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${agentId}`;
+
+          await userClient.calls(CallSid).update({
+            twiml: `<Response><Dial callerId="${bridgeCallerId}" answerOnBridge="true" record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"><Client statusCallbackEvent="initiated ringing answered completed" statusCallback="${statusCb}" statusCallbackMethod="POST"><Identity>${agentId}</Identity><Parameter name="dialerBridge" value="true"/>${amdContactId ? `<Parameter name="contactId" value="${amdContactId}"/>` : ''}${effectiveQueueCardId ? `<Parameter name="queueCardId" value="${effectiveQueueCardId}"/>` : ''}</Client></Dial></Response>`
+          });
+          console.log(`[AMD] Human confirmed — bridged ${CallSid} to agent ${agentId}.`);
+        }
+      } catch (bridgeErr: any) {
+        console.error(`[AMD] Bridge failed for ${CallSid}:`, bridgeErr.message);
+      }
     }
 
     res.sendStatus(200);

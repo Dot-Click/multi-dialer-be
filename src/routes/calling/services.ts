@@ -715,14 +715,14 @@ export class DialerService {
       const call = await userClient.calls.create({
         to: dialTo,
         from: twilioFrom as string,
-        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&leadId=${lead.id}&contactId=${lead.originalContactId || lead.id}&queueCardId=${lead.queueCardId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
+        url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&leadId=${lead.id}&contactId=${lead.originalContactId || lead.id}&queueCardId=${lead.queueCardId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}${amdEnabled ? '&amdEnabled=true' : ''}`,
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         statusCallbackMethod: "POST",
         ...(amdEnabled ? {
           machineDetection: "Enable",
           asyncAmd: "true",
-          asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}&amdEnabled=true`,
+          asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}&amdEnabled=true&contactId=${encodeURIComponent(lead.originalContactId || lead.id)}&leadId=${encodeURIComponent(lead.id)}&queueCardId=${encodeURIComponent(lead.queueCardId || lead.id)}&callerFrom=${encodeURIComponent(twilioFrom as string)}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
           asyncAmdStatusCallbackMethod: "POST",
         } : {}),
       });
