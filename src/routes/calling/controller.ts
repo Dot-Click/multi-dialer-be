@@ -855,6 +855,7 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
             queueCardId: existingMeta?.queueCardId || amdQueueCardId || amdContactId,
             sessionId:   existingMeta?.sessionId   || null,
             isBrowserCall: false,
+            amdPending: false,
             status: 'in-progress',
           });
 

@@ -735,7 +735,10 @@ export class DialerService {
         queueCardId: lead.queueCardId || lead.id,
         userId: lead.userId,
         sessionId,
-        status: lead.isRedial ? "redialing" : "initiated",
+        // With asyncAMD the contact answers but agent isn't bridged yet — keep as
+        // "amd-pending" so the frontend shows Ringing, not Connected.
+        status: amdEnabled ? "amd-pending" : (lead.isRedial ? "redialing" : "initiated"),
+        amdPending: amdEnabled,
         isRedial: lead.isRedial,
         attempts: lead.attempts || 1
       });
@@ -999,6 +1002,10 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
       // do not let Twilio's 'answered' or 'in-progress' events turn it back to Green.
       if (metadata.status === 'callback' && (twilioStatus === 'answered' || twilioStatus === 'in-progress')) {
         console.log(`[handleCallStatusUpdate] Protecting 'callback' status for SID ${sid}. Ignoring '${twilioStatus}'.`);
+      } else if ((metadata as any).amdPending && (twilioStatus === 'answered' || twilioStatus === 'in-progress')) {
+        // AMD is still running — contact answered but agent not bridged yet.
+        // Keep "amd-pending" so the frontend shows Ringing rather than Connected.
+        console.log(`[handleCallStatusUpdate] AMD pending for ${sid} — keeping 'amd-pending', ignoring '${twilioStatus}'.`);
       } else {
         metadata.status = twilioStatus;
         this.activeCalls.set(sid, metadata);
