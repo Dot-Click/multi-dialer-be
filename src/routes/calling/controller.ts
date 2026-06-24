@@ -1535,12 +1535,15 @@ export const filterDialContacts: RequestHandler = async (req: Request, res: Resp
 
     // ── Never Contacted filter ─────────────────────────────────────────────
     if (filters.neverContacted) {
-      // "Contacted" = any call record with a non-null, non-empty disposition
+      // "Contacted" = call was actually answered (status: completed, not machine-detected).
+      // Auto-dispositions like "No Answer" / "Busy" don't count — the agent never spoke
+      // to the person, so those contacts should still appear in this filter.
       const contactedRecords = await prisma.callRecord.findMany({
         where: {
           contactId: { in: result },
           userId: { in: orgUserIds },
-          disposition: { not: null },
+          status: 'completed',
+          NOT: { disposition: { in: ['MACHINE', 'machine-detected'] } },
         },
         select: { contactId: true },
         distinct: ['contactId'],
