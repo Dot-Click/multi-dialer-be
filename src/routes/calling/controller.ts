@@ -1508,6 +1508,15 @@ export const filterDialContacts: RequestHandler = async (req: Request, res: Resp
 
     let result: string[] = [...contactIds];
 
+    // Always exclude contacts already marked as CONTACTED — they've been successfully
+    // reached and should never be re-queued regardless of which filter mode is used.
+    const contactedContacts = await prisma.contact.findMany({
+      where: { id: { in: result }, status: 'CONTACTED' },
+      select: { id: true },
+    });
+    const contactedIdSet = new Set(contactedContacts.map((c: any) => c.id));
+    result = result.filter((id) => !contactedIdSet.has(id));
+
     // Resolve to admin ID so filters cover the whole org (agents + admin share call history)
     const adminId = await resolveAdminId(userId);
     const orgUserIds = await prisma.user.findMany({
