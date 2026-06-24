@@ -6,7 +6,7 @@ import { dialerService } from "./services";
 import prisma from "@/lib/prisma";
 import { envConfig } from "@/lib/config";
 import twilio from "twilio";
-import { insertCallerIdInDb } from "../systemSettings/callerId/service";
+import { insertCallerIdInDb, resolveAdminId } from "../systemSettings/callerId/service";
 import { getTwilioClient } from "../../services/twilio-account.service";
 import { chunkArray } from "@/utils/helpers";
 
@@ -1498,6 +1498,13 @@ export const filterDialContacts: RequestHandler = async (req: Request, res: Resp
 
     let result: string[] = [...contactIds];
 
+    // Resolve to admin ID so filters cover the whole org (agents + admin share call history)
+    const adminId = await resolveAdminId(userId);
+    const orgUserIds = await prisma.user.findMany({
+      where: { OR: [{ id: adminId }, { createdById: adminId }] },
+      select: { id: true },
+    }).then((rows: { id: string }[]) => rows.map((r) => r.id));
+
     // ── Never Dialed filter ────────────────────────────────────────────────
     if (filters.neverDialed) {
       let since: Date | undefined;
@@ -1516,7 +1523,7 @@ export const filterDialContacts: RequestHandler = async (req: Request, res: Resp
       const calledRecords = await prisma.callRecord.findMany({
         where: {
           contactId: { in: result },
-          userId,
+          userId: { in: orgUserIds },
           ...(since ? { startTime: { gte: since } } : {}),
         },
         select: { contactId: true },
@@ -1532,7 +1539,7 @@ export const filterDialContacts: RequestHandler = async (req: Request, res: Resp
       const contactedRecords = await prisma.callRecord.findMany({
         where: {
           contactId: { in: result },
-          userId,
+          userId: { in: orgUserIds },
           disposition: { not: null },
         },
         select: { contactId: true },
@@ -1555,7 +1562,8 @@ export const filterDialContacts: RequestHandler = async (req: Request, res: Resp
         distinct: ['contactId'],
       });
       const changedSet = new Set(changedLogs.map((l: any) => l.contactId));
-      result = result.filter((id) => !changedSet.has(id));
+      // Keep only contacts whose status DID change within the window
+      result = result.filter((id) => changedSet.has(id));
     }
 
     // ── Created Date filter ────────────────────────────────────────────────
