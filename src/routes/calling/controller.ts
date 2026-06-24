@@ -927,11 +927,21 @@ export const getTranscriptionLogs: RequestHandler = async (req, res) => {
  */
 export const handleCallStatus: RequestHandler = async (req, res) => {
   try {
-    const { CallSid, CallStatus, ParentCallSid } = req.body;
+    const { CallSid, CallStatus, ParentCallSid, CallDuration } = req.body;
     const agentId = req.query.agentId as string;
+
+    // Carrier-rejected calls can appear as 'completed' with CallDuration=0 — the
+    // callee's phone briefly signalled 200 OK then immediately disconnected (common
+    // with carriers in certain regions). Nobody actually answered, so we reclassify
+    // these as 'no-answer' so they don't count as "contacted" in filters.
+    const effectiveStatus =
+      CallStatus === 'completed' && parseInt(CallDuration ?? '-1') === 0
+        ? 'no-answer'
+        : CallStatus;
 
     console.log(
       `Call ${CallSid} status update: ${CallStatus}` +
+      (effectiveStatus !== CallStatus ? ` → reclassified as ${effectiveStatus} (CallDuration=0)` : '') +
       (ParentCallSid ? ` (Parent: ${ParentCallSid})` : '')
     );
 
@@ -944,7 +954,7 @@ export const handleCallStatus: RequestHandler = async (req, res) => {
 
       await dialerService.handleCallStatusUpdate(
         ParentCallSid,
-        CallStatus,
+        effectiveStatus,
         true,
         agentId
       );
@@ -954,7 +964,7 @@ export const handleCallStatus: RequestHandler = async (req, res) => {
     if (!ParentCallSid) {
       await dialerService.handleCallStatusUpdate(
         CallSid,
-        CallStatus,
+        effectiveStatus,
         false,
         agentId
       );
