@@ -577,7 +577,7 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     // confirms it's a human. Without this the agent hears 2-5 seconds of machine audio.
     if (req.query.amdEnabled === 'true') {
       console.log(`[VoiceWebhook] AsyncAMD pending for ${currentCallSid} — holding call for AMD result.`);
-      twiml.pause({ length: 10 });
+      twiml.pause({ length: 25 });
       twiml.hangup();
       res.type("text/xml");
       res.send(twiml.toString());
@@ -845,6 +845,16 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
           });
           console.log(`[AMD] Agent ${agentId} busy — playing hold for ${CallSid}, redial will follow.`);
         } else {
+          // Guard: if the call was already terminated (status callback beat us here),
+          // activeCalls will have been deleted. Acquiring the lock on a dead call
+          // would permanently wedge the agent's busy state.
+          const callStillActive = (dialerService as any).activeCalls.has(CallSid);
+          if (!callStillActive) {
+            console.warn(`[AMD] Call ${CallSid} already removed from activeCalls before AMD human result arrived. Skipping bridge to avoid stuck lock.`);
+            res.sendStatus(200);
+            return;
+          }
+
           // Acquire agent lock and update metadata before bridging
           dialerService.setAgentBusy(agentId, true, CallSid);
           const existingMeta = (dialerService as any).activeCalls.get(CallSid);
@@ -864,10 +874,18 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
           const recordingCb = `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(amdContactId)}&leadId=${encodeURIComponent(amdLeadId)}`;
           const statusCb    = `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${agentId}`;
 
-          await userClient.calls(CallSid).update({
-            twiml: `<Response><Dial callerId="${bridgeCallerId}" answerOnBridge="true" record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"><Client statusCallbackEvent="initiated ringing answered completed" statusCallback="${statusCb}" statusCallbackMethod="POST"><Identity>${agentId}</Identity><Parameter name="dialerBridge" value="true"/>${amdContactId ? `<Parameter name="contactId" value="${amdContactId}"/>` : ''}${effectiveQueueCardId ? `<Parameter name="queueCardId" value="${effectiveQueueCardId}"/>` : ''}</Client></Dial></Response>`
-          });
-          console.log(`[AMD] Human confirmed — bridged ${CallSid} to agent ${agentId}.`);
+          try {
+            await userClient.calls(CallSid).update({
+              twiml: `<Response><Dial callerId="${bridgeCallerId}" answerOnBridge="true" record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"><Client statusCallbackEvent="initiated ringing answered completed" statusCallback="${statusCb}" statusCallbackMethod="POST"><Identity>${agentId}</Identity><Parameter name="dialerBridge" value="true"/>${amdContactId ? `<Parameter name="contactId" value="${amdContactId}"/>` : ''}${effectiveQueueCardId ? `<Parameter name="queueCardId" value="${effectiveQueueCardId}"/>` : ''}</Client></Dial></Response>`
+            });
+            console.log(`[AMD] Human confirmed — bridged ${CallSid} to agent ${agentId}.`);
+          } catch (bridgeErr: any) {
+            console.error(`[AMD] Bridge failed for ${CallSid} — releasing lock to unblock agent:`, bridgeErr.message);
+            // The call is dead but the lock was already acquired — release it now
+            // so the agent isn't stuck waiting for a call that will never connect.
+            dialerService.setAgentBusy(agentId, false);
+            (dialerService as any).activeCalls.delete(CallSid);
+          }
         }
       } catch (bridgeErr: any) {
         console.error(`[AMD] Bridge failed for ${CallSid}:`, bridgeErr.message);
