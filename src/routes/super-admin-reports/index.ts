@@ -10,6 +10,10 @@ import {
   userSubscriptionStatus,
   businessOverview,
   revenuePlans,
+  totalConnections,
+  appointmentsSet,
+  avgDaysSinceActive,
+  planChanges,
 } from "./controller";
 
 const router = Router();
@@ -29,5 +33,11 @@ router.get("/user-reports-billing", userReportsBilling);
 //reporting
 router.get("/bussiness-overview", businessOverview);
 router.get("/revenue-plans", revenuePlans);
+
+// Usage & activity metrics
+router.get("/total-connections", totalConnections);
+router.get("/appointments-set", appointmentsSet);
+router.get("/avg-days-since-active", avgDaysSinceActive);
+router.get("/plan-changes", planChanges);
 
 export default router;

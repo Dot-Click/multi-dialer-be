@@ -12,6 +12,10 @@ import {
   getBusinessOverviewInDb,
   getRevenuePlansInDb,
   getCollectedRevenueGrowthInDb,
+  getTotalConnectionsInDb,
+  getAppointmentsSetInDb,
+  getAvgDaysSinceActiveInDb,
+  getPlanChangesInDb,
 } from "./service";
 
 export const getUserOverview = async (
@@ -236,6 +240,42 @@ export const businessOverview = async (
       error?.message || "Internal server error",
       error?.statusCode || 500,
     );
+  }
+};
+
+export const totalConnections = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await getTotalConnectionsInDb();
+    successResponse(res, 200, "Total connections fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const appointmentsSet = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await getAppointmentsSetInDb();
+    successResponse(res, 200, "Appointments set fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const avgDaysSinceActive = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const value = await getAvgDaysSinceActiveInDb();
+    successResponse(res, 200, "Avg days since active fetched successfully", { value });
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const planChanges = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await getPlanChangesInDb();
+    successResponse(res, 200, "Plan changes fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }
 };
 

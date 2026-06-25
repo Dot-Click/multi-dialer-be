@@ -840,6 +840,10 @@ export const changeSubscriptionPlan = async (req: Request, res: Response): Promi
       return;
     }
 
+    // Capture old price amount before updating
+    const oldPriceId = stripeSub.items.data[0]?.price?.id;
+    const oldAmount = stripeSub.items.data[0]?.price?.unit_amount ?? 0;
+
     const updatedStripeSub = await stripe.subscriptions.update(subscriptionId, {
       items: [{ id: existingItemId, price: newPriceId }],
       proration_behavior: "create_prorations",
@@ -851,16 +855,34 @@ export const changeSubscriptionPlan = async (req: Request, res: Response): Promi
     const newPlanKey = product?.metadata?.plan
       || product?.name?.toUpperCase().replace(/[^A-Z0-9]+/g, "_")
       || "STARTER";
+    const newAmount = newPrice.unit_amount ?? 0;
 
     const dbSub = await prisma.userSubscription.findFirst({
       where: { stripeSubscriptionId: subscriptionId },
     });
 
     if (dbSub) {
+      const oldPlanKey = dbSub.plan;
+
       await prisma.userSubscription.update({
         where: { id: dbSub.id },
         data: { plan: newPlanKey as any },
       });
+
+      // Log the plan change (skip if same plan, e.g. billing cycle switch only)
+      if (oldPlanKey !== newPlanKey || oldAmount !== newAmount) {
+        const changeType = newAmount >= oldAmount ? "UPGRADE" : "DOWNGRADE";
+        await prisma.subscriptionPlanChange.create({
+          data: {
+            userId: dbSub.userId,
+            fromPlan: oldPlanKey,
+            toPlan: newPlanKey,
+            fromAmount: oldAmount / 100,
+            toAmount: newAmount / 100,
+            changeType,
+          },
+        }).catch(() => undefined); // non-critical — don't fail the main flow
+      }
     }
 
     successResponse(res, 200, "Subscription plan updated successfully", {
@@ -869,6 +891,42 @@ export const changeSubscriptionPlan = async (req: Request, res: Response): Promi
     });
   } catch (error: any) {
     console.error("[Billing] Change Subscription Plan Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+// Admin-only: all invoices from all users (super admin reports)
+export const getAllInvoicesAdmin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rows = await prisma.billing.findMany({
+      include: { user: { select: { fullName: true, email: true } } },
+      orderBy: { date: "desc" },
+    });
+
+    const mode: "live" | "test" = (envConfig.STRIPE_SECRET_KEY || "").startsWith("sk_live_")
+      ? "live"
+      : "test";
+
+    successResponse(res, 200, "All invoices retrieved successfully", { mode, invoices: rows.map(mapBillingRow) });
+  } catch (error: any) {
+    console.error("[Billing] Get All Invoices Admin Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+// Admin-only: all subscriptions from all users (super admin reports)
+export const getAllSubscriptionsAdmin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const subscriptions = await prisma.userSubscription.findMany({
+      where: { user: { role: { not: "OWNER" } } },
+      include: {
+        user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    successResponse(res, 200, "All subscriptions retrieved successfully", subscriptions);
+  } catch (error: any) {
+    console.error("[Billing] Get All Subscriptions Admin Error:", error);
     errorResponse(res, error.message || "Internal server error", 500);
   }
 };

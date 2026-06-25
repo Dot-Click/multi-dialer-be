@@ -436,6 +436,61 @@ export async function getBusinessOverviewInDb() {
   };
 }
 
+export async function getTotalConnectionsInDb() {
+  const now = new Date();
+  const currStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevEnd   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+  const [current, previous] = await Promise.all([
+    prisma.callRecord.count({ where: { status: "completed", startTime: { gte: currStart, lte: currEnd } } }),
+    prisma.callRecord.count({ where: { status: "completed", startTime: { gte: prevStart, lte: prevEnd } } }),
+  ]);
+  return { current, previous };
+}
+
+export async function getAppointmentsSetInDb() {
+  const now = new Date();
+  const currStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevEnd   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+  const [current, previous] = await Promise.all([
+    prisma.calendar.count({ where: { category: "APPOINTMENT", createdAt: { gte: currStart, lte: currEnd } } }),
+    prisma.calendar.count({ where: { category: "APPOINTMENT", createdAt: { gte: prevStart, lte: prevEnd } } }),
+  ]);
+  return { current, previous };
+}
+
+export async function getAvgDaysSinceActiveInDb() {
+  const users = await prisma.user.findMany({
+    where: { role: "ADMIN", lastLogin: { not: null } },
+    select: { lastLogin: true },
+  });
+  if (users.length === 0) return null;
+  const now = Date.now();
+  const totalDays = users.reduce((sum, u) => {
+    return sum + (now - new Date(u.lastLogin!).getTime()) / (1000 * 60 * 60 * 24);
+  }, 0);
+  return parseFloat((totalDays / users.length).toFixed(1));
+}
+
+export async function getPlanChangesInDb() {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [upgrades, downgrades, recent] = await Promise.all([
+    prisma.subscriptionPlanChange.count({ where: { changeType: "UPGRADE",   changedAt: { gte: thirtyDaysAgo } } }),
+    prisma.subscriptionPlanChange.count({ where: { changeType: "DOWNGRADE", changedAt: { gte: thirtyDaysAgo } } }),
+    prisma.subscriptionPlanChange.findMany({
+      orderBy: { changedAt: "desc" },
+      take: 10,
+      include: { user: { select: { fullName: true, email: true } } },
+    }),
+  ]);
+  return { upgrades, downgrades, recent };
+}
+
 export async function getRevenuePlansInDb() {
   const plans = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
 

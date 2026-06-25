@@ -263,6 +263,8 @@ model User {
   tasks                  Task[]
   externalCalendarTokens ExternalCalendarToken[]
 
+  planChanges SubscriptionPlanChange[]
+
   @@map("users")
 }
 
@@ -1719,4 +1721,18 @@ model BillingEvent {
   createdAt     DateTime           @default(now())
 
   @@map("billing_events")
+}
+
+model SubscriptionPlanChange {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromPlan    String
+  toPlan      String
+  fromAmount  Float    @default(0)
+  toAmount    Float    @default(0)
+  changeType  String   // "UPGRADE" | "DOWNGRADE"
+  changedAt   DateTime @default(now())
+
+  @@map("subscription_plan_changes")
 }
