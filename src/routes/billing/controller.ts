@@ -238,12 +238,34 @@ export const getSubscriptions = async (req: Request, res: Response): Promise<voi
           select: {
             fullName: true,
             email: true,
+            trialStatus: true,
+            isSubscribed: true,
           },
         },
       },
     });
 
-    successResponse(res, 200, "Subscriptions retrieved successfully", subscriptions);
+    // Enrich with live trial end date from Stripe for trialing subscriptions
+    const enriched = await Promise.all(
+      subscriptions.map(async (sub) => {
+        let trialEnd: string | null = null;
+        let stripeStatus: string | null = null;
+        if (sub.stripeSubscriptionId) {
+          try {
+            const stripeSub = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId);
+            stripeStatus = stripeSub.status;
+            if (stripeSub.trial_end) {
+              trialEnd = new Date(stripeSub.trial_end * 1000).toISOString();
+            }
+          } catch {
+            // ignore — Stripe not reachable or subscription deleted
+          }
+        }
+        return { ...sub, trialEnd, stripeStatus };
+      }),
+    );
+
+    successResponse(res, 200, "Subscriptions retrieved successfully", enriched);
   } catch (error: any) {
     console.error("[Billing] Get Subscriptions Error:", error);
     errorResponse(res, error.message || "Internal server error", 500);
