@@ -972,6 +972,89 @@ export const cancelSubscription = async (req: Request, res: Response): Promise<v
   }
 };
 
+export const upgradeSubscription = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+
+    const { newPriceId } = req.body;
+
+    const dbSub = await prisma.userSubscription.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!dbSub) { errorResponse(res, "No subscription found", 404); return; }
+    if (!dbSub.stripeSubscriptionId) {
+      errorResponse(res, "No Stripe subscription linked. Please contact support.", 400);
+      return;
+    }
+
+    const stripeSub = await stripe.subscriptions.retrieve(dbSub.stripeSubscriptionId);
+    if (stripeSub.status === "canceled") {
+      errorResponse(res, "Your subscription has been fully cancelled and cannot be reactivated. Please subscribe to a new plan.", 400);
+      return;
+    }
+
+    const existingItemId = stripeSub.items.data[0]?.id;
+    if (!existingItemId) { errorResponse(res, "No subscription item found", 400); return; }
+
+    const oldPlanKey = dbSub.plan;
+    const oldAmount = stripeSub.items.data[0]?.price?.unit_amount ?? 0;
+    let newPlanKey = oldPlanKey;
+    let newAmount = oldAmount;
+
+    const updatePayload: Stripe.SubscriptionUpdateParams = {
+      cancel_at_period_end: false,
+    };
+
+    if (newPriceId) {
+      updatePayload.items = [{ id: existingItemId, price: newPriceId }];
+      updatePayload.proration_behavior = "create_prorations";
+
+      const newPrice = await stripe.prices.retrieve(newPriceId, { expand: ["product"] });
+      const product = newPrice.product as any;
+      newPlanKey = product?.metadata?.plan
+        || product?.name?.toUpperCase().replace(/[^A-Z0-9]+/g, "_")
+        || oldPlanKey;
+      newAmount = newPrice.unit_amount ?? 0;
+    }
+
+    await stripe.subscriptions.update(dbSub.stripeSubscriptionId, updatePayload);
+
+    await prisma.userSubscription.update({
+      where: { id: dbSub.id },
+      data: { status: "ACTIVE", plan: newPlanKey as any },
+    });
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isSubscribed: true },
+    });
+
+    if (newPriceId && (oldPlanKey !== newPlanKey || oldAmount !== newAmount)) {
+      const changeType = newAmount >= oldAmount ? "UPGRADE" : "DOWNGRADE";
+      await prisma.subscriptionPlanChange.create({
+        data: {
+          userId,
+          fromPlan: oldPlanKey,
+          toPlan: newPlanKey,
+          fromAmount: oldAmount / 100,
+          toAmount: newAmount / 100,
+          changeType,
+        },
+      }).catch(() => undefined);
+    }
+
+    successResponse(res, 200, newPriceId ? "Subscription upgraded successfully" : "Subscription renewed successfully", {
+      newPlan: newPlanKey,
+    });
+  } catch (error: any) {
+    console.error("[Billing] Upgrade Subscription Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 export const updatePlan = async (req: Request, res: Response): Promise<void> => {
   try {
     const productId = req.params.plan || "";
