@@ -417,7 +417,8 @@ export class DialerService {
 
       const capacity = await this.getUserCapacity(userId);
       const currentActiveCount = Array.from(this.activeCalls.values())
-        .filter((call) => call.userId === userId).length;
+        .filter((call) => call.userId === userId).length
+        + (this.leadsInFlight.get(userId)?.size ?? 0);
 
       if (this.isAgentBusy(userId)) return;
 
@@ -1038,7 +1039,7 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
     if (twilioStatus === "failed") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "busy") dbStatus = LeadCallStatus.BUSY;
     else if (twilioStatus === "no-answer") dbStatus = LeadCallStatus.NO_ANSWER;
-    else if (twilioStatus === "canceled") dbStatus = LeadCallStatus.PENDING;
+    else if (twilioStatus === "canceled") dbStatus = LeadCallStatus.FAILED;
     else if (twilioStatus === "completed") dbStatus = LeadCallStatus.CALLED;
     else if (twilioStatus === "ringing" || twilioStatus === "initiated" || twilioStatus === "in-progress" || twilioStatus === "answered") {
         dbStatus = LeadCallStatus.CALLING;
@@ -1062,7 +1063,9 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
 
         if (isTerminal) {
           const endTime = new Date();
-          const duration = Math.floor((endTime.getTime() - callRecord.startTime.getTime()) / 1000); // in seconds
+          const duration = callRecord.startTime
+            ? Math.floor((endTime.getTime() - new Date(callRecord.startTime).getTime()) / 1000)
+            : 0;
           updateData.endTime = endTime;
           updateData.sessionId = metadata?.sessionId;
           updateData.duration = duration;
