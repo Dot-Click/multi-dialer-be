@@ -491,6 +491,42 @@ export async function getPlanChangesInDb() {
   return { upgrades, downgrades, recent };
 }
 
+export async function getActiveUsersInDb() {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [dau, wau] = await Promise.all([
+    prisma.user.count({
+      where: { lastLogin: { gte: startOfToday }, role: { not: "OWNER" } },
+    }),
+    prisma.user.count({
+      where: { lastLogin: { gte: sevenDaysAgo }, role: { not: "OWNER" } },
+    }),
+  ]);
+
+  return { dau, wau };
+}
+
+export async function getCallStatsInDb() {
+  const now = new Date();
+  const currStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const [total, completed, failed, callsToday] = await Promise.all([
+    prisma.callRecord.count({ where: { startTime: { gte: currStart, lte: currEnd } } }),
+    prisma.callRecord.count({ where: { status: "completed", startTime: { gte: currStart, lte: currEnd } } }),
+    prisma.callRecord.count({ where: { status: "failed", startTime: { gte: currStart, lte: currEnd } } }),
+    prisma.callRecord.count({ where: { startTime: { gte: startOfToday } } }),
+  ]);
+
+  const successRate = total > 0 ? parseFloat(((completed / total) * 100).toFixed(1)) : 0;
+  const failedRate = total > 0 ? parseFloat(((failed / total) * 100).toFixed(1)) : 0;
+
+  return { total, completed, failed, successRate, failedRate, callsToday };
+}
+
 export async function getRevenuePlansInDb() {
   const plans = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
 

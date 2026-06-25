@@ -16,6 +16,8 @@ import {
   getAppointmentsSetInDb,
   getAvgDaysSinceActiveInDb,
   getPlanChangesInDb,
+  getActiveUsersInDb,
+  getCallStatsInDb,
 } from "./service";
 
 export const getUserOverview = async (
@@ -274,6 +276,24 @@ export const planChanges = async (req: Request, res: Response): Promise<void> =>
   try {
     const data = await getPlanChangesInDb();
     successResponse(res, 200, "Plan changes fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const activeUsers = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await getActiveUsersInDb();
+    successResponse(res, 200, "Active users fetched successfully", data);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const callStats = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await getCallStatsInDb();
+    successResponse(res, 200, "Call stats fetched successfully", data);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
   }

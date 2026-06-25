@@ -14,6 +14,8 @@ import {
   appointmentsSet,
   avgDaysSinceActive,
   planChanges,
+  activeUsers,
+  callStats,
 } from "./controller";
 
 const router = Router();
@@ -39,5 +41,7 @@ router.get("/total-connections", totalConnections);
 router.get("/appointments-set", appointmentsSet);
 router.get("/avg-days-since-active", avgDaysSinceActive);
 router.get("/plan-changes", planChanges);
+router.get("/active-users", activeUsers);
+router.get("/call-stats", callStats);
 
 export default router;
