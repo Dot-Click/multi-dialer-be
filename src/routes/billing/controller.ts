@@ -498,19 +498,49 @@ function mapBillingRow(b: any) {
 export const getAllInvoices = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user.id;
-    // Served from the local Billing ledger (mirrored from Stripe via webhook +
-    // backfill) — fast, no live Stripe call. Only real customers appear here.
+
     const rows = await prisma.billing.findMany({
       where: { userId },
       include: { user: { select: { fullName: true, email: true } } },
       orderBy: { date: "desc" },
     });
 
-    const invoices = rows.map(mapBillingRow);
-
     const mode: "live" | "test" = (envConfig.STRIPE_SECRET_KEY || "").startsWith("sk_live_")
       ? "live"
       : "test";
+
+    if (rows.length > 0) {
+      successResponse(res, 200, "All invoices retrieved successfully", { mode, invoices: rows.map(mapBillingRow) });
+      return;
+    }
+
+    // Local ledger is empty — fall back to live Stripe fetch using the user's customer ID
+    const sub = await prisma.userSubscription.findFirst({
+      where: { userId },
+      select: { stripeCustomerId: true },
+    });
+
+    if (!sub?.stripeCustomerId) {
+      successResponse(res, 200, "All invoices retrieved successfully", { mode, invoices: [] });
+      return;
+    }
+
+    const invoiceList = await stripe.invoices.list({ customer: sub.stripeCustomerId, limit: 50 });
+    const productNames = await resolveProductNames(invoiceList.data);
+
+    const invoices = invoiceList.data.map((inv) => ({
+      id: inv.id,
+      number: inv.number ?? null,
+      plan: planFromInvoice(inv, productNames) ?? "—",
+      amount_paid: inv.amount_paid,
+      amount_due: inv.amount_due,
+      currency: inv.currency,
+      status: inv.status ?? "unknown",
+      createdAt: new Date(inv.created * 1000).toISOString(),
+      created: new Date(inv.created * 1000).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+      hosted_invoice_url: inv.hosted_invoice_url ?? null,
+      invoice_pdf: inv.invoice_pdf ?? null,
+    }));
 
     successResponse(res, 200, "All invoices retrieved successfully", { mode, invoices });
   } catch (error: any) {
