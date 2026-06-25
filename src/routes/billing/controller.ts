@@ -230,7 +230,9 @@ export const getBillingPortal = async (req: Request, res: Response): Promise<voi
  */
 export const getSubscriptions = async (req: Request, res: Response): Promise<void> => {
   try {
+    const userId = (req as any).user.id;
     const subscriptions = await prisma.userSubscription.findMany({
+      where: { userId },
       include: {
         user: {
           select: {
@@ -495,9 +497,11 @@ function mapBillingRow(b: any) {
 
 export const getAllInvoices = async (req: Request, res: Response): Promise<void> => {
   try {
+    const userId = (req as any).user.id;
     // Served from the local Billing ledger (mirrored from Stripe via webhook +
     // backfill) — fast, no live Stripe call. Only real customers appear here.
     const rows = await prisma.billing.findMany({
+      where: { userId },
       include: { user: { select: { fullName: true, email: true } } },
       orderBy: { date: "desc" },
     });
