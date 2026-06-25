@@ -170,16 +170,7 @@ export async function authenticateSubAccount(email: string, password: string): P
 }
 
 export async function fetchListings(subEmail: string, subPassword: string): Promise<MyPlusLead[]> {
-  let authToken: string;
-  try {
-    authToken = await authenticateSubAccount(subEmail, subPassword);
-  } catch (subErr: any) {
-    // Sub-account auth failed — fall back to enterprise token.
-    // This handles cases where the stored password no longer matches MPL
-    // (e.g. accounts created before the credential-save bug was fixed).
-    console.warn(`[MyPlusLeads] Sub-account auth failed (${subErr.message}). Falling back to enterprise auth.`);
-    authToken = await authenticateEnterprise();
-  }
+  const authToken = await authenticateSubAccount(subEmail, subPassword);
 
   const res = await fetch(`${BASE_URL}/listings`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -226,9 +217,15 @@ export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncR
   }
 
   const password = decrypt(config.subAccountPassword);
-  // fetchListings already falls back to enterprise auth if sub-account auth fails.
-  // If subAccountId is available it's passed for per-account scoping.
-  const listings = await fetchListings(config.subAccountEmail, password);
+
+  let listings: MyPlusLead[];
+  try {
+    listings = await fetchListings(config.subAccountEmail, password);
+  } catch (err: any) {
+    if (!config.subAccountId) throw err;
+    console.warn(`[MyPlusLeads] fetchListings failed (${err.message}), retrying via fetchListingsForAccount`);
+    listings = await fetchListingsForAccount(config.subAccountId);
+  }
   let imported = 0;
   let skipped = 0;
 
