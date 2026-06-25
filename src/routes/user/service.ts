@@ -399,9 +399,14 @@ export async function updateUserInDb(
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throwHttp(404, "User not found");
 
+    const data: typeof payload = { ...payload };
+    if (data.password) {
+        data.password = await bcrypt.hash(data.password, 10);
+    }
+
     return prisma.user.update({
         where: { id },
-        data: payload,
+        data,
         select: {
             id: true,
             fullName: true,
