@@ -86,7 +86,7 @@ router.use("/reports", protectRoute, reportRoutes)
 
 
 router.use("/calling", callingRoutes)
-router.use("/report", protectRoute, checkRole(["OWNER"]), SuperAdminReportsRoutes)
+router.use("/report", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), SuperAdminReportsRoutes)
 router.use("/super-admin/caller-ids", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), superAdminCallerIdRoutes)
 
 router.use("/billing", billingRouter)
