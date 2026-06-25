@@ -1004,7 +1004,7 @@ export const upgradeSubscription = async (req: Request, res: Response): Promise<
     let newPlanKey = oldPlanKey;
     let newAmount = oldAmount;
 
-    const updatePayload: Stripe.SubscriptionUpdateParams = {
+    const updatePayload: Record<string, any> = {
       cancel_at_period_end: false,
     };
 
