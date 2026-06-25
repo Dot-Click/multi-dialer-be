@@ -931,6 +931,47 @@ export const getAllSubscriptionsAdmin = async (req: Request, res: Response): Pro
   }
 };
 
+export const cancelSubscription = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+
+    // Find the user's active subscription
+    const dbSub = await prisma.userSubscription.findFirst({
+      where: { userId, status: "ACTIVE" },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!dbSub) { errorResponse(res, "No active subscription found", 404); return; }
+
+    // Cancel on Stripe at period end so the user keeps access until the billing cycle ends
+    if (dbSub.stripeSubscriptionId) {
+      const stripeSub = await stripe.subscriptions.retrieve(dbSub.stripeSubscriptionId);
+      if (stripeSub.status !== "canceled") {
+        await stripe.subscriptions.update(dbSub.stripeSubscriptionId, {
+          cancel_at_period_end: true,
+        });
+      }
+    }
+
+    // Mark locally as CANCELLED
+    await prisma.userSubscription.update({
+      where: { id: dbSub.id },
+      data: { status: "CANCELLED" },
+    });
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isSubscribed: false },
+    });
+
+    successResponse(res, 200, "Subscription cancelled successfully", null);
+  } catch (error: any) {
+    console.error("[Billing] Cancel Subscription Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 export const updatePlan = async (req: Request, res: Response): Promise<void> => {
   try {
     const productId = req.params.plan || "";
