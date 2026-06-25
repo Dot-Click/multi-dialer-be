@@ -113,9 +113,14 @@ export const setUserPassword = async (req: Request, res: Response): Promise<void
         if (!id) { errorResponse(res, "User id is required", 400); return; }
         if (!password || password.length < 8) { errorResponse(res, "Password must be at least 8 characters", 400); return; }
 
+        const headers = new Headers();
+        if (req.headers.cookie) headers.set("cookie", req.headers.cookie);
+        if (req.headers["user-agent"]) headers.set("user-agent", req.headers["user-agent"] as string);
+        if (req.headers.authorization) headers.set("authorization", req.headers.authorization);
+
         await auth.api.setUserPassword({
             body: { userId: id, newPassword: password },
-            headers: req.headers as any,
+            headers,
         });
 
         successResponse(res, 200, "Password updated successfully", null);
