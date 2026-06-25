@@ -11,7 +11,7 @@ router.post("/plans", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), createP
 router.put("/plans/:plan", protectRoute, checkRole(["OWNER"]), updatePlan);
 router.delete("/plans/:plan", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), deletePlan);
 router.put("/subscription/:subscriptionId/plan", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), changeSubscriptionPlan);
-router.get("/invoices/all", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), getAllInvoices);
+router.get("/invoices/all", protectRoute, getAllInvoices);
 router.get("/invoices/by-user/:userId", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), getInvoicesByUser);
 router.get("/invoices", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), getInvoicesByCustomer);
 router.get("/invoices/:invoiceId/card", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), getInvoiceCard);
