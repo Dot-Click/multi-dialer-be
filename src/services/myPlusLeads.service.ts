@@ -8,23 +8,77 @@ import { PhoneType } from "@prisma/client";
 const BASE_URL = "https://api.myplusleads.com";
 
 export interface MyPlusLead {
-  id: string;
-  address: string;
-  city: string;
-  state: string;
-  zip: string;
-  ownerAddress?: string;
-  ownerCity?: string;
-  ownerState?: string;
-  ownerZip?: string;
-  estimatedValue?: number;
-  mlsNumber?: string;
-  contacts: Array<{
-    firstName: string;
-    lastName: string;
-    phones: Array<{ number: string; type: string }>;
-    emails: string[];
-  }>;
+  listingId: number;
+  processedDate?: string;
+  propertyAddress?: {
+    streetAddress?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    county?: string;
+  };
+  owner?: {
+    firstName?: string;
+    lastName?: string;
+    name?: string;
+    name2?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    totalValue?: string;
+    occupied?: boolean;
+  };
+  propertyDetails?: {
+    mlsNumber?: string;
+    normalizedStatus?: string;
+    status?: string;
+    price?: string;
+    bedrooms?: string;
+    bathrooms?: string;
+    square_footage?: string;
+    propertyType?: string;
+  };
+  contact1?: {
+    name?: string;
+    phone1?: string;
+    phone2?: string;
+    email?: string;
+    dnc1?: boolean;
+    dnc2?: boolean;
+  };
+  contact2?: {
+    name?: string;
+    phone1?: string;
+    phone2?: string;
+    email?: string;
+    dnc1?: boolean;
+    dnc2?: boolean;
+  };
+  augmentedData1?: AugmentedContact;
+  augmentedData2?: AugmentedContact;
+  augmentedData3?: AugmentedContact;
+  augmentedData4?: AugmentedContact;
+  augmentedData5?: AugmentedContact;
+}
+
+interface AugmentedContact {
+  augmentedName1?: string;
+  augmentedPhone1?: string;
+  augmentedPhone2?: string;
+  augmentedPhone3?: string;
+  augmentedPhone4?: string;
+  augmentedEmail1?: string;
+  augmentedEmail2?: string;
+  augmentedEmail3?: string;
+  lineType1?: string;
+  lineType2?: string;
+  lineType3?: string;
+  lineType4?: string;
+  dnc1?: boolean;
+  dnc2?: boolean;
+  dnc3?: boolean;
+  dnc4?: boolean;
 }
 
 export type MyPlusLeadsSyncResult = {
@@ -172,9 +226,8 @@ export async function authenticateSubAccount(email: string, password: string): P
 export async function fetchListings(subEmail: string, subPassword: string): Promise<MyPlusLead[]> {
   const authToken = await authenticateSubAccount(subEmail, subPassword);
 
-  const res = await fetch(`${BASE_URL}/listings`, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  });
+  // MPL requires the token as a query param — Authorization header returns 401.
+  const res = await fetch(`${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}`);
 
   if (!res.ok) {
     throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
@@ -187,16 +240,12 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
 export async function fetchListingsForAccount(subAccountId: string): Promise<MyPlusLead[]> {
   const authToken = await authenticateEnterprise();
 
-  // Enterprise-scoped endpoint — mirrors the pattern of all other enterprise
-  // management calls (/enterprise/account, /enterprise/account/status).
-  // The plain /listings endpoint only accepts sub-account tokens.
-  const url = `${BASE_URL}/enterprise/listings?accountId=${subAccountId}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  });
+  // MPL requires the token as a query param. Enterprise token returns all listings;
+  // used only as a fallback when sub-account credentials are unavailable.
+  const res = await fetch(`${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}`);
 
   if (!res.ok) {
-    throw new MyPlusLeadsError(`MyPlusLeads enterprise listings fetch failed: ${await responseErrorMessage(res)}`, 502);
+    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
   }
 
   const data = await res.json();
@@ -220,80 +269,129 @@ export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncR
 
   const password = decrypt(config.subAccountPassword);
 
-  let listings: MyPlusLead[];
-  try {
-    listings = await fetchListings(config.subAccountEmail, password);
-  } catch (err: any) {
-    if (!config.subAccountId) throw err;
-    console.warn(`[MyPlusLeads] fetchListings failed (${err.message}), retrying via fetchListingsForAccount`);
-    listings = await fetchListingsForAccount(config.subAccountId);
-  }
+  const listings = await fetchListings(config.subAccountEmail, password);
   let imported = 0;
   let skipped = 0;
 
+  // Cache of status → ContactList (created on first encounter per sync run).
+  const listCache = new Map<string, { id: string }>();
+
+  const getOrCreateList = async (status: string) => {
+    if (listCache.has(status)) return listCache.get(status)!;
+    let list = await prisma.contactList.findFirst({
+      where: { userId, name: status, folderId: null },
+    });
+    if (!list) {
+      list = await prisma.contactList.create({
+        data: { name: status, userId, contactIds: [] },
+      });
+    }
+    listCache.set(status, list);
+    return list;
+  };
+
   for (const listingChunk of chunkArray(listings, 50)) {
-    // FIX: keep the sync moving in batches while avoiding a giant burst of DB writes.
     for (const listing of listingChunk) {
-      const primaryContact = listing.contacts[0];
-      if (!primaryContact) {
+      const contact1 = listing.contact1;
+      if (!contact1?.name) {
         skipped++;
         continue;
       }
 
-      const source = listing.mlsNumber ?? listing.id;
-      const existing = await prisma.contact.findFirst({
-        where: { userId, source },
-      });
+      const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
+      const existing = await prisma.contact.findFirst({ where: { userId, source } });
       if (existing) {
         skipped++;
         continue;
       }
 
-      const fullName = `${primaryContact.firstName} ${primaryContact.lastName}`.trim() || "Unknown Contact";
+      const status = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
+      const prop = listing.propertyAddress;
+      const owner = listing.owner;
+      const list = await getOrCreateList(status);
 
       const newContact = await prisma.contact.create({
         data: {
-          fullName,
+          fullName: contact1.name,
           userId,
-          address: listing.address,
-          city: listing.city,
-          state: listing.state,
-          zip: listing.zip,
-          mailingAddress: listing.ownerAddress,
-          mailingCity: listing.ownerCity,
-          mailingState: listing.ownerState,
-          mailingZip: listing.ownerZip,
+          address: prop?.streetAddress ?? null,
+          city: prop?.city ?? null,
+          state: prop?.state ?? null,
+          zip: prop?.zip ?? null,
+          mailingAddress: owner?.address ?? null,
+          mailingCity: owner?.city ?? null,
+          mailingState: owner?.state ?? null,
+          mailingZip: owner?.zip ?? null,
           source,
-          tags: ["MyPlusLeads", "Expired"],
+          tags: ["MyPlusLeads", status],
         },
       });
+
+      await prisma.contactList.update({
+        where: { id: list.id },
+        data: { contactIds: { push: newContact.id } },
+      });
+
       imported++;
 
-      const phoneRows = [
-        ...primaryContact.phones.map((phone) => ({
-          contactId: newContact.id,
-          number: phone.number,
-          type: phone.type === "mobile" ? PhoneType.MOBILE : PhoneType.TELEPHONE,
-        })),
-        ...(listing.contacts[1]?.phones ?? []).map((phone) => ({
-          contactId: newContact.id,
-          number: phone.number,
-          type: phone.type === "mobile" ? PhoneType.MOBILE : PhoneType.TELEPHONE,
-        })),
-      ];
+      // Collect phones from contact1, contact2, and augmented data sets
+      const lineTypeToPhoneType = (lt?: string | null) =>
+        lt === "M" ? PhoneType.MOBILE : PhoneType.TELEPHONE;
 
-      if (phoneRows.length > 0) {
-        await prisma.contactPhone.createMany({ data: phoneRows, skipDuplicates: true });
+      const phoneEntries: { number: string; type: PhoneType }[] = [];
+      const seen = new Set<string>();
+      const addPhone = (number?: string | null, lineType?: string | null) => {
+        const n = number?.replace(/\D/g, "");
+        if (n && n.length >= 10 && !seen.has(n)) {
+          seen.add(n);
+          phoneEntries.push({ number: n, type: lineTypeToPhoneType(lineType) });
+        }
+      };
+
+      addPhone(contact1.phone1);
+      addPhone(contact1.phone2);
+      addPhone(listing.contact2?.phone1);
+      addPhone(listing.contact2?.phone2);
+
+      for (const aug of [listing.augmentedData1, listing.augmentedData2, listing.augmentedData3, listing.augmentedData4, listing.augmentedData5]) {
+        if (!aug) continue;
+        addPhone(aug.augmentedPhone1, aug.lineType1);
+        addPhone(aug.augmentedPhone2, aug.lineType2);
+        addPhone(aug.augmentedPhone3, aug.lineType3);
+        addPhone(aug.augmentedPhone4, aug.lineType4);
       }
 
-      const emailRows = primaryContact.emails.map((email, index) => ({
-        contactId: newContact.id,
-        email,
-        isPrimary: index === 0,
-      }));
+      if (phoneEntries.length > 0) {
+        await prisma.contactPhone.createMany({
+          data: phoneEntries.map((p) => ({ contactId: newContact.id, number: p.number, type: p.type })),
+          skipDuplicates: true,
+        });
+      }
 
-      if (emailRows.length > 0) {
-        await prisma.contactEmail.createMany({ data: emailRows, skipDuplicates: true });
+      // Collect emails from contact1, contact2, and augmented data
+      const emailEntries: string[] = [];
+      const seenEmails = new Set<string>();
+      const addEmail = (email?: string | null) => {
+        if (email && email.includes("@") && !seenEmails.has(email.toLowerCase())) {
+          seenEmails.add(email.toLowerCase());
+          emailEntries.push(email);
+        }
+      };
+
+      addEmail(contact1.email);
+      addEmail(listing.contact2?.email);
+      for (const aug of [listing.augmentedData1, listing.augmentedData2, listing.augmentedData3, listing.augmentedData4, listing.augmentedData5]) {
+        if (!aug) continue;
+        addEmail(aug.augmentedEmail1);
+        addEmail(aug.augmentedEmail2);
+        addEmail(aug.augmentedEmail3);
+      }
+
+      if (emailEntries.length > 0) {
+        await prisma.contactEmail.createMany({
+          data: emailEntries.map((email, i) => ({ contactId: newContact.id, email, isPrimary: i === 0 })),
+          skipDuplicates: true,
+        });
       }
     }
   }
@@ -351,6 +449,15 @@ export async function createMyPlusLeadsAccount(params: {
   const data = await res.json();
   console.log('[MyPlusLeads] Create account response status:', res.status);
   console.log('[MyPlusLeads] Create account response body:', JSON.stringify(data));
+
+  // MPL returns HTTP 200 even when creation fails — check the payload.
+  if (data.created === false) {
+    throw new MyPlusLeadsError(
+      `MyPlusLeads account already exists or creation rejected: ${data.error ?? "unknown"}`,
+      409,
+    );
+  }
+
   return { accountId: data.accountId };
 }
 
@@ -383,10 +490,10 @@ export async function repairAndSyncUser(userId: string): Promise<MyPlusLeadsSync
   const defaultBaseZip = envConfig.MYPLUSLEADS_DEFAULT_BASE_ZIP || "78701";
 
   let accountId: string;
+  let passwordToSave = newPassword;
+  let passwordChanged = true;
 
   try {
-    // Try creating the account (will succeed if it doesn't exist yet, or if MPL
-    // allows re-creation with the same email under the enterprise).
     const result = await createMyPlusLeadsAccount({
       email: subEmail,
       password: newPassword,
@@ -402,46 +509,56 @@ export async function repairAndSyncUser(userId: string): Promise<MyPlusLeadsSync
     accountId = String(result.accountId);
     console.log(`[MyPlusLeads Repair] Created new sub-account for userId=${userId}, accountId=${accountId}`);
   } catch (createErr: any) {
-    // Account likely already exists — try updating the password via enterprise
-    console.warn(`[MyPlusLeads Repair] Create failed (${createErr.message}), trying enterprise password update...`);
-    const authToken = await authenticateEnterprise();
-    const existing = await prisma.myPlusLeadsConfig.findUnique({ where: { userId }, select: { subAccountId: true } });
-    if (!existing?.subAccountId) throw new MyPlusLeadsError("Cannot repair: no subAccountId on record.", 400);
+    // Account already exists — retrieve the existing accountId from DB.
+    console.warn(`[MyPlusLeads Repair] Create failed (${createErr.message}), account exists. Attempting password update...`);
+    const existing = await prisma.myPlusLeadsConfig.findUnique({
+      where: { userId },
+      select: { subAccountId: true, subAccountPassword: true },
+    });
+    if (!existing?.subAccountId || existing.subAccountId === "null") {
+      throw new MyPlusLeadsError("Cannot repair: no valid subAccountId on record.", 400);
+    }
     accountId = existing.subAccountId;
 
+    // Try to update the password on MyPlus.
+    const authToken = await authenticateEnterprise();
     const updateRes = await fetch(`${BASE_URL}/enterprise/account`, {
-      method: "PUT",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ authToken, accountId, password: newPassword }),
     });
+
     if (!updateRes.ok) {
-      const msg = await responseErrorMessage(updateRes);
-      throw new MyPlusLeadsError(`Enterprise password update failed: ${msg}`, 502);
+      // Password update not supported — keep using the existing stored password
+      // so we don't drift the DB out of sync with MyPlus.
+      console.warn(`[MyPlusLeads Repair] Password update failed (${await responseErrorMessage(updateRes)}). Keeping existing credentials.`);
+      passwordToSave = existing.subAccountPassword ? decrypt(existing.subAccountPassword) : newPassword;
+      passwordChanged = false;
+    } else {
+      console.log(`[MyPlusLeads Repair] Password updated for accountId=${accountId}`);
     }
-    console.log(`[MyPlusLeads Repair] Password updated for accountId=${accountId}`);
   }
 
-  // Save the fresh credentials to DB — upsert so it works for both FAILED and CONNECTED states
   await prisma.myPlusLeadsConfig.upsert({
     where: { userId },
     create: {
       userId,
       subAccountEmail: subEmail,
-      subAccountPassword: encrypt(newPassword),
+      subAccountPassword: encrypt(passwordToSave),
       subAccountId: accountId,
       status: "CONNECTED",
       errorMessage: null,
     },
     update: {
       subAccountEmail: subEmail,
-      subAccountPassword: encrypt(newPassword),
+      subAccountPassword: encrypt(passwordToSave),
       subAccountId: accountId,
       status: "CONNECTED",
       errorMessage: null,
     },
   });
 
-  console.log(`[MyPlusLeads Repair] Credentials saved for userId=${userId}. Starting sync...`);
+  console.log(`[MyPlusLeads Repair] Credentials saved for userId=${userId} (passwordChanged=${passwordChanged}). Starting sync...`);
   return syncLeadsForUser(userId);
 }
 
