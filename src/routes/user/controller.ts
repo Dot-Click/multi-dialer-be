@@ -2,7 +2,8 @@ import { Request, Response } from "express";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { validateData } from "../../middlewares/vald.middleware";
 import { createUserSchema, updateUserSchema } from "../../schemas/user.schema";
-import { getAllUsersFromDb, createUserInDb, updateUserInDb, setUserPasswordInDb, deleteUserFromDb, deleteAllUsersFromDb, updateUserSubscriptionInDb } from "./service";
+import { getAllUsersFromDb, createUserInDb, updateUserInDb, deleteUserFromDb, deleteAllUsersFromDb, updateUserSubscriptionInDb } from "./service";
+import { auth } from "../../lib/auth";
 import { generateSecurePassword } from "../../utils/password";
 import { uploadToR2 } from "../../utils/r2-uploader";
 
@@ -111,7 +112,12 @@ export const setUserPassword = async (req: Request, res: Response): Promise<void
         const { password } = req.body;
         if (!id) { errorResponse(res, "User id is required", 400); return; }
         if (!password || password.length < 8) { errorResponse(res, "Password must be at least 8 characters", 400); return; }
-        await setUserPasswordInDb(id, password);
+
+        await auth.api.setUserPassword({
+            body: { userId: id, newPassword: password },
+            headers: req.headers as any,
+        });
+
         successResponse(res, 200, "Password updated successfully", null);
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);

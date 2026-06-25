@@ -384,24 +384,6 @@ export async function getAllUsersFromDb(where: any = {}) {
     });
 }
 
-export async function setUserPasswordInDb(id: string, newPassword: string) {
-    const existing = await prisma.user.findUnique({ where: { id } });
-    if (!existing) throwHttp(404, "User not found");
-
-    const hashed = await bcrypt.hash(newPassword, 10);
-
-    await prisma.$transaction([
-        prisma.user.update({
-            where: { id },
-            data: { password: hashed },
-        }),
-        prisma.account.updateMany({
-            where: { userId: id, providerId: "credential" },
-            data: { password: hashed },
-        }),
-    ]);
-}
-
 export async function updateUserInDb(
     id: string,
     payload: Partial<{
@@ -417,14 +399,9 @@ export async function updateUserInDb(
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throwHttp(404, "User not found");
 
-    const data: typeof payload = { ...payload };
-    if (data.password) {
-        data.password = await bcrypt.hash(data.password, 10);
-    }
-
     return prisma.user.update({
         where: { id },
-        data,
+        data: payload,
         select: {
             id: true,
             fullName: true,
