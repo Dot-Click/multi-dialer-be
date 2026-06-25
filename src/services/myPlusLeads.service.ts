@@ -187,14 +187,16 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
 export async function fetchListingsForAccount(subAccountId: string): Promise<MyPlusLead[]> {
   const authToken = await authenticateEnterprise();
 
-  // Try with accountId query param first (enterprise-level per-account fetch)
-  const urlWithId = `${BASE_URL}/listings?accountId=${subAccountId}`;
-  const res = await fetch(urlWithId, {
+  // Enterprise-scoped endpoint — mirrors the pattern of all other enterprise
+  // management calls (/enterprise/account, /enterprise/account/status).
+  // The plain /listings endpoint only accepts sub-account tokens.
+  const url = `${BASE_URL}/enterprise/listings?accountId=${subAccountId}`;
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   });
 
   if (!res.ok) {
-    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
+    throw new MyPlusLeadsError(`MyPlusLeads enterprise listings fetch failed: ${await responseErrorMessage(res)}`, 502);
   }
 
   const data = await res.json();
@@ -373,7 +375,7 @@ export async function repairAndSyncUser(userId: string): Promise<MyPlusLeadsSync
   });
   if (!user) throw new MyPlusLeadsError("User not found.", 404);
 
-  const subEmail = `slingvo+${userId}@slingvo.com`;
+  const subEmail = `slingvo.${userId.replace(/-/g, "")}@slingvo.com`;
   const newPassword = crypto.randomBytes(12).toString("hex");
   const nameParts = (user.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
   const firstName = nameParts[0] || "User";

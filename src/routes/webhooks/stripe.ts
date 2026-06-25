@@ -288,7 +288,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
         console.log(`[Stripe Webhook] UserSubscription created for ${email}: plan=${planName}, cycle=${billingCycle}`);
 
-        const subEmail = `slingvo+${newUser.id}@slingvo.com`;
+        const subEmail = `slingvo.${newUser.id.replace(/-/g, "")}@slingvo.com`;
         const subPassword = crypto.randomBytes(12).toString("hex");
         const nameParts = (newUser.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
         const firstName = nameParts[0] || "User";
@@ -305,8 +305,8 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             address: "123 Main St",
             city: "Austin",
             state: "TX",
-            zip: defaultBaseZip || "7870",
-            baseZip: defaultBaseZip || "7870",
+            zip: defaultBaseZip || "78701",
+            baseZip: defaultBaseZip || "78701",
           });
 
           await prisma.myPlusLeadsConfig.create({
@@ -324,8 +324,13 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             .then((result) => {
               console.log(`[MyPlusLeads] Initial sync for ${email}: imported ${result.imported}, skipped ${result.skipped}`);
             })
-            .catch((err) => {
-              console.error(`[MyPlusLeads] Initial sync failed for ${email}:`, err?.message ?? err);
+            .catch(async (err) => {
+              const message = err?.message ?? String(err);
+              console.error(`[MyPlusLeads] Initial sync failed for ${email}:`, message);
+              await prisma.myPlusLeadsConfig.update({
+                where: { userId: newUser.id },
+                data: { errorMessage: message },
+              }).catch(() => undefined);
             });
         } catch (err) {
           console.error("[Stripe Webhook] MyPlusLeads account creation failed:", err);
