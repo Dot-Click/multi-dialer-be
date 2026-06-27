@@ -8,6 +8,7 @@ import {
   listTasksInDb,
   updateTaskInDb,
 } from "./service";
+import { syncTaskToGoogle, deleteTaskFromGoogle } from "../calendarSync/service";
 
 const TASK_STATUSES = ["OPEN", "IN_PROGRESS", "DONE", "CANCELLED"] as const;
 const canManageOthers = (role?: string) =>
@@ -51,6 +52,17 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
       dueAt: new Date(dueAt),
       notes: notes ?? null,
     });
+
+    // Fire-and-forget Google Calendar sync
+    syncTaskToGoogle(agentId, task)
+      .then((externalEventId) => {
+        if (externalEventId) {
+          prisma.task
+            .update({ where: { id: task.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
+            .catch(console.error);
+        }
+      })
+      .catch(console.error);
 
     successResponse(res, 201, "Task created", task);
   } catch (error: any) {
@@ -131,6 +143,14 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
     }
 
     const updated = await updateTaskInDb(id, data);
+
+    // Fire-and-forget: sync update or remove when done/cancelled
+    if ((status === "DONE" || status === "CANCELLED") && task.externalEventId) {
+      deleteTaskFromGoogle(task.agentId, task.externalEventId).catch(console.error);
+    } else if (dueAt !== undefined && task.externalEventId) {
+      syncTaskToGoogle(task.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
+    }
+
     successResponse(res, 200, "Task updated", updated);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
@@ -154,6 +174,11 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
     }
 
     const updated = await updateTaskInDb(id, { status: "CANCELLED" });
+
+    if (task.externalEventId) {
+      deleteTaskFromGoogle(task.agentId, task.externalEventId).catch(console.error);
+    }
+
     successResponse(res, 200, "Task cancelled", updated);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);

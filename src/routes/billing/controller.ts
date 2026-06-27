@@ -495,6 +495,9 @@ function billingStatusToApi(s: string): string {
 // Map a Billing ledger row (+ its user) into the invoice shape the frontend expects.
 function mapBillingRow(b: any) {
   const paid = b.status === "PAID";
+  const latestSubStatus = (b.user?.userSubscriptions?.[0]?.status ?? "").toUpperCase();
+  const isCancelled = latestSubStatus === "CANCELLED" || latestSubStatus === "CANCELED";
+  const isOnTrial = b.user?.trialStatus === "ACTIVE" && !b.user?.isSubscribed && !isCancelled;
   return {
     id: b.stripeInvoiceId ?? b.id, // detail/PDF actions key off the Stripe invoice id
     number: b.invoiceNumber,
@@ -510,6 +513,7 @@ function mapBillingRow(b: any) {
     amount_due: paid ? 0 : b.amount,
     currency: b.currency ?? "usd",
     status: billingStatusToApi(b.status),
+    isOnTrial,
     createdAt: b.date.toISOString(),
     created: b.date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
     hosted_invoice_url: b.hostedInvoiceUrl ?? null,
@@ -523,7 +527,7 @@ export const getAllInvoices = async (req: Request, res: Response): Promise<void>
 
     const rows = await prisma.billing.findMany({
       where: { userId },
-      include: { user: { select: { fullName: true, email: true } } },
+      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true } } } } },
       orderBy: { date: "desc" },
     });
 
@@ -635,7 +639,7 @@ export const getInvoicesByUser = async (req: Request, res: Response): Promise<vo
     // Served from the local Billing ledger for this user.
     const rows = await prisma.billing.findMany({
       where: { userId },
-      include: { user: { select: { fullName: true, email: true } } },
+      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true } } } } },
       orderBy: { date: "desc" },
     });
 
@@ -899,7 +903,7 @@ export const changeSubscriptionPlan = async (req: Request, res: Response): Promi
 export const getAllInvoicesAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
     const rows = await prisma.billing.findMany({
-      include: { user: { select: { fullName: true, email: true } } },
+      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true } } } } },
       orderBy: { date: "desc" },
     });
 
@@ -962,7 +966,7 @@ export const cancelSubscription = async (req: Request, res: Response): Promise<v
 
     await prisma.user.update({
       where: { id: userId },
-      data: { isSubscribed: false },
+      data: { isSubscribed: false, trialStatus: "EXPIRED" as any },
     });
 
     successResponse(res, 200, "Subscription cancelled successfully", null);

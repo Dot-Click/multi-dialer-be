@@ -278,6 +278,12 @@ export async function getCollectedRevenueGrowthInDb() {
   return results;
 }
 
+function normalizeSubStatus(status: string): string {
+  const upper = status.toUpperCase();
+  if (upper === "CANCELED" || upper === "CANCEL") return "CANCELLED";
+  return upper;
+}
+
 export async function getBillingReportDetailInDb() {
   // Pull all billing rows, newest first, with user + latest subscription status.
   const billingRows = await prisma.billing.findMany({
@@ -314,7 +320,7 @@ export async function getBillingReportDetailInDb() {
         userName: row.user.fullName || "N/A",
         email: row.user.email,
         plan: row.planName || row.plan || "No Plan",
-        status: row.user.userSubscriptions[0]?.status || "PENDING",
+        status: normalizeSubStatus(row.user.userSubscriptions[0]?.status || "PENDING"),
         invoiceStatus: row.status,
         totalBilled: 0,
         lastPaymentDate: null,

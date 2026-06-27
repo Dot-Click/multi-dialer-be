@@ -8,6 +8,7 @@ import {
   listCallbacksInDb,
   updateCallbackInDb,
 } from "./service";
+import { syncCallbackToGoogle, deleteCallbackFromGoogle } from "../calendarSync/service";
 
 const CALLBACK_STATUSES = ["PENDING", "DUE", "COMPLETED", "MISSED", "CANCELLED"] as const;
 const canManageOthers = (role?: string) =>
@@ -47,6 +48,17 @@ export const createCallback = async (req: Request, res: Response): Promise<void>
       scheduledAt: new Date(scheduledAt),
       notes: notes ?? null,
     });
+
+    // Fire-and-forget Google Calendar sync
+    syncCallbackToGoogle(agentId, callback)
+      .then((externalEventId) => {
+        if (externalEventId) {
+          prisma.callback
+            .update({ where: { id: callback.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
+            .catch(console.error);
+        }
+      })
+      .catch(console.error);
 
     successResponse(res, 201, "Callback created", callback);
   } catch (error: any) {
@@ -150,6 +162,14 @@ export const updateCallback = async (req: Request, res: Response): Promise<void>
     if (notes !== undefined) data.notes = notes;
 
     const updated = await updateCallbackInDb(id, data);
+
+    // Fire-and-forget: remove from Google Calendar when cancelled/completed
+    if ((status === "CANCELLED" || status === "COMPLETED") && callback.externalEventId) {
+      deleteCallbackFromGoogle(callback.agentId, callback.externalEventId).catch(console.error);
+    } else if (scheduledAt !== undefined && callback.externalEventId) {
+      syncCallbackToGoogle(callback.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
+    }
+
     successResponse(res, 200, "Callback updated", updated);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
@@ -173,6 +193,11 @@ export const deleteCallback = async (req: Request, res: Response): Promise<void>
     }
 
     const updated = await updateCallbackInDb(id, { status: "CANCELLED" });
+
+    if (callback.externalEventId) {
+      deleteCallbackFromGoogle(callback.agentId, callback.externalEventId).catch(console.error);
+    }
+
     successResponse(res, 200, "Callback cancelled", updated);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);

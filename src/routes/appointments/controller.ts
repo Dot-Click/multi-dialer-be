@@ -8,6 +8,10 @@ import {
   listAppointmentsInDb,
   updateAppointmentInDb,
 } from "./service";
+import {
+  syncAppointmentToGoogle,
+  deleteAppointmentFromGoogle,
+} from "../calendarSync/service";
 
 const APPOINTMENT_STATUSES = ["SET", "MET", "CANCELLED", "NO_SHOW"] as const;
 const canManageOthers = (role?: string) =>
@@ -58,6 +62,17 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       location: location ?? null,
       meetingLink: meetingLink ?? null,
     });
+
+    // Fire-and-forget Google Calendar sync
+    syncAppointmentToGoogle(agentId, appointment)
+      .then((externalEventId) => {
+        if (externalEventId) {
+          prisma.appointment
+            .update({ where: { id: appointment.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
+            .catch(console.error);
+        }
+      })
+      .catch(console.error);
 
     successResponse(res, 201, "Appointment created", appointment);
   } catch (error: any) {
@@ -156,6 +171,22 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
     const releaseContactId = status === "CANCELLED" ? appointment.contactId : null;
 
     const updated = await updateAppointmentInDb(id, data, releaseContactId);
+
+    // Fire-and-forget: sync update or delete from Google Calendar
+    if (status === "CANCELLED" && appointment.externalEventId) {
+      deleteAppointmentFromGoogle(appointment.agentId, appointment.externalEventId).catch(console.error);
+    } else if (appointment.externalEventId || true) {
+      syncAppointmentToGoogle(appointment.agentId, { ...updated, externalEventId: updated.externalEventId })
+        .then((externalEventId) => {
+          if (externalEventId && externalEventId !== updated.externalEventId) {
+            prisma.appointment
+              .update({ where: { id: updated.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
+              .catch(console.error);
+          }
+        })
+        .catch(console.error);
+    }
+
     successResponse(res, 200, "Appointment updated", updated);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
@@ -179,6 +210,12 @@ export const deleteAppointment = async (req: Request, res: Response): Promise<vo
     }
 
     const updated = await updateAppointmentInDb(id, { status: "CANCELLED" }, appointment.contactId);
+
+    // Fire-and-forget: remove from Google Calendar
+    if (appointment.externalEventId) {
+      deleteAppointmentFromGoogle(appointment.agentId, appointment.externalEventId).catch(console.error);
+    }
+
     successResponse(res, 200, "Appointment cancelled", updated);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);

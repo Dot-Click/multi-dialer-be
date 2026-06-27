@@ -43,6 +43,7 @@ import superAdminCallerIdRoutes from "./super-admin/caller-ids"
 import { checkFeatureLocked } from "../middlewares/featureLock.middleware";
 import { envConfig } from "@/lib/config";
 import paymentRoutes from "./payment";
+import calendarSyncRoutes from "./calendarSync";
 
 const router = Router()
 
@@ -94,6 +95,7 @@ router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
 router.use("/email-history", protectRoute, emailHistoryRoutes)
 router.use("/payment", paymentRoutes)
+router.use("/calendar-sync", calendarSyncRoutes)
 router.use("/a2p", a2pRoutes)
 
 // Integrations & Webhooks

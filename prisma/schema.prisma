@@ -1252,10 +1252,12 @@ model Calendar {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  status       AppointmentStatus @default(SET)
-  contact      Contact?          @relation(fields: [contactId], references: [id])
-  contactId    String?
-  reminderSent Boolean           @default(false)
+  status           AppointmentStatus @default(SET)
+  contact          Contact?          @relation(fields: [contactId], references: [id])
+  contactId        String?
+  reminderSent     Boolean           @default(false)
+  externalEventId  String?           @unique
+  externalProvider ExternalProvider  @default(NONE)
 
   @@map("calendar")
 }
@@ -1278,6 +1280,9 @@ model Callback {
   completedAt DateTime?
   status      CallbackStatus @default(PENDING)
   notes       String?
+
+  externalEventId  String?          @unique
+  externalProvider ExternalProvider @default(NONE)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1331,6 +1336,9 @@ model Task {
   status TaskStatus @default(OPEN)
   reminderSent Boolean @default(false)
 
+  externalEventId  String?          @unique
+  externalProvider ExternalProvider @default(NONE)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1348,7 +1356,8 @@ model ExternalCalendarToken {
   accessToken  String
   refreshToken String
   expiresAt    DateTime
-  calendarId   String? // external calendar id to sync into
+  calendarId   String?
+  timezone     String  @default("UTC")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
