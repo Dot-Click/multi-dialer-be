@@ -6,6 +6,7 @@ const router = Router();
 
 router.get("/portal", protectRoute, getBillingPortal);
 router.get("/subscriptions", protectRoute, getSubscriptions);
+router.get("/plans/public", getPlans);
 router.get("/plans", protectRoute, getPlans);
 router.post("/plans", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), createPlan);
 router.put("/plans/:plan", protectRoute, checkRole(["OWNER"]), updatePlan);
