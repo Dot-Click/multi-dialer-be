@@ -111,53 +111,56 @@ export const integrationController = {
         return;
       }
 
-      const { recipientName, address1, address2, city, state, postcode, country, message, template, automationId } = req.body;
+      const { recipientName, address1, address2, city, state, postcode, country, pdfUrl, groupId } = req.body;
 
-      if (!recipientName || !address1 || !city || !state || !postcode || !country) {
-        res.status(400).json({ error: "Recipient name, address, city, state, postcode and country are required." });
+      if (!recipientName || !address1 || !city || !postcode || !country) {
+        res.status(400).json({ error: "Recipient name, address, city, postcode and country are required." });
         return;
       }
 
-      // Build form-data for Stannp API
+      if (!groupId && !pdfUrl) {
+        res.status(400).json({ error: "A PDF URL is required for one-off letter sends." });
+        return;
+      }
+
       const FormData = (await import("form-data")).default;
       const axios = (await import("axios")).default;
+      const auth = { username: apiKey, password: "" };
 
       const form = new FormData();
       form.append("test", "0");
-      
-      if (automationId) {
-        // Trigger Automation (Add to Group)
-        form.append("group_id", automationId);
+
+      if (groupId) {
+        // Add recipient to the group — Stannp fires any automation linked to that group automatically
+        form.append("group_id", groupId);
         form.append("firstname", recipientName.split(" ")[0] || recipientName);
         form.append("lastname", recipientName.split(" ").slice(1).join(" ") || "");
         form.append("address1", address1);
         if (address2) form.append("address2", address2);
         form.append("city", city);
-        form.append("region", state); // Stannp's region field = state/province
         form.append("postcode", postcode);
         form.append("country", country);
+        form.append("on_duplicate", "update");
 
-        const stannpRes = await axios.post("https://dash.stannp.com/api/v1/recipients/new", form, {
-          auth: { username: apiKey, password: "" },
+        const stannpRes = await axios.post("https://api-eu1.stannp.com/v1/recipients/new", form, {
+          auth,
           headers: form.getHeaders(),
         });
 
         res.status(200).json({ success: true, data: stannpRes.data });
       } else {
-        // General Letter Creation (Fallback)
+        // One-off letter — requires a PDF file URL
+        form.append("file", pdfUrl);
         form.append("recipient[firstname]", recipientName.split(" ")[0] || recipientName);
         form.append("recipient[lastname]", recipientName.split(" ").slice(1).join(" ") || "");
         form.append("recipient[address1]", address1);
         if (address2) form.append("recipient[address2]", address2);
-        form.append("recipient[city]", city);
-        form.append("recipient[region]", state); // Stannp's region field = state/province
+        form.append("recipient[town]", city);
         form.append("recipient[postcode]", postcode);
         form.append("recipient[country]", country);
-        form.append("message", message || "Hello from CallScout!");
-        if (template) form.append("template", template);
 
-        const stannpRes = await axios.post("https://dash.stannp.com/api/v1/letters/create", form, {
-          auth: { username: apiKey, password: "" },
+        const stannpRes = await axios.post("https://api-eu1.stannp.com/v1/letters/create", form, {
+          auth,
           headers: form.getHeaders(),
         });
 
@@ -197,14 +200,14 @@ export const integrationController = {
       }
 
       const axios = (await import("axios")).default;
-      const stannpRes = await axios.get("https://dash.stannp.com/api/v1/groups/list", {
+      const stannpRes = await axios.get("https://api-eu1.stannp.com/v1/groups/list", {
         auth: { username: apiKey, password: "" },
       });
 
-      res.status(200).json({ success: true, data: stannpRes.data });
+      res.status(200).json({ success: true, data: stannpRes.data?.data || [] });
     } catch (error: any) {
-      console.error("Stannp groups fetch error:", error?.response?.data || error);
-      res.status(500).json({ error: "Failed to fetch Stannp automations" });
+      console.error("Stannp fetch error:", error?.response?.data || error);
+      res.status(500).json({ error: "Failed to fetch Stannp groups/campaigns" });
     }
   },
 
