@@ -69,6 +69,20 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.static("public"));
 
+// Check email exists before Better Auth handles forget-password (BA always returns 200 even for unknown emails)
+app.post("/api/auth/forget-password", async (req: Request, res: Response, next: any) => {
+  const { email } = req.body;
+  if (email) {
+    const prisma = (await import("./lib/prisma.js")).default;
+    const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() }, select: { id: true } });
+    if (!user) {
+      res.status(404).json({ message: "No account found with that email address." });
+      return;
+    }
+  }
+  next();
+});
+
 app.all("/api/auth/*", toNodeHandler(auth));
 
 app.get("/", (_req: Request, res: Response) => {
