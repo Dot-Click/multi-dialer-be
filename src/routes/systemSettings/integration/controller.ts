@@ -204,7 +204,8 @@ export const integrationController = {
         auth: { username: apiKey, password: "" },
       });
 
-      res.status(200).json({ success: true, data: stannpRes.data?.data || [] });
+      const responseData = stannpRes.data as { data?: any[] };
+      res.status(200).json({ success: true, data: responseData.data || [] });
     } catch (error: any) {
       console.error("Stannp fetch error:", error?.response?.data || error);
       res.status(500).json({ error: "Failed to fetch Stannp groups/campaigns" });
