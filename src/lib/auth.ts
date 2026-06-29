@@ -121,6 +121,12 @@ export const auth = betterAuth({
 
     sendResetPassword: async ({ user, url }: { user: AuthUser; url: string }) => {
       const displayName = user.fullName ?? user.email?.split("@")[0] ?? "User";
+      // Better Auth generates a backend verification URL. Extract the token and
+      // build a direct frontend URL so the button lands on the reset-password page.
+      const token = new URL(url).searchParams.get("token");
+      const resetUrl = token
+        ? `${envConfig.FRONTEND_URL}/admin/create-password?token=${token}`
+        : url;
       await sendEmail(
         user.email,
         "Reset Your Slingvo Password",
@@ -136,7 +142,7 @@ export const auth = betterAuth({
       Click the button below to choose a new password. This link expires in <strong>1 hour</strong>.
     </p>
     <div style="text-align:center;margin:30px 0;">
-      <a href="${url}"
+      <a href="${resetUrl}"
          style="background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;
                 text-decoration:none;font-size:16px;font-weight:bold;display:inline-block;">
         Reset Password
@@ -147,7 +153,7 @@ export const auth = betterAuth({
     </p>
     <p style="font-size:14px;color:#666;">
       Or copy and paste this link into your browser:<br/>
-      <a href="${url}" style="color:#1D85F0;word-break:break-all;">${url}</a>
+      <a href="${resetUrl}" style="color:#1D85F0;word-break:break-all;">${resetUrl}</a>
     </p>
     <hr style="border:none;border-top:1px solid #eee;margin:24px 0;"/>
     <p style="font-size:12px;color:#999;text-align:center;">© 2026 Slingvo. All rights reserved.</p>
