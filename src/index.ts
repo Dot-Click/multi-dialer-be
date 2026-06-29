@@ -5,7 +5,7 @@ import { toNodeHandler } from "better-auth/node";
 import { auth } from "@/lib/auth";
 import routes from "@/routes/routes";
 import { swaggerDocs } from "@/utils/handler";
-import { connectDB } from "@/lib/prisma";
+import prisma, { connectDB } from "@/lib/prisma";
 import { envConfig, sessionMiddleware } from "@/lib/config";
 import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
@@ -73,7 +73,6 @@ app.use(express.static("public"));
 app.post("/api/auth/forget-password", async (req: Request, res: Response, next: any) => {
   const { email } = req.body;
   if (email) {
-    const prisma = (await import("./lib/prisma.js")).default;
     const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() }, select: { id: true } });
     if (!user) {
       res.status(404).json({ message: "No account found with that email address." });
