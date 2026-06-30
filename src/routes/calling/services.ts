@@ -716,6 +716,10 @@ export class DialerService {
       const call = await userClient.calls.create({
         to: dialTo,
         from: twilioFrom as string,
+        // Cap ring time so an unanswered lead releases its pacing slot promptly
+        // instead of holding it for Twilio's ~60s default. Matches the manual-dial
+        // ring window and lets the dialer advance to the next contact sooner.
+        timeout: 30,
         url: `${envConfig.BACKEND_URL}/api/calling/webhooks/voice?agentId=${lead.userId}&leadId=${lead.id}&contactId=${lead.originalContactId || lead.id}&queueCardId=${lead.queueCardId || lead.id}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}${amdEnabled ? '&amdEnabled=true' : ''}`,
         statusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/call-status?agentId=${lead.userId}`,
         statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
@@ -1228,6 +1232,17 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
            this.activeCalls.delete(sid);
         }
       }
+
+      // Re-pump the queue after ANY terminal call so a freed pacing slot is
+      // refilled immediately. Without this, a non-bridged leg that ends as
+      // no-answer/busy/failed/completed (the common power-dialer case where the
+      // customer never picks up) deletes its SID but never dials the next lead —
+      // the queue starves with calls left "ringing" until the agent abandons the
+      // session. processQueue() self-guards on post-call state, agent-busy, and
+      // the per-user processing lock, so this is a no-op while the agent is still
+      // on a live call or owes a disposition; it only advances when there is
+      // genuinely free capacity.
+      this.processQueue(userId);
     }
   }
 
