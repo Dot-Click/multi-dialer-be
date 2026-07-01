@@ -1070,13 +1070,29 @@ export const voiceCall: RequestHandler = async (req, res) => {
 
 export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
   try {
-    const { countryCode, cityName, state } = req.body;
+    const { countryCode, cityName, state, userId: targetUserId } = req.body;
 
     console.log("countryCode", countryCode);
     console.log("cityName", cityName);
     console.log("state", state);
 
-    const userId = req.user?.id || "";
+    let userId = req.user?.id || "";
+
+    // Allow a super admin/owner to fetch available numbers on behalf of another user.
+    if (targetUserId && targetUserId !== userId) {
+      const callerRole = req.user?.role;
+      if (callerRole !== "OWNER" && callerRole !== "SUPER_ADMIN") {
+        errorResponse(res, { message: "You don't have permission to act on behalf of another user." }, 403);
+        return;
+      }
+      const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+      if (!targetUser) {
+        errorResponse(res, { message: "Target user not found" }, 404);
+        return;
+      }
+      userId = targetUserId;
+    }
+
     const userClient = await getTwilioClient(userId);
 
     const numbers = await userClient.availablePhoneNumbers(countryCode || "US").local.list({
@@ -1114,12 +1130,27 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
 
 export const buyNumber: RequestHandler = async (req, res) => {
   try {
-    const { phoneNumber, countryCode, label } = req.body;
-    const userId = req.user?.id;
+    const { phoneNumber, countryCode, label, userId: targetUserId } = req.body;
+    let userId: string = req.user?.id || "";
 
     if (!userId) {
       errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
       return;
+    }
+
+    // Allow a super admin/owner to buy a number on behalf of another user.
+    if (targetUserId && targetUserId !== userId) {
+      const callerRole = req.user?.role;
+      if (callerRole !== "OWNER" && callerRole !== "SUPER_ADMIN") {
+        errorResponse(res, { message: "You don't have permission to act on behalf of another user." }, 403);
+        return;
+      }
+      const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+      if (!targetUser) {
+        errorResponse(res, { message: "Target user not found" }, 404);
+        return;
+      }
+      userId = targetUserId;
     }
 
     const userClient = await getTwilioClient(userId);
