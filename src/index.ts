@@ -15,6 +15,7 @@ import { handleUnsubscribe } from "@/routes/email/unsubscribe";
 import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
 import { backfillMyPlusLeadsExistingUsers } from "@/workers/myPlusLeadsBackfill";
+import { dialerService } from "@/routes/calling/services";
 
 connectDB();
 if (process.env.ENABLE_CRON === "true") {
@@ -122,4 +123,8 @@ swaggerDocs(app);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  // Start the power-dialer reconciliation watchdog. This MUST run in the same
+  // process that serves the Twilio webhooks (that's where the DialerService
+  // singleton's in-memory state lives), so it is NOT gated behind ENABLE_CRON.
+  dialerService.startReconciliationLoop();
 });

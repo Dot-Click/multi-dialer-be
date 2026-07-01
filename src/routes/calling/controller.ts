@@ -429,6 +429,34 @@ export const getDialerStatus: RequestHandler = async (req, res) => {
 };
 
 /**
+ * Debug: live in-memory dialer state for one user (queue, active calls + ages,
+ * agent lock owner, post-call flag, frozen caller IDs, watchdog status). Lets
+ * a stuck session be inspected directly instead of grepping multi-user logs.
+ * Any user may inspect themselves; ADMIN/OWNER may inspect anyone via :userId.
+ */
+export const getDialerDebug: RequestHandler = async (req, res) => {
+  try {
+    const requester = req.user;
+    if (!requester?.id) {
+      errorResponse(res, { message: "Unauthorized" }, 401);
+      return;
+    }
+    const targetUserId = (req.params.userId || requester.id) as string;
+    const role = (requester as any).role;
+    if (targetUserId !== requester.id && role !== "ADMIN" && role !== "OWNER") {
+      errorResponse(res, { message: "Forbidden" }, 403);
+      return;
+    }
+    const state = dialerService.getDebugState(targetUserId);
+    successResponse(res, 200, "Dialer debug state", state);
+    return;
+  } catch (error: any) {
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
+/**
  * TwiML Webhook: Triggered when Twilio picks up the call
  */
 export const handleVoiceWebhook: RequestHandler = async (req, res) => {

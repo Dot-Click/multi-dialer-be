@@ -128,6 +128,10 @@ export class DialerService {
   private processedTerminalSids: Set<string> = new Set(); // Track SIDs that already triggered queue processing
   private agentPostCallState: Set<string> = new Set(); // userId
   private agentReadyState: Set<string> = new Set(); // userId
+  /** userId -> the bridged callSid the agent dispositioned while it was still
+   *  live/tearing down. Lets that call's own terminal webhook honor the ready
+   *  signal instead of wiping it and stranding the agent back in post-call. */
+  private agentReadyForCall: Map<string, string> = new Map();
   private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
   private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
   private leadsInFlight: Map<string, Set<string>> = new Map(); // userId -> Set of leadIds in transit
@@ -149,6 +153,20 @@ export class DialerService {
   private callerIdSessionMaxCalls: Map<string, number> = new Map();
   /** Users who have explicitly stopped their dialer session — blocks in-flight processQueue batches. */
   private stoppedUsers: Set<string> = new Set();
+
+  // ── Reconciliation watchdog (Layer 1) ──────────────────────────────────────
+  /** Handle for the periodic reconciliation loop. */
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  /** SID -> last time we saw a real Twilio status for it (webhook or reconcile). */
+  private sidLastStatusAt: Map<string, number> = new Map();
+  /** userId -> first time we observed the agent parked in post-call (abandonment recovery). */
+  private postCallEnteredAt: Map<string, number> = new Map();
+  /** How often the watchdog reconciles in-memory state against Twilio truth. */
+  private static readonly RECONCILE_INTERVAL_MS = 15_000;
+  /** Only query Twilio for a call if we haven't heard a status for it in this long. */
+  private static readonly CALL_STALE_MS = 45_000;
+  /** Recover an agent stuck in post-call with no live calls after this long. */
+  private static readonly POSTCALL_GRACE_MS = 3 * 60_000;
 
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
@@ -337,7 +355,9 @@ export class DialerService {
     this.agentBusyState.delete(userId);
     this.agentBridgedCallId.delete(userId);
     this.agentPostCallState.delete(userId);
+    this.postCallEnteredAt.delete(userId);
     this.agentReadyState.delete(userId);
+    this.agentReadyForCall.delete(userId);
     this.userActiveSessions.delete(userId);
     this.lastActivity.delete(userId);
     this.sessionPacing.delete(userId);
@@ -392,6 +412,24 @@ export class DialerService {
   }
 
   /**
+   * True when a rotation pool is configured AND every number in it is currently
+   * frozen (in per-number dial-limit cooldown). When this holds there is no
+   * legal number left to dial, so the session should end rather than fall back
+   * to dialing on a frozen or default number.
+   */
+  private areAllCallerIdsFrozen(userId: string): boolean {
+    const pool = this.userCallerIdPools.get(userId) || [];
+    if (pool.length === 0) return false;
+    const freezeMap = this.callerIdFreezeState.get(userId);
+    if (!freezeMap) return false;
+    const nowMs = Date.now();
+    return pool.every((num) => {
+      const unfreezeAt = freezeMap.get(num);
+      return !!unfreezeAt && unfreezeAt > nowMs;
+    });
+  }
+
+  /**
    * Filling up available lines for the user
    */
   // In processQueue — pre-assign caller IDs synchronously before async makeCall
@@ -424,6 +462,15 @@ export class DialerService {
 
       // Pre-fetch the pool once
       const pool = this.userCallerIdPools.get(userId) || [];
+
+      // If a caller-ID pool is configured but EVERY number is frozen (all hit
+      // their per-number dial cap), stop dialing entirely. Do NOT fall back to a
+      // frozen/default number. The session ends once any in-flight calls finish
+      // (surfaced to the frontend via getStatus().allCallerIdsFrozen).
+      if (pool.length > 0 && this.areAllCallerIdsFrozen(userId)) {
+        console.log(`[processQueue] All caller IDs frozen for user ${userId} — halting dialing; session will end.`);
+        return;
+      }
 
       let inFlight = currentActiveCount;
       const callBatch: { lead: Lead; assignedNumber: string | null }[] = [];
@@ -458,11 +505,12 @@ export class DialerService {
             this.userCallerIdIndices.set(userId, (foundIdx + 1) % pool.length);
             console.log(`[processQueue] Round-robin assignment: lead ${lead.id} -> ${assignedNumber} (index ${foundIdx})`);
           } else {
-            // All numbers frozen — use fallback round-robin to avoid blocking the dialer
-            const fallbackIdx = startIndex % pool.length;
-            assignedNumber = pool[fallbackIdx];
-            this.userCallerIdIndices.set(userId, (fallbackIdx + 1) % pool.length);
-            console.log(`[processQueue] All caller IDs frozen for user ${userId}, using fallback ${assignedNumber}`);
+            // No non-frozen number available (the pre-loop guard normally
+            // catches this; this is a safety net). Put the lead back untouched
+            // and stop pulling — never dial on a frozen caller ID.
+            queue.enqueue(lead);
+            console.log(`[processQueue] All caller IDs frozen for user ${userId} — stopping batch without dialing.`);
+            break;
           }
         }
 
@@ -499,6 +547,15 @@ export class DialerService {
   async agentReady(userId: string): Promise<void> {
     this.agentReadyState.add(userId);
     this.agentPostCallState.delete(userId);
+    this.postCallEnteredAt.delete(userId);
+    // If the agent dispositioned while the bridged call is still live (or its
+    // terminal webhook hasn't landed yet), record which call this ready is for.
+    // handleCallStatusUpdate honors it so the call's own teardown doesn't re-arm
+    // post-call and force the agent to click a disposition a second time.
+    const lockSid = this.agentBridgedCallId.get(userId);
+    if (lockSid) {
+      this.agentReadyForCall.set(userId, lockSid);
+    }
     await this.processQueue(userId);
   }
 
@@ -661,7 +718,18 @@ export class DialerService {
         }
       }
 
-      // Final fallback: user default
+      // If a rotation pool is configured but we still have no number, every pool
+      // number froze at dial time. Do NOT dial on the account default — abort so
+      // the session ends (all caller IDs frozen ⇒ stop calling). Clean up the
+      // in-flight/redial guards so getStatus reflects reality.
+      if (!fromNumber && pool && pool.length > 0) {
+        console.warn(`[makeCall] All caller IDs frozen at dial time for user ${lead.userId}. Aborting dial for lead ${lead.id}.`);
+        this.leadsInFlight.get(lead.userId)?.delete(lead.id);
+        this.pendingRedials.get(lead.userId)?.delete(lead.queueCardId || lead.originalContactId || lead.id);
+        return;
+      }
+
+      // Final fallback: user default (only when NO rotation pool is configured)
       if (!fromNumber) {
         const user = await prisma.user.findUnique({
           where: { id: lead.userId },
@@ -756,6 +824,9 @@ export class DialerService {
       // ALSO remove from leadsInFlight now that it's active in memory
       this.leadsInFlight.get(lead.userId)?.delete(lead.id);
       this.lastActivity.set(lead.userId, Date.now());
+      // Seed the watchdog's last-seen clock so a brand-new call isn't queried
+      // against Twilio until it has actually had time to go stale.
+      this.sidLastStatusAt.set(call.sid, Date.now());
 
       // ── Sticky Caller ID: record which number was used for this lead ──────
       if (fromNumber && !this.leadToCallerIdMap.has(lead.id)) {
@@ -947,6 +1018,7 @@ export class DialerService {
       leadStatuses,
       leadSids,
       callerIdStats,
+      allCallerIdsFrozen: this.areAllCallerIdsFrozen(userId),
       isPostCall: this.agentPostCallState.has(userId),
     };
   }
@@ -1020,6 +1092,10 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
     if (userId) {
       this.lastActivity.set(userId, Date.now());
     }
+    // Record that we just heard a real status for this SID, so the reconciliation
+    // watchdog only queries Twilio for calls that have gone quiet (missed webhooks),
+    // not ones that are actively reporting.
+    this.sidLastStatusAt.set(sid, Date.now());
 
     // PROTECTION: For browser calls... (keep this or move below userId check?)
     // Actually, if metadata is missing we can't tell if it's a browser call.
@@ -1201,8 +1277,22 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
         // pause here: it was set for the PREVIOUS call and leaks onto this one, which
         // caused the agent to be bridged to the next customer with no disposition prompt.
         // Clear it and always enter post-call; agentReady() lifts this state on demand.
+        // Did the agent already pick a disposition for THIS call before its
+        // terminal webhook arrived? If so, honor it and advance — do NOT re-arm
+        // post-call (that race stranded the agent and forced a second click).
+        // Matching on sid/rootSid keeps a stale ready from a PRIOR call from
+        // leaking onto this one.
+        const readyForSid = this.agentReadyForCall.get(userId!);
+        const preDispositioned = !!readyForSid && (readyForSid === sid || readyForSid === rootSid);
+        this.agentReadyForCall.delete(userId!);
         this.agentReadyState.delete(userId!);
-        this.agentPostCallState.add(userId!);
+        if (preDispositioned) {
+          console.log(`[handleCallStatusUpdate] Agent ${userId} already dispositioned ${sid} before teardown. Advancing without re-entering post-call.`);
+          this.agentPostCallState.delete(userId!);
+          this.postCallEnteredAt.delete(userId!);
+        } else {
+          this.agentPostCallState.add(userId!);
+        }
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
         // Delete SID BEFORE processing queue so capacity is accurate
@@ -1553,6 +1643,206 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
 
   clearActiveSession(userId: string) {
     this.userActiveSessions.delete(userId);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RECONCILIATION WATCHDOG (Layer 1)
+  //
+  // The dialer's state machine is driven by Twilio webhooks. If any webhook is
+  // lost, delayed, duplicated, or arrives out of order, a session can wedge:
+  // calls stuck "ringing", an agent lock never released, or the queue simply not
+  // advancing. This loop treats Twilio's REST API as the source of truth and
+  // reconciles our in-memory state against it on a fixed cadence, so the dialer
+  // makes forward progress even when webhook delivery is unreliable.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Start the reconciliation watchdog. Call once at server boot. Idempotent. */
+  startReconciliationLoop() {
+    if (this.reconcileTimer) return;
+    this.reconcileTimer = setInterval(() => {
+      this.reconcileAll().catch((err) =>
+        console.error("[Reconcile] loop error:", err?.message)
+      );
+    }, DialerService.RECONCILE_INTERVAL_MS);
+    console.log(
+      `[Reconcile] Watchdog started (every ${DialerService.RECONCILE_INTERVAL_MS / 1000}s).`
+    );
+  }
+
+  /** All userIds that currently hold any active dialer state. */
+  private getActiveUserIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const [uid, q] of this.userQueues) if (!q.isEmpty()) ids.add(uid);
+    for (const c of this.activeCalls.values()) if (c.userId) ids.add(c.userId);
+    for (const uid of this.agentBridgedCallId.keys()) ids.add(uid);
+    for (const uid of this.agentPostCallState) ids.add(uid);
+    for (const [uid, s] of this.leadsInFlight) if (s.size) ids.add(uid);
+    for (const [uid, s] of this.pendingRedials) if (s.size) ids.add(uid);
+    // Never act on users who have explicitly stopped their session.
+    for (const uid of this.stoppedUsers) ids.delete(uid);
+    return ids;
+  }
+
+  private async reconcileAll() {
+    // Prune last-seen tracking for calls that are no longer active (avoid growth).
+    for (const sid of this.sidLastStatusAt.keys()) {
+      if (!this.activeCalls.has(sid)) this.sidLastStatusAt.delete(sid);
+    }
+    // Drop post-call timers for users no longer in post-call.
+    for (const uid of this.postCallEnteredAt.keys()) {
+      if (!this.agentPostCallState.has(uid)) this.postCallEnteredAt.delete(uid);
+    }
+
+    for (const userId of this.getActiveUserIds()) {
+      try {
+        await this.reconcileUser(userId);
+      } catch (err: any) {
+        console.error(`[Reconcile] user ${userId} failed:`, err?.message);
+      }
+    }
+  }
+
+  private async reconcileUser(userId: string) {
+    const now = Date.now();
+    const terminal = ["completed", "busy", "no-answer", "failed", "canceled"];
+
+    // Collect this user's tracked call SIDs up front.
+    const sids: string[] = [];
+    for (const [sid, meta] of this.activeCalls.entries()) {
+      if (meta.userId === userId) sids.push(sid);
+    }
+
+    // 1. Reconcile each tracked call against Twilio truth. Only fetch calls we
+    //    haven't heard about recently, to keep API usage minimal.
+    let client: any = null;
+    for (const sid of sids) {
+      const lastSeen = this.sidLastStatusAt.get(sid) ?? 0;
+      if (now - lastSeen < DialerService.CALL_STALE_MS) continue;
+      try {
+        if (!client) client = await getTwilioClient(userId);
+        const call = await client.calls(sid).fetch();
+        // Refresh so we don't re-query a still-live call every tick.
+        this.sidLastStatusAt.set(sid, Date.now());
+        const status = (call?.status || "").toLowerCase();
+        if (terminal.includes(status)) {
+          console.warn(
+            `[Reconcile] Twilio reports ${sid}='${status}' but it was still tracked for user ${userId}. Applying terminal transition (missed webhook).`
+          );
+          await this.handleCallStatusUpdate(sid, status, false, userId);
+        }
+      } catch (err: any) {
+        // 20404 / 404 = call no longer exists on Twilio → treat as completed so
+        // we release any lock/slot it was holding.
+        if (err?.status === 404 || err?.code === 20404) {
+          console.warn(
+            `[Reconcile] Call ${sid} not found on Twilio for user ${userId}. Treating as completed.`
+          );
+          await this.handleCallStatusUpdate(sid, "completed", false, userId);
+        } else {
+          console.error(`[Reconcile] fetch ${sid} failed:`, err?.message);
+        }
+      }
+    }
+
+    // 2. Orphaned agent lock: the lock is held but the lock-owning call is no
+    //    longer tracked (its terminal was already processed) → release it so the
+    //    queue can advance.
+    const lockSid = this.agentBridgedCallId.get(userId);
+    if (lockSid && !this.activeCalls.has(lockSid) && this.isAgentBusy(userId)) {
+      console.warn(
+        `[Reconcile] Agent ${userId} lock ${lockSid} is orphaned (call no longer tracked). Releasing.`
+      );
+      this.setAgentBusy(userId, false);
+      this.agentBridgedCallId.delete(userId);
+    }
+
+    // 3. Abandoned post-call: the agent is parked in post-call with no live call
+    //    beyond the grace window (their /agent-ready never arrived). Clear it so
+    //    the session resumes instead of freezing until the 60-min stale TTL.
+    if (this.agentPostCallState.has(userId)) {
+      const enteredAt = this.postCallEnteredAt.get(userId);
+      if (enteredAt === undefined) {
+        this.postCallEnteredAt.set(userId, now); // start the clock on first observation
+      } else {
+        const hasLiveCall = sids.some((sid) => {
+          const st = this.activeCalls.get(sid)?.status;
+          return st !== undefined && !terminal.includes(st);
+        });
+        if (!hasLiveCall && now - enteredAt > DialerService.POSTCALL_GRACE_MS) {
+          console.warn(
+            `[Reconcile] Agent ${userId} abandoned in post-call for >${DialerService.POSTCALL_GRACE_MS / 1000}s with no live calls. Clearing to resume.`
+          );
+          this.agentPostCallState.delete(userId);
+          this.postCallEnteredAt.delete(userId);
+        }
+      }
+    }
+
+    // 4. Forward-progress safety net: if there is free capacity, leads waiting,
+    //    and the agent is neither busy nor owed a disposition, pump the queue.
+    //    This guarantees the dialer advances even if every webhook were lost.
+    const queue = this.userQueues.get(userId);
+    if (
+      queue &&
+      !queue.isEmpty() &&
+      !this.isAgentBusy(userId) &&
+      !this.agentPostCallState.has(userId)
+    ) {
+      this.processQueue(userId);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OBSERVABILITY (Layer 3)
+  // Rich, on-demand snapshot of one user's live dialer state so a stuck session
+  // can be inspected directly instead of grepping interleaved multi-user logs.
+  // ═══════════════════════════════════════════════════════════════════════════
+  getDebugState(userIdRaw: string) {
+    const userId = userIdRaw?.toString().trim();
+    const now = Date.now();
+
+    const activeCalls = Array.from(this.activeCalls.entries())
+      .filter(([, m]) => m.userId?.toString().trim() === userId)
+      .map(([sid, m]) => ({
+        sid,
+        status: m.status ?? null,
+        leadId: m.leadId ?? null,
+        contactId: m.contactId ?? null,
+        isRedial: !!m.isRedial,
+        attempts: m.attempts ?? null,
+        lastStatusAgeMs: this.sidLastStatusAt.has(sid)
+          ? now - this.sidLastStatusAt.get(sid)!
+          : null,
+      }));
+
+    const queue = this.userQueues.get(userId);
+    const freeze = this.callerIdFreezeState.get(userId);
+
+    return {
+      userId,
+      queueSize: queue?.size() ?? 0,
+      isAgentBusy: this.agentBusyState.get(userId) ?? false,
+      lockOwnerSid: this.agentBridgedCallId.get(userId) ?? null,
+      isPostCall: this.agentPostCallState.has(userId),
+      postCallForMs: this.postCallEnteredAt.has(userId)
+        ? now - this.postCallEnteredAt.get(userId)!
+        : null,
+      isReady: this.agentReadyState.has(userId),
+      isProcessing: this.userProcessingLocks.get(userId) ?? false,
+      isStopped: this.stoppedUsers.has(userId),
+      pacing: this.sessionPacing.get(userId) ?? null,
+      lastActivityAgeMs: this.lastActivity.has(userId)
+        ? now - this.lastActivity.get(userId)!
+        : null,
+      activeCalls,
+      inFlightLeadIds: Array.from(this.leadsInFlight.get(userId) ?? []),
+      pendingRedials: Array.from(this.pendingRedials.get(userId) ?? []),
+      callerIdPool: this.userCallerIdPools.get(userId) ?? [],
+      frozenCallerIds: Object.fromEntries(
+        Array.from(freeze?.entries() ?? []).filter(([, ms]) => ms > now)
+      ),
+      reconcileWatchdog: this.reconcileTimer ? "running" : "stopped",
+    };
   }
 }
 

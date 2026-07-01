@@ -32,7 +32,8 @@ import {
   agentReady,
   handleIncomingSms,
   getSmsInbox,
-  getSmsConversation
+  getSmsConversation,
+  getDialerDebug
 } from "./controller";
 import {
   getAggregateStats,
@@ -75,6 +76,8 @@ router.post("/stop-dialing", protectRoute, stopDialing);
 router.post("/queue/remove-contact", protectRoute, removeContactFromPowerQueue);
 router.post("/agent-ready", protectRoute, agentReady);
 router.get("/status", protectRoute, getDialerStatus);
+router.get("/debug", protectRoute, getDialerDebug);
+router.get("/debug/:userId", protectRoute, getDialerDebug);
 router.get("/status/:sid", protectRoute, getCallStatus);
 router.get("/getHistory", protectRoute, getHistory);
 router.get("/sentiments/:sid", protectRoute, getCallSummary);
