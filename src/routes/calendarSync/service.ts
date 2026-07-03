@@ -361,3 +361,335 @@ export async function deleteCalendarEventFromGoogle(userId: string, externalEven
     await calendar.events.delete({ calendarId, eventId: externalEventId });
   } catch {}
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OUTLOOK / MICROSOFT GRAPH
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const OUTLOOK_SCOPES = ["Calendars.ReadWrite", "offline_access", "User.Read"];
+const OUTLOOK_AUTH_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
+const OUTLOOK_TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+
+function getOutlookConfig() {
+  return {
+    clientId: process.env.OUTLOOK_CLIENT_ID!,
+    clientSecret: process.env.OUTLOOK_CLIENT_SECRET!,
+    redirectUri: process.env.OUTLOOK_REDIRECT_URI!,
+  };
+}
+
+async function graphRequest(accessToken: string, method: string, path: string, body?: any): Promise<any> {
+  const res = await fetch(`${GRAPH_BASE}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (res.status === 204) return null;
+  if (!res.ok) {
+    const err: any = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Graph API error: ${res.status}`);
+  }
+  return res.json();
+}
+
+async function getOutlookAccessToken(userId: string): Promise<string | null> {
+  const tokenRecord = await prisma.externalCalendarToken.findUnique({
+    where: { userId_provider: { userId, provider: "OUTLOOK" } },
+  });
+  if (!tokenRecord) return null;
+
+  if (tokenRecord.expiresAt.getTime() - Date.now() < 5 * 60 * 1000) {
+    try {
+      const { clientId, clientSecret, redirectUri } = getOutlookConfig();
+      const body = new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: tokenRecord.refreshToken,
+        redirect_uri: redirectUri,
+        grant_type: "refresh_token",
+      });
+      const res = await fetch(OUTLOOK_TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+      if (!res.ok) throw new Error("Refresh failed");
+      const data: any = await res.json();
+      await prisma.externalCalendarToken.update({
+        where: { userId_provider: { userId, provider: "OUTLOOK" } },
+        data: {
+          accessToken: data.access_token,
+          expiresAt: new Date(Date.now() + data.expires_in * 1000),
+          ...(data.refresh_token && { refreshToken: data.refresh_token }),
+        },
+      });
+      return data.access_token;
+    } catch (err: any) {
+      console.error("[CalSync] Outlook token refresh failed:", err.message);
+      return null;
+    }
+  }
+
+  return tokenRecord.accessToken;
+}
+
+export function generateOutlookAuthUrl(userId: string, timezone = "UTC"): string {
+  const { clientId, redirectUri } = getOutlookConfig();
+  const state = Buffer.from(JSON.stringify({ userId, ts: Date.now(), tz: timezone })).toString("base64url");
+  const params = new URLSearchParams({
+    client_id: clientId,
+    response_type: "code",
+    redirect_uri: redirectUri,
+    scope: OUTLOOK_SCOPES.join(" "),
+    state,
+    prompt: "consent",
+  });
+  return `${OUTLOOK_AUTH_ENDPOINT}?${params.toString()}`;
+}
+
+export async function handleOutlookOAuthCallback(code: string, state: string): Promise<string> {
+  let decoded: { userId: string; ts: number; tz?: string };
+  try {
+    decoded = JSON.parse(Buffer.from(state, "base64url").toString());
+  } catch {
+    throw new Error("Invalid OAuth state");
+  }
+
+  const { userId, ts, tz } = decoded;
+  if (Date.now() - ts > 10 * 60 * 1000) throw new Error("OAuth state expired");
+
+  const { clientId, clientSecret, redirectUri } = getOutlookConfig();
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code",
+  });
+
+  const res = await fetch(OUTLOOK_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!res.ok) throw new Error(`Outlook token exchange failed: ${res.statusText}`);
+  const tokens: any = await res.json();
+
+  if (!tokens.access_token) throw new Error("No access token in Outlook response");
+
+  await prisma.externalCalendarToken.upsert({
+    where: { userId_provider: { userId, provider: "OUTLOOK" } },
+    create: {
+      userId,
+      provider: "OUTLOOK",
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token || "",
+      expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+      calendarId: "primary",
+      timezone: tz || "UTC",
+    },
+    update: {
+      accessToken: tokens.access_token,
+      ...(tokens.refresh_token && { refreshToken: tokens.refresh_token }),
+      expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+      ...(tz && { timezone: tz }),
+    },
+  });
+
+  return userId;
+}
+
+// ─── Outlook Appointment ──────────────────────────────────────────────────────
+
+export async function syncAppointmentToOutlook(
+  agentId: string,
+  appointment: {
+    id: string;
+    scheduledAt: Date;
+    endsAt: Date;
+    notes?: string | null;
+    location?: string | null;
+    meetingLink?: string | null;
+    contact?: { fullName: string } | null;
+    externalEventId?: string | null;
+  },
+): Promise<string | null> {
+  const accessToken = await getOutlookAccessToken(agentId);
+  if (!accessToken) return null;
+
+  const contactName = appointment.contact?.fullName || "Contact";
+  const eventBody: any = {
+    subject: `Appointment: ${contactName}`,
+    body: { contentType: "text", content: appointment.notes || "" },
+    start: { dateTime: appointment.scheduledAt.toISOString().replace("Z", ""), timeZone: "UTC" },
+    end: { dateTime: appointment.endsAt.toISOString().replace("Z", ""), timeZone: "UTC" },
+    ...(appointment.location ? { location: { displayName: appointment.location } } : {}),
+    ...(appointment.meetingLink
+      ? { onlineMeeting: { joinUrl: appointment.meetingLink } }
+      : {}),
+  };
+
+  if (appointment.externalEventId) {
+    try {
+      await graphRequest(accessToken, "PATCH", `/me/events/${appointment.externalEventId}`, eventBody);
+      return appointment.externalEventId;
+    } catch {}
+  }
+
+  const result = await graphRequest(accessToken, "POST", "/me/events", eventBody);
+  return result?.id ?? null;
+}
+
+export async function deleteAppointmentFromOutlook(agentId: string, externalEventId: string): Promise<void> {
+  const accessToken = await getOutlookAccessToken(agentId);
+  if (!accessToken) return;
+  try {
+    await graphRequest(accessToken, "DELETE", `/me/events/${externalEventId}`);
+  } catch {}
+}
+
+// ─── Outlook Callback ─────────────────────────────────────────────────────────
+
+export async function syncCallbackToOutlook(
+  agentId: string,
+  callback: {
+    id: string;
+    scheduledAt: Date;
+    notes?: string | null;
+    contact?: { fullName: string } | null;
+    externalEventId?: string | null;
+  },
+): Promise<string | null> {
+  const accessToken = await getOutlookAccessToken(agentId);
+  if (!accessToken) return null;
+
+  const contactName = callback.contact?.fullName || "Contact";
+  const start = callback.scheduledAt;
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+
+  const eventBody = {
+    subject: `Callback: ${contactName}`,
+    body: { contentType: "text", content: callback.notes || "" },
+    start: { dateTime: start.toISOString().replace("Z", ""), timeZone: "UTC" },
+    end: { dateTime: end.toISOString().replace("Z", ""), timeZone: "UTC" },
+  };
+
+  if (callback.externalEventId) {
+    try {
+      await graphRequest(accessToken, "PATCH", `/me/events/${callback.externalEventId}`, eventBody);
+      return callback.externalEventId;
+    } catch {}
+  }
+
+  const result = await graphRequest(accessToken, "POST", "/me/events", eventBody);
+  return result?.id ?? null;
+}
+
+export async function deleteCallbackFromOutlook(agentId: string, externalEventId: string): Promise<void> {
+  const accessToken = await getOutlookAccessToken(agentId);
+  if (!accessToken) return;
+  try {
+    await graphRequest(accessToken, "DELETE", `/me/events/${externalEventId}`);
+  } catch {}
+}
+
+// ─── Outlook Task ─────────────────────────────────────────────────────────────
+
+export async function syncTaskToOutlook(
+  agentId: string,
+  task: {
+    id: string;
+    title: string;
+    dueAt: Date;
+    notes?: string | null;
+    contact?: { fullName: string } | null;
+    externalEventId?: string | null;
+  },
+): Promise<string | null> {
+  const accessToken = await getOutlookAccessToken(agentId);
+  if (!accessToken) return null;
+
+  const descParts = [
+    task.contact?.fullName ? `Contact: ${task.contact.fullName}` : null,
+    task.notes,
+  ].filter(Boolean);
+
+  const dueDay = new Date(task.dueAt);
+  dueDay.setUTCHours(9, 0, 0, 0);
+  const dueEnd = new Date(task.dueAt);
+  dueEnd.setUTCHours(10, 0, 0, 0);
+
+  const eventBody = {
+    subject: `Task: ${task.title}`,
+    body: { contentType: "text", content: descParts.join("\n") },
+    start: { dateTime: dueDay.toISOString().replace("Z", ""), timeZone: "UTC" },
+    end: { dateTime: dueEnd.toISOString().replace("Z", ""), timeZone: "UTC" },
+  };
+
+  if (task.externalEventId) {
+    try {
+      await graphRequest(accessToken, "PATCH", `/me/events/${task.externalEventId}`, eventBody);
+      return task.externalEventId;
+    } catch {}
+  }
+
+  const result = await graphRequest(accessToken, "POST", "/me/events", eventBody);
+  return result?.id ?? null;
+}
+
+export async function deleteTaskFromOutlook(agentId: string, externalEventId: string): Promise<void> {
+  const accessToken = await getOutlookAccessToken(agentId);
+  if (!accessToken) return;
+  try {
+    await graphRequest(accessToken, "DELETE", `/me/events/${externalEventId}`);
+  } catch {}
+}
+
+// ─── Outlook Calendar Event ───────────────────────────────────────────────────
+
+export async function syncCalendarEventToOutlook(
+  userId: string,
+  event: {
+    id: string;
+    title: string;
+    description?: string | null;
+    startDate: Date;
+    endDate?: Date | null;
+    externalEventId?: string | null;
+  },
+): Promise<string | null> {
+  const accessToken = await getOutlookAccessToken(userId);
+  if (!accessToken) return null;
+
+  const start = event.startDate;
+  const end = event.endDate ?? new Date(start.getTime() + 60 * 60 * 1000);
+
+  const eventBody = {
+    subject: event.title,
+    body: { contentType: "text", content: event.description || "" },
+    start: { dateTime: start.toISOString().replace("Z", ""), timeZone: "UTC" },
+    end: { dateTime: end.toISOString().replace("Z", ""), timeZone: "UTC" },
+  };
+
+  if (event.externalEventId) {
+    try {
+      await graphRequest(accessToken, "PATCH", `/me/events/${event.externalEventId}`, eventBody);
+      return event.externalEventId;
+    } catch {}
+  }
+
+  const result = await graphRequest(accessToken, "POST", "/me/events", eventBody);
+  return result?.id ?? null;
+}
+
+export async function deleteCalendarEventFromOutlook(userId: string, externalEventId: string): Promise<void> {
+  const accessToken = await getOutlookAccessToken(userId);
+  if (!accessToken) return;
+  try {
+    await graphRequest(accessToken, "DELETE", `/me/events/${externalEventId}`);
+  } catch {}
+}

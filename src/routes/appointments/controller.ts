@@ -11,6 +11,8 @@ import {
 import {
   syncAppointmentToGoogle,
   deleteAppointmentFromGoogle,
+  syncAppointmentToOutlook,
+  deleteAppointmentFromOutlook,
 } from "../calendarSync/service";
 
 const APPOINTMENT_STATUSES = ["SET", "MET", "CANCELLED", "NO_SHOW"] as const;
@@ -63,16 +65,27 @@ export const createAppointment = async (req: Request, res: Response): Promise<vo
       meetingLink: meetingLink ?? null,
     });
 
-    // Fire-and-forget Google Calendar sync
-    syncAppointmentToGoogle(agentId, appointment)
-      .then((externalEventId) => {
-        if (externalEventId) {
-          prisma.appointment
-            .update({ where: { id: appointment.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
-            .catch(console.error);
-        }
-      })
-      .catch(console.error);
+    // Fire-and-forget calendar sync (Google + Outlook)
+    Promise.allSettled([
+      syncAppointmentToGoogle(agentId, appointment),
+      syncAppointmentToOutlook(agentId, appointment),
+    ]).then(([googleResult, outlookResult]) => {
+      const externalEventId =
+        (googleResult.status === "fulfilled" && googleResult.value) ||
+        (outlookResult.status === "fulfilled" && outlookResult.value) ||
+        null;
+      const externalProvider =
+        googleResult.status === "fulfilled" && googleResult.value
+          ? "GOOGLE"
+          : outlookResult.status === "fulfilled" && outlookResult.value
+          ? "OUTLOOK"
+          : null;
+      if (externalEventId && externalProvider) {
+        prisma.appointment
+          .update({ where: { id: appointment.id }, data: { externalEventId, externalProvider } })
+          .catch(console.error);
+      }
+    }).catch(console.error);
 
     successResponse(res, 201, "Appointment created", appointment);
   } catch (error: any) {
@@ -172,19 +185,30 @@ export const updateAppointment = async (req: Request, res: Response): Promise<vo
 
     const updated = await updateAppointmentInDb(id, data, releaseContactId);
 
-    // Fire-and-forget: sync update or delete from Google Calendar
     if (status === "CANCELLED" && appointment.externalEventId) {
       deleteAppointmentFromGoogle(appointment.agentId, appointment.externalEventId).catch(console.error);
-    } else if (appointment.externalEventId || true) {
-      syncAppointmentToGoogle(appointment.agentId, { ...updated, externalEventId: updated.externalEventId })
-        .then((externalEventId) => {
-          if (externalEventId && externalEventId !== updated.externalEventId) {
-            prisma.appointment
-              .update({ where: { id: updated.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
-              .catch(console.error);
-          }
-        })
-        .catch(console.error);
+      deleteAppointmentFromOutlook(appointment.agentId, appointment.externalEventId).catch(console.error);
+    } else {
+      Promise.allSettled([
+        syncAppointmentToGoogle(appointment.agentId, { ...updated, externalEventId: updated.externalEventId }),
+        syncAppointmentToOutlook(appointment.agentId, { ...updated, externalEventId: updated.externalEventId }),
+      ]).then(([googleResult, outlookResult]) => {
+        const externalEventId =
+          (googleResult.status === "fulfilled" && googleResult.value) ||
+          (outlookResult.status === "fulfilled" && outlookResult.value) ||
+          null;
+        const externalProvider =
+          googleResult.status === "fulfilled" && googleResult.value
+            ? "GOOGLE"
+            : outlookResult.status === "fulfilled" && outlookResult.value
+            ? "OUTLOOK"
+            : null;
+        if (externalEventId && externalProvider && externalEventId !== updated.externalEventId) {
+          prisma.appointment
+            .update({ where: { id: updated.id }, data: { externalEventId, externalProvider } })
+            .catch(console.error);
+        }
+      }).catch(console.error);
     }
 
     successResponse(res, 200, "Appointment updated", updated);
@@ -211,9 +235,9 @@ export const deleteAppointment = async (req: Request, res: Response): Promise<vo
 
     const updated = await updateAppointmentInDb(id, { status: "CANCELLED" }, appointment.contactId);
 
-    // Fire-and-forget: remove from Google Calendar
     if (appointment.externalEventId) {
       deleteAppointmentFromGoogle(appointment.agentId, appointment.externalEventId).catch(console.error);
+      deleteAppointmentFromOutlook(appointment.agentId, appointment.externalEventId).catch(console.error);
     }
 
     successResponse(res, 200, "Appointment cancelled", updated);

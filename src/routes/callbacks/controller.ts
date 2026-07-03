@@ -8,7 +8,7 @@ import {
   listCallbacksInDb,
   updateCallbackInDb,
 } from "./service";
-import { syncCallbackToGoogle, deleteCallbackFromGoogle } from "../calendarSync/service";
+import { syncCallbackToGoogle, deleteCallbackFromGoogle, syncCallbackToOutlook, deleteCallbackFromOutlook } from "../calendarSync/service";
 
 const CALLBACK_STATUSES = ["PENDING", "DUE", "COMPLETED", "MISSED", "CANCELLED"] as const;
 const canManageOthers = (role?: string) =>
@@ -49,16 +49,26 @@ export const createCallback = async (req: Request, res: Response): Promise<void>
       notes: notes ?? null,
     });
 
-    // Fire-and-forget Google Calendar sync
-    syncCallbackToGoogle(agentId, callback)
-      .then((externalEventId) => {
-        if (externalEventId) {
-          prisma.callback
-            .update({ where: { id: callback.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
-            .catch(console.error);
-        }
-      })
-      .catch(console.error);
+    Promise.allSettled([
+      syncCallbackToGoogle(agentId, callback),
+      syncCallbackToOutlook(agentId, callback),
+    ]).then(([googleResult, outlookResult]) => {
+      const externalEventId =
+        (googleResult.status === "fulfilled" && googleResult.value) ||
+        (outlookResult.status === "fulfilled" && outlookResult.value) ||
+        null;
+      const externalProvider =
+        googleResult.status === "fulfilled" && googleResult.value
+          ? "GOOGLE"
+          : outlookResult.status === "fulfilled" && outlookResult.value
+          ? "OUTLOOK"
+          : null;
+      if (externalEventId && externalProvider) {
+        prisma.callback
+          .update({ where: { id: callback.id }, data: { externalEventId, externalProvider } })
+          .catch(console.error);
+      }
+    }).catch(console.error);
 
     successResponse(res, 201, "Callback created", callback);
   } catch (error: any) {
@@ -163,11 +173,12 @@ export const updateCallback = async (req: Request, res: Response): Promise<void>
 
     const updated = await updateCallbackInDb(id, data);
 
-    // Fire-and-forget: remove from Google Calendar when cancelled/completed
     if ((status === "CANCELLED" || status === "COMPLETED") && callback.externalEventId) {
       deleteCallbackFromGoogle(callback.agentId, callback.externalEventId).catch(console.error);
+      deleteCallbackFromOutlook(callback.agentId, callback.externalEventId).catch(console.error);
     } else if (scheduledAt !== undefined && callback.externalEventId) {
       syncCallbackToGoogle(callback.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
+      syncCallbackToOutlook(callback.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
     }
 
     successResponse(res, 200, "Callback updated", updated);
@@ -196,6 +207,7 @@ export const deleteCallback = async (req: Request, res: Response): Promise<void>
 
     if (callback.externalEventId) {
       deleteCallbackFromGoogle(callback.agentId, callback.externalEventId).catch(console.error);
+      deleteCallbackFromOutlook(callback.agentId, callback.externalEventId).catch(console.error);
     }
 
     successResponse(res, 200, "Callback cancelled", updated);

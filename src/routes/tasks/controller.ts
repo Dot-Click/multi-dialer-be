@@ -8,7 +8,7 @@ import {
   listTasksInDb,
   updateTaskInDb,
 } from "./service";
-import { syncTaskToGoogle, deleteTaskFromGoogle } from "../calendarSync/service";
+import { syncTaskToGoogle, deleteTaskFromGoogle, syncTaskToOutlook, deleteTaskFromOutlook } from "../calendarSync/service";
 
 const TASK_STATUSES = ["OPEN", "IN_PROGRESS", "DONE", "CANCELLED"] as const;
 const canManageOthers = (role?: string) =>
@@ -53,16 +53,26 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
       notes: notes ?? null,
     });
 
-    // Fire-and-forget Google Calendar sync
-    syncTaskToGoogle(agentId, task)
-      .then((externalEventId) => {
-        if (externalEventId) {
-          prisma.task
-            .update({ where: { id: task.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
-            .catch(console.error);
-        }
-      })
-      .catch(console.error);
+    Promise.allSettled([
+      syncTaskToGoogle(agentId, task),
+      syncTaskToOutlook(agentId, task),
+    ]).then(([googleResult, outlookResult]) => {
+      const externalEventId =
+        (googleResult.status === "fulfilled" && googleResult.value) ||
+        (outlookResult.status === "fulfilled" && outlookResult.value) ||
+        null;
+      const externalProvider =
+        googleResult.status === "fulfilled" && googleResult.value
+          ? "GOOGLE"
+          : outlookResult.status === "fulfilled" && outlookResult.value
+          ? "OUTLOOK"
+          : null;
+      if (externalEventId && externalProvider) {
+        prisma.task
+          .update({ where: { id: task.id }, data: { externalEventId, externalProvider } })
+          .catch(console.error);
+      }
+    }).catch(console.error);
 
     successResponse(res, 201, "Task created", task);
   } catch (error: any) {
@@ -144,11 +154,12 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
 
     const updated = await updateTaskInDb(id, data);
 
-    // Fire-and-forget: sync update or remove when done/cancelled
     if ((status === "DONE" || status === "CANCELLED") && task.externalEventId) {
       deleteTaskFromGoogle(task.agentId, task.externalEventId).catch(console.error);
+      deleteTaskFromOutlook(task.agentId, task.externalEventId).catch(console.error);
     } else if (dueAt !== undefined && task.externalEventId) {
       syncTaskToGoogle(task.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
+      syncTaskToOutlook(task.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
     }
 
     successResponse(res, 200, "Task updated", updated);
@@ -177,6 +188,7 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
 
     if (task.externalEventId) {
       deleteTaskFromGoogle(task.agentId, task.externalEventId).catch(console.error);
+      deleteTaskFromOutlook(task.agentId, task.externalEventId).catch(console.error);
     }
 
     successResponse(res, 200, "Task cancelled", updated);

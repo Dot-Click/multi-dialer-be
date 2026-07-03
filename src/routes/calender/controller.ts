@@ -8,7 +8,7 @@ import {
 } from "../../schemas/calendar.schema";
 import { calendarInclude, insertCalendarEventInDb } from "./service";
 import { createInternalNotification } from "../notification/controller";
-import { syncCalendarEventToGoogle, deleteCalendarEventFromGoogle } from "../calendarSync/service";
+import { syncCalendarEventToGoogle, deleteCalendarEventFromGoogle, syncCalendarEventToOutlook, deleteCalendarEventFromOutlook } from "../calendarSync/service";
 
 const canManageOthers = (role?: string) => {
   return typeof role === "string" && ["ADMIN", "OWNER"].includes(role.toUpperCase());
@@ -156,24 +156,35 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
       payload.category === 'APPOINTMENT' ? 'meeting' : 'event'
     );
 
-    // Fire-and-forget Google Calendar sync
     if (populatedEvent) {
-      syncCalendarEventToGoogle(assignToId, {
+      const eventPayload = {
         id: populatedEvent.id,
         title: populatedEvent.title,
         description: populatedEvent.description,
         startDate: populatedEvent.startDate,
         endDate: populatedEvent.endDate,
         category: populatedEvent.category,
-      })
-        .then((externalEventId) => {
-          if (externalEventId) {
-            prisma.calendar
-              .update({ where: { id: populatedEvent.id }, data: { externalEventId, externalProvider: "GOOGLE" } })
-              .catch(console.error);
-          }
-        })
-        .catch(console.error);
+      };
+      Promise.allSettled([
+        syncCalendarEventToGoogle(assignToId, eventPayload),
+        syncCalendarEventToOutlook(assignToId, eventPayload),
+      ]).then(([googleResult, outlookResult]) => {
+        const externalEventId =
+          (googleResult.status === "fulfilled" && googleResult.value) ||
+          (outlookResult.status === "fulfilled" && outlookResult.value) ||
+          null;
+        const externalProvider =
+          googleResult.status === "fulfilled" && googleResult.value
+            ? "GOOGLE"
+            : outlookResult.status === "fulfilled" && outlookResult.value
+            ? "OUTLOOK"
+            : null;
+        if (externalEventId && externalProvider) {
+          prisma.calendar
+            .update({ where: { id: populatedEvent.id }, data: { externalEventId, externalProvider } })
+            .catch(console.error);
+        }
+      }).catch(console.error);
     }
 
     successResponse(res, 201, "Calendar event created", populatedEvent);
@@ -222,11 +233,11 @@ export const updateCalendarEvent = async (req: Request, res: Response): Promise<
       include: calendarInclude,
     });
 
-    // Fire-and-forget: sync update or remove when completed/cancelled
     if ((result.data.status === "CANCELLED" || result.data.status === "MET") && event.externalEventId) {
       deleteCalendarEventFromGoogle(event.assignToId, event.externalEventId).catch(console.error);
+      deleteCalendarEventFromOutlook(event.assignToId, event.externalEventId).catch(console.error);
     } else {
-      syncCalendarEventToGoogle(event.assignToId, {
+      const updatedPayload = {
         id: updatedEvent.id,
         title: updatedEvent.title,
         description: updatedEvent.description,
@@ -234,7 +245,9 @@ export const updateCalendarEvent = async (req: Request, res: Response): Promise<
         endDate: updatedEvent.endDate,
         category: updatedEvent.category,
         externalEventId: event.externalEventId,
-      }).catch(console.error);
+      };
+      syncCalendarEventToGoogle(event.assignToId, updatedPayload).catch(console.error);
+      syncCalendarEventToOutlook(event.assignToId, updatedPayload).catch(console.error);
     }
 
     successResponse(res, 200, "Calendar event updated", updatedEvent);
@@ -261,6 +274,7 @@ export const deleteCalendarEvent = async (req: Request, res: Response): Promise<
 
     if (event.externalEventId) {
       deleteCalendarEventFromGoogle(event.assignToId, event.externalEventId).catch(console.error);
+      deleteCalendarEventFromOutlook(event.assignToId, event.externalEventId).catch(console.error);
     }
 
     await prisma.calendar.delete({ where: { id } });

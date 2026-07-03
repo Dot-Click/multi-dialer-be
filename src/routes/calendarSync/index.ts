@@ -3,22 +3,21 @@ import { protectRoute } from "../../middlewares/auth.middleware";
 import {
   getGoogleAuthUrl,
   handleGoogleCallback,
+  getOutlookAuthUrl,
+  handleOutlookCallback,
   getSyncStatus,
   disconnectCalendar,
 } from "./controller";
 
 const router = Router();
 
-// Returns the Google OAuth consent URL (frontend redirects to it)
 router.get("/auth/google/url", protectRoute, getGoogleAuthUrl);
-
-// Browser redirect from Google — no auth header, uses state param
 router.get("/auth/google/callback", handleGoogleCallback);
 
-// Connected provider statuses for the current user
-router.get("/status", protectRoute, getSyncStatus);
+router.get("/auth/outlook/url", protectRoute, getOutlookAuthUrl);
+router.get("/auth/outlook/callback", handleOutlookCallback);
 
-// Disconnect a provider (GOOGLE | OUTLOOK)
+router.get("/status", protectRoute, getSyncStatus);
 router.delete("/:provider", protectRoute, disconnectCalendar);
 
 export default router;

@@ -3,6 +3,8 @@ import { envConfig } from "../../lib/config";
 import {
   generateAuthUrl,
   handleOAuthCallback,
+  generateOutlookAuthUrl,
+  handleOutlookOAuthCallback,
   getCalendarSyncStatus,
   disconnectProvider,
 } from "./service";
@@ -57,6 +59,45 @@ export const getSyncStatus = async (req: Request, res: Response): Promise<void> 
     successResponse(res, 200, "Calendar sync status", status);
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const getOutlookAuthUrl = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!process.env.OUTLOOK_CLIENT_ID) {
+      errorResponse(res, "Outlook Calendar integration is not configured on this server.", 501);
+      return;
+    }
+    const { id: userId } = req.user!;
+    const timezone = typeof req.query.timezone === "string" ? req.query.timezone : "UTC";
+    const url = generateOutlookAuthUrl(userId, timezone);
+    successResponse(res, 200, "Auth URL generated", { url });
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const handleOutlookCallback = async (req: Request, res: Response): Promise<void> => {
+  const base = `${FRONTEND_URL()}${SETTINGS_ROUTE}`;
+  try {
+    const { code, state, error } = req.query as { code?: string; state?: string; error?: string };
+
+    if (error) {
+      console.warn("[CalSync] Outlook OAuth denied:", error);
+      res.redirect(`${base}?calendar_sync=error&reason=${encodeURIComponent(error)}`);
+      return;
+    }
+
+    if (!code || !state) {
+      res.redirect(`${base}?calendar_sync=error&reason=missing_params`);
+      return;
+    }
+
+    await handleOutlookOAuthCallback(code, state);
+    res.redirect(`${base}?calendar_sync=outlook_connected`);
+  } catch (error: any) {
+    console.error("[CalSync] Outlook callback error:", error.message);
+    res.redirect(`${base}?calendar_sync=error&reason=${encodeURIComponent(error.message)}`);
   }
 };
 
