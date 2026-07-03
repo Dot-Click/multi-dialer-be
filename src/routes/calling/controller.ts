@@ -1,5 +1,6 @@
 import { errorResponse, successResponse } from "@/utils/handler";
 import { client } from "@/lib/config";
+import { client as masterClient } from "@/lib/config";
 import { Request, Response, RequestHandler } from "express";
 import VoiceResponse from "twilio/lib/twiml/VoiceResponse";
 import { dialerService } from "./services";
@@ -7,7 +8,8 @@ import prisma from "@/lib/prisma";
 import { envConfig } from "@/lib/config";
 import twilio from "twilio";
 import { insertCallerIdInDb, resolveAdminId } from "../systemSettings/callerId/service";
-import { getTwilioClient } from "../../services/twilio-account.service";
+import { getTwilioClient, getUserTwilioSubAccountSid, transferNumberToSubAccount, releaseNumber } from "../../services/twilio-account.service";
+import { resolveBillableCustomer, addNumberToAddonSubscription, removeAddonSubscriptionItem, getMonthlyPriceCentsForCountry } from "../../services/phoneNumberBilling.service";
 import { chunkArray } from "@/utils/helpers";
 
 const { jwt: { AccessToken } } = twilio;
@@ -1104,9 +1106,12 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     console.log("cityName", cityName);
     console.log("state", state);
 
-    let userId = req.user?.id || "";
+    const userId = req.user?.id || "";
+    let userClient = await getTwilioClient(userId);
 
-    // Allow a super admin/owner to fetch available numbers on behalf of another user.
+    // Allow a super admin/owner to search for numbers on behalf of another
+    // user — searched (and later bought) via the platform's MASTER Twilio
+    // account rather than the target's own sub-account.
     if (targetUserId && targetUserId !== userId) {
       const callerRole = req.user?.role;
       if (callerRole !== "OWNER" && callerRole !== "SUPER_ADMIN") {
@@ -1118,10 +1123,8 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
         errorResponse(res, { message: "Target user not found" }, 404);
         return;
       }
-      userId = targetUserId;
+      userClient = masterClient;
     }
-
-    const userClient = await getTwilioClient(userId);
 
     const numbers = await userClient.availablePhoneNumbers(countryCode || "US").local.list({
       limit: 10,
@@ -1159,7 +1162,7 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
 export const buyNumber: RequestHandler = async (req, res) => {
   try {
     const { phoneNumber, countryCode, label, userId: targetUserId } = req.body;
-    let userId: string = req.user?.id || "";
+    const userId: string = req.user?.id || "";
 
     if (!userId) {
       errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
@@ -1167,6 +1170,9 @@ export const buyNumber: RequestHandler = async (req, res) => {
     }
 
     // Allow a super admin/owner to buy a number on behalf of another user.
+    // This is always a paid add-on for the target user (billed via Stripe),
+    // purchased on the platform's master Twilio account and transferred into
+    // their sub-account.
     if (targetUserId && targetUserId !== userId) {
       const callerRole = req.user?.role;
       if (callerRole !== "OWNER" && callerRole !== "SUPER_ADMIN") {
@@ -1178,7 +1184,9 @@ export const buyNumber: RequestHandler = async (req, res) => {
         errorResponse(res, { message: "Target user not found" }, 404);
         return;
       }
-      userId = targetUserId;
+
+      await buyNumberOnBehalfOfUser(res, targetUserId, phoneNumber, countryCode, label);
+      return;
     }
 
     const userClient = await getTwilioClient(userId);
@@ -1203,6 +1211,86 @@ export const buyNumber: RequestHandler = async (req, res) => {
     console.error("Number buy failed:", error);
     errorResponse(res, { message: error.message });
     return;
+  }
+}
+
+/**
+ * Buys a number on the master Twilio account and charges the target user for
+ * it as a paid add-on:
+ *   1. preflight: sub-account + Stripe customer + payment method must exist
+ *   2. buy from Twilio on the MASTER account
+ *   3. charge the user (Stripe subscription item, immediate invoice)
+ *   4. on success: transfer the number into their sub-account, save CallerId
+ *   5. on failure at any billing/transfer step: release the number, roll back
+ */
+async function buyNumberOnBehalfOfUser(
+  res: Response,
+  targetUserId: string,
+  phoneNumber: string,
+  countryCode: string | undefined,
+  label: string | undefined,
+) {
+  const subAccountSid = await getUserTwilioSubAccountSid(targetUserId);
+  if (!subAccountSid) {
+    errorResponse(res, { message: "This user has no Twilio sub-account configured yet." }, 400);
+    return;
+  }
+
+  let billableCustomer;
+  try {
+    billableCustomer = await resolveBillableCustomer(targetUserId);
+  } catch (err: any) {
+    errorResponse(res, { message: err.message }, 400);
+    return;
+  }
+
+  const { amountCents, currency } = await getMonthlyPriceCentsForCountry(masterClient, countryCode || "US");
+  const numberLabel = label || phoneNumber;
+
+  const purchased = await masterClient.incomingPhoneNumbers.create({ phoneNumber });
+
+  try {
+    const { stripeSubscriptionItemId } = await addNumberToAddonSubscription(
+      targetUserId,
+      billableCustomer.stripeCustomerId,
+      billableCustomer.paymentMethodId,
+      amountCents,
+      currency,
+      numberLabel,
+    );
+
+    try {
+      await transferNumberToSubAccount(purchased.sid, subAccountSid);
+    } catch (transferErr: any) {
+      await removeAddonSubscriptionItem(stripeSubscriptionItemId);
+      throw transferErr;
+    }
+
+    let systemSettings = await prisma.system_Setting.findFirst({ where: { userId: targetUserId } });
+    if (!systemSettings) {
+      systemSettings = await prisma.system_Setting.create({ data: { userId: targetUserId } });
+    }
+
+    const newCallerId = await prisma.callerId.create({
+      data: {
+        label: numberLabel,
+        countryCode: countryCode || "US",
+        twillioNumber: purchased.phoneNumber,
+        twillioSid: purchased.sid,
+        systemSettingId: systemSettings.id,
+        billingSource: "PAID_ADDON",
+        monthlyPriceCents: amountCents,
+        currency,
+        stripeSubscriptionItemId,
+        numberBillingStatus: "ACTIVE",
+      },
+    });
+
+    successResponse(res, 200, "Number bought and billed successfully", { number: purchased, callerId: newCallerId });
+  } catch (error: any) {
+    console.error("[buyNumberOnBehalfOfUser] Billing/transfer failed, releasing number:", error.message);
+    await releaseNumber(purchased.sid, masterClient).catch(() => undefined);
+    errorResponse(res, { message: error.message || "Failed to charge the user for this number." }, 402);
   }
 }
 

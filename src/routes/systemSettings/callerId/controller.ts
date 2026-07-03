@@ -9,6 +9,8 @@ import {
   getCooldownStatus,
   recordCallAndRotateIfNeeded,
 } from "./service";
+import { getTwilioClient, releaseNumber } from "../../../services/twilio-account.service";
+import { removeAddonSubscriptionItem, cancelAddonSubscriptionForUser } from "../../../services/phoneNumberBilling.service";
 
 export const getAllCallerIdsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -429,6 +431,26 @@ export const deleteCallerId = async (req: Request, res: Response): Promise<void>
     if (callerId.systemSettingId !== systemSettings.id) {
       errorResponse(res, "You cannot update or delete another user's CallerId", 403);
       return;
+    }
+
+    // Paid add-on numbers stop being billed and get released back to Twilio
+    // the moment they're removed.
+    if (callerId.billingSource === "PAID_ADDON") {
+      if (callerId.stripeSubscriptionItemId) {
+        await removeAddonSubscriptionItem(callerId.stripeSubscriptionItemId);
+      }
+      if (callerId.twillioSid) {
+        const ownerClient = await getTwilioClient(userId);
+        await releaseNumber(callerId.twillioSid, ownerClient).catch((err: any) =>
+          console.error(`[deleteCallerId] Failed to release ${callerId.twillioSid} from Twilio:`, err.message)
+        );
+      }
+      const remaining = await prisma.callerId.count({
+        where: { billingSource: "PAID_ADDON", id: { not: id }, systemSettingId: systemSettings.id },
+      });
+      if (remaining === 0) {
+        await cancelAddonSubscriptionForUser(userId);
+      }
     }
 
     // Delete the CallerId

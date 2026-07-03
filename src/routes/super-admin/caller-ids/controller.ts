@@ -4,7 +4,8 @@ import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertCallerIdInDb } from "../../systemSettings/callerId/service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateCallerIdSchema } from "../../../schemas/callerId.schema";
-import { getTwilioClient } from "../../../services/twilio-account.service";
+import { getTwilioClient, releaseNumber } from "../../../services/twilio-account.service";
+import { removeAddonSubscriptionItem, cancelAddonSubscriptionForUser } from "../../../services/phoneNumberBilling.service";
 
 const CALLER_ID_SELECT = {
   id: true,
@@ -130,10 +131,42 @@ export const deleteAnyCallerId = async (req: Request, res: Response): Promise<vo
   try {
     const { id } = req.params;
 
-    const existing = await prisma.callerId.findUnique({ where: { id }, select: { id: true } });
+    const existing = await prisma.callerId.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        twillioSid: true,
+        billingSource: true,
+        stripeSubscriptionItemId: true,
+        systemSetting: { select: { userId: true } },
+      },
+    });
     if (!existing) {
       errorResponse(res, "Caller ID not found", 404);
       return;
+    }
+
+    // Paid add-on numbers stop being billed and get released back to Twilio
+    // the moment they're removed — never leave the platform paying Twilio for
+    // a number nobody is being charged for.
+    if (existing.billingSource === "PAID_ADDON") {
+      if (existing.stripeSubscriptionItemId) {
+        await removeAddonSubscriptionItem(existing.stripeSubscriptionItemId);
+      }
+      if (existing.twillioSid && existing.systemSetting?.userId) {
+        const ownerClient = await getTwilioClient(existing.systemSetting.userId);
+        await releaseNumber(existing.twillioSid, ownerClient).catch((err: any) =>
+          console.error(`[deleteAnyCallerId] Failed to release ${existing.twillioSid} from Twilio:`, err.message)
+        );
+      }
+      if (existing.systemSetting?.userId) {
+        const remaining = await prisma.callerId.count({
+          where: { billingSource: "PAID_ADDON", id: { not: id }, systemSetting: { userId: existing.systemSetting.userId } },
+        });
+        if (remaining === 0) {
+          await cancelAddonSubscriptionForUser(existing.systemSetting.userId);
+        }
+      }
     }
 
     await prisma.callerId.delete({ where: { id } });

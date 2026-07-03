@@ -83,6 +83,58 @@ export async function getTwilioClient(userId: string) {
 }
 
 /**
+ * Returns the Twilio sub-account SID that owns the given user's numbers
+ * (resolving AGENT → parent ADMIN, same rule as getTwilioClient), or null if
+ * the user has no Twilio integration configured yet.
+ */
+export async function getUserTwilioSubAccountSid(userId: string): Promise<string | null> {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, createdById: true },
+    });
+    if (!user) return null;
+
+    const effectiveUserId = user.role === "AGENT" && user.createdById ? user.createdById : userId;
+
+    const integration = await prisma.integration.findFirst({
+        where: {
+            provider: "TWILIO",
+            systemSetting: { userId: effectiveUserId },
+        },
+    });
+
+    const creds = integration?.credentials as any;
+    return creds?.accountSid || null;
+}
+
+/**
+ * Transfers ownership of a phone number (bought on the master account) into a
+ * user's Twilio sub-account, using Twilio's "Exchanging Numbers Between
+ * Subaccounts" mechanism — an update call authenticated as the CURRENT owner
+ * (master), specifying the target sub-account's SID.
+ */
+export async function transferNumberToSubAccount(twilioSid: string, subAccountSid: string) {
+    await masterClient.incomingPhoneNumbers(twilioSid).update({ accountSid: subAccountSid });
+}
+
+/**
+ * Releases (relinquishes) a phone number back to Twilio. Pass the client that
+ * currently owns the number — the master client if the purchase/charge failed
+ * before transfer, or the user's own sub-account client if it was already
+ * transferred to them.
+ */
+export async function releaseNumber(twilioSid: string, ownerClient: ReturnType<typeof twilio> = masterClient) {
+    try {
+        await ownerClient.incomingPhoneNumbers(twilioSid).remove();
+    } catch (error: any) {
+        console.error(`[TwilioService] Failed to release number ${twilioSid}:`, error.message);
+        throw error;
+    }
+}
+
+export { masterClient };
+
+/**
  * Automatically finds and purchases a US phone number for a sub-account.
  * @param subAccountSid The SID of the sub-account
  * @param subAccountAuthToken The Auth Token of the sub-account

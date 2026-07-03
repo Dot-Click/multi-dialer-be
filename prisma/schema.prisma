@@ -161,6 +161,20 @@ enum DialerType {
   PREVIEW
 }
 
+// Numbers bought via the super-admin "buy on behalf of user" flow are always
+// PAID_ADDON — billed monthly via a dedicated Stripe subscription. Numbers
+// provisioned any other way (e.g. at signup) are PLAN_INCLUDED and carry no
+// per-number Stripe subscription item.
+enum CallerIdBillingSource {
+  PLAN_INCLUDED
+  PAID_ADDON
+}
+
+enum NumberBillingStatus {
+  ACTIVE
+  PAST_DUE
+}
+
 enum RecordingType {
   VOICE_MAIL
   ON_HOLD
@@ -240,22 +254,23 @@ model User {
   // All recordings uploaded by this admin — reusable across any settings
   recordings Recording[]
 
-  contactLists        ContactList[]
-  contactFolders      ContactFolder[]
-  contactGroups       ContactGroups[]
-  contacts            Contact[]
-  contactActivityLogs ContactActivityLog[]
-  importContacts      ImportContact[]
-  exportContacts      ExportContact[]
-  backupContacts      BackupContacts[]
-  pushSubscriptions   PushSubscription[]
-  notifications       Notification[]
-  emailLogs           EmailLog[]
-  smsLogs             SmsLog[]
-  myPlusLeadsConfig   MyPlusLeadsConfig?
-  a2pRegistration     A2P_Registration?
-  dispositionLogs     ContactDispositionLog[]
-  dialListSessions    DialListSession[]
+  contactLists            ContactList[]
+  contactFolders          ContactFolder[]
+  contactGroups           ContactGroups[]
+  contacts                Contact[]
+  contactActivityLogs     ContactActivityLog[]
+  importContacts          ImportContact[]
+  exportContacts          ExportContact[]
+  backupContacts          BackupContacts[]
+  pushSubscriptions       PushSubscription[]
+  notifications           Notification[]
+  emailLogs               EmailLog[]
+  smsLogs                 SmsLog[]
+  myPlusLeadsConfig       MyPlusLeadsConfig?
+  a2pRegistration         A2P_Registration?
+  phoneNumberSubscription PhoneNumberSubscription?
+  dispositionLogs         ContactDispositionLog[]
+  dialListSessions        DialListSession[]
 
   // Calendar & Task System
   callbacks              Callback[]
@@ -1113,7 +1128,30 @@ model CallerId {
   reputationScore     Int?
   lastReputationCheck DateTime?
 
+  // Paid add-on billing (numbers bought via the super-admin "buy on behalf" flow)
+  billingSource            CallerIdBillingSource @default(PLAN_INCLUDED)
+  monthlyPriceCents        Int?
+  currency                 String?               @default("usd")
+  stripeSubscriptionItemId String?
+  numberBillingStatus      NumberBillingStatus?  @default(ACTIVE)
+
   @@map("caller_id")
+}
+
+// One dedicated Stripe subscription per user, holding a subscription item for
+// each PAID_ADDON phone number they've bought beyond their plan. Kept separate
+// from their plan subscription so plan changes never touch number billing.
+model PhoneNumberSubscription {
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeCustomerId     String
+  stripeSubscriptionId String
+  status               String   @default("active")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("phone_number_subscriptions")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1330,11 +1368,11 @@ model Task {
   agentId   String
   agent     User    @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
-  title  String
-  notes  String?
-  dueAt  DateTime
-  status TaskStatus @default(OPEN)
-  reminderSent Boolean @default(false)
+  title        String
+  notes        String?
+  dueAt        DateTime
+  status       TaskStatus @default(OPEN)
+  reminderSent Boolean    @default(false)
 
   externalEventId  String?          @unique
   externalProvider ExternalProvider @default(NONE)
@@ -1357,7 +1395,7 @@ model ExternalCalendarToken {
   refreshToken String
   expiresAt    DateTime
   calendarId   String?
-  timezone     String  @default("UTC")
+  timezone     String   @default("UTC")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1733,15 +1771,15 @@ model BillingEvent {
 }
 
 model SubscriptionPlanChange {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fromPlan    String
-  toPlan      String
-  fromAmount  Float    @default(0)
-  toAmount    Float    @default(0)
-  changeType  String   // "UPGRADE" | "DOWNGRADE"
-  changedAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromPlan   String
+  toPlan     String
+  fromAmount Float    @default(0)
+  toAmount   Float    @default(0)
+  changeType String // "UPGRADE" | "DOWNGRADE"
+  changedAt  DateTime @default(now())
 
   @@map("subscription_plan_changes")
 }

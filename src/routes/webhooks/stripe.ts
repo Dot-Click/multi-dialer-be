@@ -2,7 +2,8 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import Stripe from "stripe";
 import prisma from "../../lib/prisma";
-import { createTwilioSubAccount, purchaseUSPhoneNumber } from "../../services/twilio-account.service";
+import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
+import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
@@ -50,6 +51,72 @@ async function mirrorInvoiceToBilling(
   } catch (err: any) {
     console.error(`[Stripe Webhook] Billing sync failed for invoice ${invoice?.id}:`, err.message);
   }
+}
+
+// Releases every PAID_ADDON number billed on an invoice back to Twilio and
+// removes it, once Stripe has given up collecting for that invoice. Matches
+// invoice line items to CallerId rows via stripeSubscriptionItemId. Safe to
+// call more than once for the same invoice — already-removed numbers simply
+// won't be found and are skipped.
+async function releaseAddonNumbersForUncollectibleInvoice(invoice: any): Promise<void> {
+  const subscriptionItemIds: string[] = (invoice.lines?.data || [])
+    .map((line: any) => line.subscription_item)
+    .filter(Boolean);
+
+  for (const subscriptionItemId of subscriptionItemIds) {
+    const callerId = await prisma.callerId.findFirst({
+      where: { stripeSubscriptionItemId: subscriptionItemId },
+      include: { systemSetting: { select: { userId: true } } },
+    });
+    if (!callerId) continue;
+
+    const ownerUserId = callerId.systemSetting.userId;
+    console.log(`[Stripe Webhook] Releasing unpaid add-on number ${callerId.twillioNumber} for user ${ownerUserId}.`);
+
+    if (callerId.twillioSid) {
+      const ownerClient = await getTwilioClient(ownerUserId);
+      await releaseNumber(callerId.twillioSid, ownerClient).catch((err: any) =>
+        console.error(`[Stripe Webhook] Failed to release ${callerId.twillioSid}:`, err.message)
+      );
+    }
+
+    await prisma.callerId.delete({ where: { id: callerId.id } }).catch(() => undefined);
+
+    const remaining = await prisma.callerId.count({
+      where: { billingSource: "PAID_ADDON", systemSetting: { userId: ownerUserId } },
+    });
+    if (remaining === 0) {
+      await cancelAddonSubscriptionForUser(ownerUserId);
+    }
+  }
+}
+
+// Releases every phone number this user owns (both plan-included and paid
+// add-ons) back to Twilio and hard-deletes them, then cancels their dedicated
+// add-on Stripe subscription. Used when their plan subscription fully ends —
+// at that point we have no ongoing billing relationship, so we stop paying
+// Twilio for any of their numbers, not just the paid extras.
+async function releaseAllNumbersForUser(userId: string): Promise<void> {
+  const callerIds = await prisma.callerId.findMany({
+    where: { systemSetting: { userId } },
+    select: { id: true, twillioSid: true },
+  });
+
+  if (callerIds.length === 0) return;
+
+  const ownerClient = await getTwilioClient(userId);
+  for (const c of callerIds) {
+    if (c.twillioSid) {
+      await releaseNumber(c.twillioSid, ownerClient).catch((err: any) =>
+        console.error(`[Stripe Webhook] Failed to release number ${c.twillioSid} for user ${userId}:`, err.message)
+      );
+    }
+  }
+
+  await prisma.callerId.deleteMany({ where: { id: { in: callerIds.map((c) => c.id) } } });
+  await cancelAddonSubscriptionForUser(userId);
+
+  console.log(`[Stripe Webhook] Released ${callerIds.length} number(s) for canceled user ${userId}.`);
 }
 
 // Important: Webhooks need raw body for signature verification.
@@ -492,6 +559,12 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           }
         }
 
+        try {
+          await releaseAllNumbersForUser(subRecord.userId);
+        } catch (err: any) {
+          console.error(`[Stripe Webhook] Failed to release numbers for canceled user ${subRecord.userId}:`, err.message);
+        }
+
         console.log(`[Stripe Webhook] customer.subscription.deleted processed successfully.`);
       } else {
         console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
@@ -509,7 +582,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       const invoice = event.data.object as any;
       const stripeCustomerId = invoice.customer;
 
-      console.log(`[Stripe Webhook] invoice.payment_failed: customer=${stripeCustomerId}`);
+      console.log(`[Stripe Webhook] invoice.payment_failed: customer=${stripeCustomerId}, next_payment_attempt=${invoice.next_payment_attempt}`);
 
       // Mirror into the local Billing ledger as a FAILED invoice.
       await mirrorInvoiceToBilling(stripe, invoice, "FAILED");
@@ -531,7 +604,17 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
         console.log(`[Stripe Webhook] invoice.payment_failed processed successfully.`);
       } else {
+        // Not the main plan subscription — check if this is the dedicated
+        // phone-number add-on subscription instead.
         console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
+      }
+
+      // `next_payment_attempt` is null once Stripe has exhausted all retries
+      // for this invoice — regardless of whether the account's dunning
+      // settings are configured to also mark it "uncollectible". This is the
+      // reliable signal to release any add-on numbers billed on it.
+      if (invoice.next_payment_attempt === null) {
+        await releaseAddonNumbersForUncollectibleInvoice(invoice);
       }
 
       await persistEvent("PROCESSED");
@@ -575,6 +658,25 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       await persistEvent("PROCESSED");
     } catch (error: any) {
       console.error(`[Stripe Webhook] invoice.paid error:`, error.message);
+      await persistEvent("FAILED");
+    }
+
+  // ─── invoice.marked_uncollectible ─────────────────────────────────────────
+  // Only fires if the account's dunning settings are configured to
+  // auto-mark invoices uncollectible after final retry — not guaranteed.
+  // The reliable release path is `next_payment_attempt === null` in
+  // invoice.payment_failed above; this is a secondary, idempotent catch-all
+  // for accounts that do have that setting on.
+  } else if (event.type === "invoice.marked_uncollectible") {
+    try {
+      const invoice = event.data.object as any;
+      console.log(`[Stripe Webhook] invoice.marked_uncollectible: id=${invoice.id}, customer=${invoice.customer}`);
+
+      await releaseAddonNumbersForUncollectibleInvoice(invoice);
+
+      await persistEvent("PROCESSED");
+    } catch (error: any) {
+      console.error(`[Stripe Webhook] invoice.marked_uncollectible error:`, error.message);
       await persistEvent("FAILED");
     }
 
