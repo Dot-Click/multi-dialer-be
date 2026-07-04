@@ -4,11 +4,32 @@ import { successResponse, errorResponse } from "../../utils/handler";
 import Stripe from "stripe";
 import { envConfig } from "@/lib/config";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
+import { getEffectiveLock } from "../../utils/status";
 
 // Initialize Stripe (requires STRIPE_SECRET_KEY in .env)
 const stripe = new Stripe(envConfig.STRIPE_SECRET_KEY || "", {
   apiVersion: "2026-04-22.dahlia",
 });
+
+/**
+ * Returns whether the current user's dialer/feature access is locked (trial expired
+ * and no active subscription), and whether this user is allowed to purchase.
+ * Agents inherit their owning admin's subscription status.
+ */
+export const getAccessStatus = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      errorResponse(res, "Unauthorized", 401);
+      return;
+    }
+
+    const { locked, canPurchase } = await getEffectiveLock(userId);
+    successResponse(res, 200, "Access status fetched", { locked, canPurchase });
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
 
 function toCents(amount: number) {
   return Math.round(Number(amount) * 100);

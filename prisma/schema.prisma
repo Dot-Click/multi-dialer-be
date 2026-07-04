@@ -1215,6 +1215,11 @@ model CallAnalysis {
   leadId       String
   sentiment    String // POSITIVE | NEUTRAL | NEGATIVE
   confidence   Float
+  leadInterest String   @default("none") // high | medium | low | none
+  callOutcome  String   @default("no_meaningful_conversation") // interested | callback_requested | not_interested | voicemail | hung_up_early | no_meaningful_conversation
+  complianceFlags String[] @default([]) // compliance issues detected by AI (do-not-call, no disclosure, abusive language, misrepresentation)
+  riskPhrases     String[] @default([]) // exact sensitive / non-compliant phrases spoken
+  objections      String[] @default([]) // objections the prospect raised, as detected by AI
   transcript   String
   aiSummary    String?
   recordingUrl String?

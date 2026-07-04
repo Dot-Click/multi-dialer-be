@@ -1046,6 +1046,13 @@ ACCURACY RULES:
 • Quotes or paraphrases from the transcript are preferred over generic observations.
 • If the transcript is empty, too short, or unintelligible, set sentiment to "neutral" and note it in the summary.
 
+COMPLIANCE RULES — flag ONLY what is explicitly present in the transcript:
+• Do-not-call / opt-out: prospect says "stop calling", "remove me from your list", "do not call me again", "put me on your do-not-call list".
+• Missing recording disclosure: the call is recorded but the agent never disclosed it (only flag if it's clearly a two-party conversation with no disclosure).
+• Abusive / inappropriate language: profanity, harassment, threats, or discriminatory language from EITHER party.
+• Misrepresentation: agent makes false or misleading claims (guarantees, fake urgency, impersonation).
+• Do NOT invent compliance issues. If none are present, return empty arrays.
+
 Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
 {
   "sentiment": "positive" | "neutral" | "negative",
@@ -1055,6 +1062,8 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
   "objections": [<exact objections raised, e.g. "already working with another agent", "not the right time">],
   "next_steps": "<agreed follow-up action, or 'none'>",
   "call_outcome": "interested" | "callback_requested" | "not_interested" | "voicemail" | "hung_up_early" | "no_meaningful_conversation",
+  "compliance_flags": [<short labels for any compliance issue detected, e.g. "do-not-call requested", "no recording disclosure", "abusive language", "misrepresentation"; empty array if none>],
+  "risk_phrases": [<exact sensitive or non-compliant phrases spoken, verbatim from the transcript; empty array if none>],
   "summary": "<4–6 sentences describing: (1) how the call opened, (2) what topics came up, (3) how the prospect responded to key points, (4) any objections and how they were handled, (5) how the call ended and what was agreed>"
 }`
         },
@@ -1428,15 +1437,43 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
 
         const sentimentAnalysis = await this.analyzeSentiment(richTranscript);
 
+        const leadInterest = String(sentimentAnalysis?.lead_interest || "none").toLowerCase();
+        const callOutcome = String(sentimentAnalysis?.call_outcome || "no_meaningful_conversation").toLowerCase();
+        const complianceFlags = Array.isArray(sentimentAnalysis?.compliance_flags)
+          ? sentimentAnalysis.compliance_flags.map((f: any) => String(f)).filter(Boolean)
+          : [];
+        const riskPhrases = Array.isArray(sentimentAnalysis?.risk_phrases)
+          ? sentimentAnalysis.risk_phrases.map((p: any) => String(p)).filter(Boolean)
+          : [];
+        const objections = Array.isArray(sentimentAnalysis?.objections)
+          ? sentimentAnalysis.objections.map((o: any) => String(o)).filter(Boolean)
+          : [];
+
         await prisma.callAnalysis.upsert({
           where: { callSid: callRecord.callSid },
-          update: { recordingUrl: r2Url },
+          update: {
+            recordingUrl: r2Url,
+            sentiment: sentimentAnalysis?.sentiment || "neutral",
+            confidence: sentimentAnalysis?.confidence || 0,
+            leadInterest,
+            callOutcome,
+            complianceFlags,
+            riskPhrases,
+            objections,
+            aiSummary: buildAiSummary(sentimentAnalysis),
+            transcript: richTranscript || transcription.text
+          },
           create: {
             callSid: callRecord.callSid,
             leadId: callRecord.leadId || "",
             recordingUrl: r2Url,
             sentiment: sentimentAnalysis?.sentiment || "neutral",
             confidence: sentimentAnalysis?.confidence || 0,
+            leadInterest,
+            callOutcome,
+            complianceFlags,
+            riskPhrases,
+            objections,
             aiSummary: buildAiSummary(sentimentAnalysis),
             transcript: richTranscript || transcription.text
           }

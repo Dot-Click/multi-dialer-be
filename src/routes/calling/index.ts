@@ -101,15 +101,6 @@ router.get("/efficiency", protectRoute, getEfficiency);
 router.get("/compliance", protectRoute, getCompliance);
 router.get("/call-group", protectRoute, getCallGroup);
 router.get("/improvement", protectRoute, getImprovement);
-router.get("/sidekick-insights", protectRoute, getSidekickInsights);
-router.get("/best-time-to-call", protectRoute, getBestTimeToCall);
-router.get("/lead-intelligence", protectRoute, getLeadIntelligence);
-router.get("/ai-coaching", protectRoute, getAiCoaching);
-router.get("/call-outcome", protectRoute, getCallOutcome);
-router.get("/efficiency", protectRoute, getEfficiency);
-router.get("/compliance", protectRoute, getCompliance);
-router.get("/call-group", protectRoute, getCallGroup);
-router.get("/improvement", protectRoute, getImprovement);
 
 // Twilio Webhooks
 router.post("/webhooks/voice", handleVoiceWebhook);

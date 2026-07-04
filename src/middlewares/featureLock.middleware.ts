@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { errorResponse } from "../utils/handler";
-import { isFeatureLocked } from "../utils/status";
+import { getEffectiveLock } from "../utils/status";
 
 /**
  * Middleware to block access to restricted features for expired trials.
@@ -15,10 +15,11 @@ export const checkFeatureLocked = async (
 
     if (!user) {
       errorResponse(res, "Authentication required", 401);
-      return 
+      return
     }
 
-    if (isFeatureLocked(user)) {
+    const { locked } = await getEffectiveLock(user.id);
+    if (locked) {
       errorResponse(
         res,
         {

@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { checkRole, protectRoute } from "../../middlewares/auth.middleware";
-import { getBillingPortal, getSubscriptions, getPlans, updatePlan, changeSubscriptionPlan, cancelSubscription, upgradeSubscription, getInvoicesByCustomer, getInvoicesByUser, getAllInvoices, getInvoiceById, getInvoiceCard, createPlan, deletePlan, getFailedPayments, getUpcomingRenewals, getAllInvoicesAdmin, getAllSubscriptionsAdmin } from "./controller";
+import { getBillingPortal, getSubscriptions, getPlans, updatePlan, changeSubscriptionPlan, cancelSubscription, upgradeSubscription, getInvoicesByCustomer, getInvoicesByUser, getAllInvoices, getInvoiceById, getInvoiceCard, createPlan, deletePlan, getFailedPayments, getUpcomingRenewals, getAllInvoicesAdmin, getAllSubscriptionsAdmin, getAccessStatus } from "./controller";
 
 const router = Router();
 
+router.get("/access-status", protectRoute, getAccessStatus);
 router.get("/portal", protectRoute, getBillingPortal);
 router.get("/subscriptions", protectRoute, getSubscriptions);
 router.get("/plans/public", getPlans);

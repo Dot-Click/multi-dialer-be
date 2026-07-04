@@ -428,15 +428,19 @@ export const getLeadIntelligence: RequestHandler = async (req, res) => {
         });
         const userCallSids = userCallRecords.map(r => r.callSid);
 
-        // 1. Avg AI Lead Score — scoped to user's calls
+        // 1. Avg AI Lead Score — derived from the AI's lead_interest rating (not
+        //    the sentiment-classification confidence). high=100 / medium=60 / low=20 / none=0.
         const analyses = await prisma.callAnalysis.findMany({
             where: { callSid: { in: userCallSids } },
-            select: { confidence: true, sentiment: true }
+            select: { confidence: true, sentiment: true, leadInterest: true }
         });
+
+        const INTEREST_SCORE: Record<string, number> = { high: 100, medium: 60, low: 20, none: 0 };
+        const interestOf = (a: { leadInterest: string }) => (a.leadInterest || "none").toLowerCase();
 
         const total = analyses.length;
         const avgScore = total > 0
-            ? Math.round(analyses.reduce((sum, a) => sum + a.confidence, 0) / total * 100)
+            ? Math.round(analyses.reduce((sum, a) => sum + (INTEREST_SCORE[interestOf(a)] ?? 0), 0) / total)
             : 0;
 
         // 2. Engagement Prediction
@@ -462,10 +466,11 @@ export const getLeadIntelligence: RequestHandler = async (req, res) => {
         // });
         // userIds = [userId, ...agents.map(a => a.id)];
 
-        // 4. Pie Data — derived from same analyses fetch above (no extra query)
-        const high = analyses.filter(a => a.confidence >= 0.7).length;
-        const medium = analyses.filter(a => a.confidence >= 0.4 && a.confidence < 0.7).length;
-        const low = analyses.filter(a => a.confidence < 0.4).length;
+        // 4. Pie Data — bucketed by the AI's lead_interest rating (real lead quality),
+        //    not by classification confidence. "none" rolls into Low.
+        const high = analyses.filter(a => interestOf(a) === "high").length;
+        const medium = analyses.filter(a => interestOf(a) === "medium").length;
+        const low = analyses.filter(a => interestOf(a) === "low" || interestOf(a) === "none").length;
 
         const pieData = [
             { name: "High", value: high },
@@ -491,12 +496,26 @@ export const getLeadIntelligence: RequestHandler = async (req, res) => {
             ORDER BY date ASC
         `;
 
-        const sentimentTrend = trendDataRaw.map(t => ({
-            name: t.day,
-            Positive: Number(t.positive),
-            Neutral: Number(t.neutral),
-            Negative: Number(t.negative)
-        }));
+        // Zero-fill the last 7 days so the trend line is continuous (Mon..Sun as
+        // they actually occurred), keyed by calendar date to avoid weekday collisions.
+        const byDate = new Map<string, { positive: number; neutral: number; negative: number }>();
+        for (const t of trendDataRaw) {
+            const key = new Date(t.date).toISOString().slice(0, 10);
+            byDate.set(key, {
+                positive: Number(t.positive),
+                neutral: Number(t.neutral),
+                negative: Number(t.negative)
+            });
+        }
+
+        const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const sentimentTrend = Array.from({ length: 7 }).map((_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() - (6 - i));
+            const key = d.toISOString().slice(0, 10);
+            const v = byDate.get(key) ?? { positive: 0, neutral: 0, negative: 0 };
+            return { name: DOW[d.getDay()], Positive: v.positive, Neutral: v.neutral, Negative: v.negative };
+        });
 
         successResponse(res, 200, "Lead intelligence fetched", {
             summary: {
@@ -557,13 +576,22 @@ export const getAiCoaching: RequestHandler = async (req, res) => {
         // All analyses for these users
         const analyses = await prisma.callAnalysis.findMany({
             where: { callSid: { in: userCallSids } },
-            select: { sentiment: true, confidence: true }
+            select: { sentiment: true, confidence: true, objections: true, callOutcome: true }
         });
 
         const total = analyses.length || 1;
-        const handledSuccessfully = analyses.filter(a => a.sentiment === "positive" && a.confidence >= 0.6).length;
-        const missed = analyses.length - handledSuccessfully;
-        const objectionRate = Math.round((handledSuccessfully / total) * 100);
+
+        // Objection handling — real: among calls where the AI detected an objection,
+        // how many were still steered to a good outcome (interested / callback requested).
+        const HANDLED_OUTCOMES = new Set(["interested", "callback_requested"]);
+        const callsWithObjections = analyses.filter(a => (a.objections?.length ?? 0) > 0);
+        const handledSuccessfully = callsWithObjections.filter(a =>
+            HANDLED_OUTCOMES.has((a.callOutcome || "").toLowerCase())
+        ).length;
+        const missed = callsWithObjections.length - handledSuccessfully;
+        const objectionRate = callsWithObjections.length > 0
+            ? Math.round((handledSuccessfully / callsWithObjections.length) * 100)
+            : 0;
 
         const excellent = analyses.filter(a => a.confidence >= 0.8).length;
         const average   = analyses.filter(a => a.confidence >= 0.4 && a.confidence < 0.8).length;
@@ -571,6 +599,13 @@ export const getAiCoaching: RequestHandler = async (req, res) => {
         const avgConfidence = Math.round(
             analyses.reduce((acc, curr) => acc + curr.confidence, 0) / total * 100
         );
+
+        // Keyword Optimization Score — real positive-sentiment rate across analyzed calls
+        // (was previously a fabricated avgConfidence * 0.95).
+        const positiveCount = analyses.filter(a => (a.sentiment || "").toLowerCase() === "positive").length;
+        const keywordScore = analyses.length > 0
+            ? Math.round((positiveCount / analyses.length) * 100)
+            : 0;
 
         successResponse(res, 200, "AI coaching fetched", {
             coachingEvents: {
@@ -593,7 +628,7 @@ export const getAiCoaching: RequestHandler = async (req, res) => {
                     { name: 'Poor',      value: poor }
                 ]
             },
-            keywordScore: Math.round(avgConfidence * 0.95)
+            keywordScore
         });
     } catch (error: any) {
         console.error("Error fetching AI coaching:", error);
@@ -612,26 +647,54 @@ export const getCallOutcome: RequestHandler = async (req, res) => {
             return;
         }
 
-        // 1. AI-Predicted outcomes (derived from dispositions)
-        const totalCalls = await prisma.callRecord.count({ where: { userId } });
-        const apptSet = await prisma.callRecord.count({ where: { userId, disposition: "HOT" } });
-        const interested = await prisma.callRecord.count({ where: { userId, disposition: "WARM" } });
-        const notInterested = await prisma.callRecord.count({ where: { userId, disposition: "NOT_INTERESTED" } });
+        // Scope to admin's agents (was previously unscoped — leaked other tenants' data)
+        let userIds = [userId];
+        if (req.user?.role === 'ADMIN') {
+            const agents = await prisma.user.findMany({
+                where: { createdById: userId },
+                select: { id: true }
+            });
+            userIds = [userId, ...agents.map(a => a.id)];
+        }
+
+        // callSids bridge CallRecord -> CallAnalysis
+        const userCallSids = await prisma.callRecord.findMany({
+            where: { userId: { in: userIds } },
+            select: { callSid: true }
+        }).then(r => r.map(c => c.callSid));
+
+        // 1. Predicted outcomes — team-scoped dispositions
+        const totalCalls = await prisma.callRecord.count({ where: { userId: { in: userIds } } });
+        const apptSet = await prisma.callRecord.count({ where: { userId: { in: userIds }, disposition: "HOT" } });
+        const interested = await prisma.callRecord.count({ where: { userId: { in: userIds }, disposition: "WARM" } });
+        const notInterested = await prisma.callRecord.count({ where: { userId: { in: userIds }, disposition: "NOT_INTERESTED" } });
 
         const apptSetPerc = totalCalls > 0 ? Math.round((apptSet / totalCalls) * 100) : 0;
         const interestedPerc = totalCalls > 0 ? Math.round((interested / totalCalls) * 100) : 0;
 
-        // 2. Conversation Quality Score (derived from confidence)
-        const avgStats = await prisma.callAnalysis.aggregate({
-            _avg: { confidence: true }
+        // Analyses for this team (scoped) — used for quality score + keyword bar
+        const analyses = await prisma.callAnalysis.findMany({
+            where: { callSid: { in: userCallSids } },
+            select: { sentiment: true, callOutcome: true }
         });
-        const qualityScore = Math.round((avgStats._avg.confidence || 0) * 100);
+        const totalAnalyses = analyses.length;
 
-        // 3. Keyword Optimization Score (Mocked/Distributed)
+        // 2. Conversation Quality Score — share of calls that were genuine, meaningful
+        //    conversations (real engagement depth), not voicemail / early hangups / dead air.
+        const NON_ENGAGED = new Set(["voicemail", "hung_up_early", "no_meaningful_conversation"]);
+        const meaningful = analyses.filter(a => !NON_ENGAGED.has((a.callOutcome || "").toLowerCase())).length;
+        const qualityScore = totalAnalyses > 0 ? Math.round((meaningful / totalAnalyses) * 100) : 0;
+
+        // 3. Keyword Optimization Score — real distribution of how well messaging landed,
+        //    derived from team sentiment (positive = High, neutral = Medium, negative = Low).
+        const pos = analyses.filter(a => (a.sentiment || "").toLowerCase() === "positive").length;
+        const neu = analyses.filter(a => (a.sentiment || "").toLowerCase() === "neutral").length;
+        const neg = analyses.filter(a => (a.sentiment || "").toLowerCase() === "negative").length;
+        const pct = (n: number) => (totalAnalyses > 0 ? Math.round((n / totalAnalyses) * 100) : 0);
         const keywordData = [
-            { label: 'Low', percentage: 25, color: 'bg-green-500' },
-            { label: 'Medium', percentage: 45, color: 'bg-yellow-400' },
-            { label: 'High', percentage: 30, color: 'bg-red-500' },
+            { label: 'High',   percentage: pct(pos), color: 'bg-green-500' },
+            { label: 'Medium', percentage: pct(neu), color: 'bg-yellow-400' },
+            { label: 'Low',    percentage: pct(neg), color: 'bg-red-500' },
         ];
 
         successResponse(res, 200, "Call outcome analytics fetched", {
@@ -660,11 +723,21 @@ export const getEfficiency: RequestHandler = async (req, res) => {
             return;
         }
 
+        // Scope to admin's agents (was previously scoped only to the admin's own calls)
+        let userIds = [userId];
+        if (req.user?.role === 'ADMIN') {
+            const agents = await prisma.user.findMany({
+                where: { createdById: userId },
+                select: { id: true }
+            });
+            userIds = [userId, ...agents.map(a => a.id)];
+        }
+
         // 1. Time Saved (derived from calls today)
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
         const callsToday = await prisma.callRecord.count({
-            where: { userId, startTime: { gte: todayStart } }
+            where: { userId: { in: userIds }, startTime: { gte: todayStart } }
         });
         const timeSaved = callsToday * 2; // Assuming 2 mins saved per call
 
@@ -672,9 +745,14 @@ export const getEfficiency: RequestHandler = async (req, res) => {
         const tasksAutomated = callsToday * 3; // Assuming 3 tasks per call (CRM update, transcript, etc)
         const tasksAutomatedPercentage = Math.min(Math.round((tasksAutomated / 100) * 100), 100);
 
-        // 3. AI-Handled Conversations
+        // 3. AI-Handled Conversations — scope analyses to this team's calls today
+        //    (was globally unscoped, which leaked other tenants' analyses into the ratio).
+        const todayCallSids = await prisma.callRecord.findMany({
+            where: { userId: { in: userIds }, startTime: { gte: todayStart } },
+            select: { callSid: true }
+        }).then(r => r.map(c => c.callSid));
         const analyzedCalls = await prisma.callAnalysis.count({
-            where: { createdAt: { gte: todayStart } }
+            where: { callSid: { in: todayCallSids } }
         });
         const handledPercentage = callsToday > 0 ? Math.round((analyzedCalls / callsToday) * 100) : 0;
 
@@ -722,26 +800,26 @@ export const getCompliance: RequestHandler = async (req, res) => {
             select: { callSid: true }
         }).then(r => r.map(r => r.callSid));
 
-        // 1. Compliance Flags
-        const flags = await prisma.callRecord.count({
-            where: { userId: { in: userIds }, disposition: "CALL_BACK" }
-        });
-        const totalCalls = await prisma.callRecord.count({
-            where: { userId: { in: userIds } }
-        });
-        const flagsPercentage = totalCalls > 0
-            ? Math.round((flags / totalCalls) * 100)
-            : 0;
-
-        // 2. Risk Phrase Detection — scoped via callSids
-        const negativeAnalyses = await prisma.callAnalysis.count({
-            where: { callSid: { in: userCallSids }, sentiment: "negative" }
-        });
         const totalAnalyses = await prisma.callAnalysis.count({
             where: { callSid: { in: userCallSids } }
         });
+
+        // 1. Compliance Flags — calls where the AI detected a real compliance issue
+        //    (do-not-call request, missing disclosure, abusive language, misrepresentation).
+        const flags = await prisma.callAnalysis.count({
+            where: { callSid: { in: userCallSids }, complianceFlags: { isEmpty: false } }
+        });
+        const flagsPercentage = totalAnalyses > 0
+            ? Math.round((flags / totalAnalyses) * 100)
+            : 0;
+
+        // 2. Risk Phrase Detection Rate — share of analyzed calls that contained at least
+        //    one sensitive / non-compliant phrase spoken on the call.
+        const riskCalls = await prisma.callAnalysis.count({
+            where: { callSid: { in: userCallSids }, riskPhrases: { isEmpty: false } }
+        });
         const riskRate = totalAnalyses > 0
-            ? Math.round((negativeAnalyses / totalAnalyses) * 100)
+            ? Math.round((riskCalls / totalAnalyses) * 100)
             : 0;
 
         successResponse(res, 200, "Compliance analytics fetched", {
@@ -832,25 +910,56 @@ export const getImprovement: RequestHandler = async (req, res) => {
             select: { callSid: true }
         }).then(r => r.map(r => r.callSid));
 
-        const avgStats = await prisma.callAnalysis.aggregate({
-            where: { callSid: { in: userCallSids } },
-            _avg: { confidence: true }
-        });
-        const currentPerf = Math.round((avgStats._avg.confidence || 0) * 100) / 4;
+        // Period-over-period windows: current = last 30 days, previous = the 30 days before that.
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now);
+        thirtyDaysAgo.setDate(now.getDate() - 30);
+        const sixtyDaysAgo = new Date(now);
+        sixtyDaysAgo.setDate(now.getDate() - 60);
 
-        const interestedLeads = await prisma.callRecord.count({
-            where: { userId: { in: userIds }, disposition: "WARM" }
-        });
+        // % change helper: real delta between two periods (100% if we only have current-period data).
+        const pctChange = (curr: number, prev: number) =>
+            prev > 0 ? Math.round(((curr - prev) / prev) * 100) : (curr > 0 ? 100 : 0);
+
+        // 1. Agent Improvement Score — real improvement in positive-sentiment rate,
+        //    current 30 days vs the prior 30 days (not a static average).
+        const [currAnalyses, prevAnalyses] = await Promise.all([
+            prisma.callAnalysis.findMany({
+                where: { callSid: { in: userCallSids }, createdAt: { gte: thirtyDaysAgo } },
+                select: { sentiment: true }
+            }),
+            prisma.callAnalysis.findMany({
+                where: { callSid: { in: userCallSids }, createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo } },
+                select: { sentiment: true }
+            })
+        ]);
+        const positiveRate = (arr: { sentiment: string }[]) =>
+            arr.length > 0
+                ? arr.filter(a => (a.sentiment || "").toLowerCase() === "positive").length / arr.length
+                : 0;
+        const improvementPct = pctChange(positiveRate(currAnalyses), positiveRate(prevAnalyses));
+
+        // 2. Pipeline Acceleration — real deals closed (HOT) this period, and how much
+        //    that grew vs the previous period.
+        const [currHot, prevHot] = await Promise.all([
+            prisma.callRecord.count({
+                where: { userId: { in: userIds }, disposition: "HOT", startTime: { gte: thirtyDaysAgo } }
+            }),
+            prisma.callRecord.count({
+                where: { userId: { in: userIds }, disposition: "HOT", startTime: { gte: sixtyDaysAgo, lt: thirtyDaysAgo } }
+            })
+        ]);
+        const accelerationPct = pctChange(currHot, prevHot);
 
         successResponse(res, 200, "Improvement and Pipeline analytics fetched", {
             improvement: {
-                current: Math.round(currentPerf),
+                current: improvementPct,
                 target: 20
             },
             pipeline: {
-                dealsAccelerated: interestedLeads,
-                speedIncrease: 25,
-                accelerationPercentage: Math.min(interestedLeads * 5, 100)
+                dealsAccelerated: currHot,
+                speedIncrease: accelerationPct,
+                accelerationPercentage: Math.max(0, Math.min(accelerationPct, 100))
             }
         });
     } catch (error: any) {
