@@ -715,6 +715,18 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
 };
 
 
+// Escape a value for safe interpolation into a hand-built TwiML/XML string.
+// Critical for URLs: callback URLs contain '&' between query params, which is an
+// illegal raw character in XML attributes and makes Twilio reject the whole
+// document ("An application error has occurred"), silently breaking the bridge.
+const escapeXml = (value: unknown): string =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+
 // For answering machine. WEbhoook
 export const handleAmdStatus: RequestHandler = async (req, res) => {
   try {
@@ -838,7 +850,7 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
           console.log(`[AMD] Dropping out-of-band voicemail for ${CallSid}`);
           await userClient.calls(CallSid).update({
             twiml: `<Response>
-                        <Play>${answeringMachineUrl}</Play>
+                        <Play>${escapeXml(answeringMachineUrl)}</Play>
                         <Hangup/>
                     </Response>`
           });
@@ -886,7 +898,7 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
           // Hold this contact for redial.
           const holdUrl = amdBusyUrl || "https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
           await userClient.calls(CallSid).update({
-            twiml: `<Response><Play>${holdUrl}</Play><Hangup/></Response>`
+            twiml: `<Response><Play>${escapeXml(holdUrl)}</Play><Hangup/></Response>`
           });
           console.log(`[AMD] Agent ${agentId} busy — playing hold for ${CallSid}, redial scheduled on completion.`);
         } else {
@@ -921,7 +933,7 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
 
           try {
             await userClient.calls(CallSid).update({
-              twiml: `<Response><Dial callerId="${bridgeCallerId}" answerOnBridge="true" record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"><Client statusCallbackEvent="initiated ringing answered completed" statusCallback="${statusCb}" statusCallbackMethod="POST"><Identity>${agentId}</Identity><Parameter name="dialerBridge" value="true"/>${amdContactId ? `<Parameter name="contactId" value="${amdContactId}"/>` : ''}${effectiveQueueCardId ? `<Parameter name="queueCardId" value="${effectiveQueueCardId}"/>` : ''}</Client></Dial></Response>`
+              twiml: `<Response><Dial callerId="${escapeXml(bridgeCallerId)}" answerOnBridge="true" record="record-from-answer-dual" recordingStatusCallback="${escapeXml(recordingCb)}"><Client statusCallbackEvent="initiated ringing answered completed" statusCallback="${escapeXml(statusCb)}" statusCallbackMethod="POST"><Identity>${escapeXml(agentId)}</Identity><Parameter name="dialerBridge" value="true"/>${amdContactId ? `<Parameter name="contactId" value="${escapeXml(amdContactId)}"/>` : ''}${effectiveQueueCardId ? `<Parameter name="queueCardId" value="${escapeXml(effectiveQueueCardId)}"/>` : ''}</Client></Dial></Response>`
             });
             console.log(`[AMD] Human confirmed — bridged ${CallSid} to agent ${agentId}.`);
           } catch (bridgeErr: any) {
@@ -971,7 +983,7 @@ export const dropVoicemail: RequestHandler = async (req, res) => {
     // Play voicemail to customer and hang up
     await userClient.calls(customerLeg.sid).update({
       twiml: `<Response>
-                <Play>${voicemailUrl}</Play>
+                <Play>${escapeXml(voicemailUrl)}</Play>
                 <Hangup/>
             </Response>`
     });
