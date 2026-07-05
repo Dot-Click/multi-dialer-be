@@ -919,19 +919,17 @@ export class DialerService {
 
   async updateLeadStatusInDB(leadId: string, status: string) {
     try {
-      // Try to find the lead by ID
-      const lead = await prisma.lead.findFirst({
-        where: { id: leadId }
+      // Single round-trip instead of findFirst + update. The `status: { not }`
+      // guard makes this a no-op write when the value is unchanged, which kills the
+      // redundant identical writes fired by every non-terminal status event
+      // (initiated/ringing/in-progress/answered all map to CALLING). updateMany
+      // also never throws when the lead is missing — it just reports count 0.
+      const { count } = await prisma.lead.updateMany({
+        where: { id: leadId, status: { not: status } },
+        data: { status },
       });
-
-      if (lead) {
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: { status },
-        });
-        console.log(`Lead ${lead.id} status updated to ${status} in DB.`);
-      } else {
-        console.warn(`[updateLeadStatusInDB] Lead not found for ID: ${leadId}`);
+      if (count > 0) {
+        console.log(`Lead ${leadId} status updated to ${status} in DB.`);
       }
     } catch (error: any) {
       console.error(`Error updating lead ${leadId} status in DB:`, error.message);
@@ -1203,28 +1201,37 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
             }
 
             if (mappingValue && (contactId || leadId)) {
-                try {
-                    const sysDisp = await (prisma.disposition as any).findFirst({
-                        where: {
-                            value: mappingValue,
-                            systemSetting: { userId: userId }
-                        }
-                    });
-                    
-                    if (sysDisp) {
-                        const { DispositionService } = require('../systemSettings/dispositions/service');
-                        await DispositionService.applyDisposition({
-                            contactId: contactId || leadId,
-                            dispositionId: sysDisp.id,
-                            appliedById: userId,
-                            source: 'CALL',
-                            callRecordId: callRecord.id
+                // Fire-and-forget: applying the disposition folder action is a
+                // categorization side-effect (disposition lookup + applyDisposition
+                // cascade — several DB round-trips). Awaiting it here delayed the
+                // terminal handler from reaching processQueue, so a freed line sat
+                // idle for that whole time. It must not gate dialing the next contact.
+                const dispContactId = contactId || leadId;
+                const dispCallRecordId = callRecord.id;
+                void (async () => {
+                    try {
+                        const sysDisp = await (prisma.disposition as any).findFirst({
+                            where: {
+                                value: mappingValue,
+                                systemSetting: { userId: userId }
+                            }
                         });
-                        console.log(`[handleCallStatusUpdate] Applied system disposition ${sysDisp.label} for CallRecord ${callRecord.id}`);
+
+                        if (sysDisp) {
+                            const { DispositionService } = require('../systemSettings/dispositions/service');
+                            await DispositionService.applyDisposition({
+                                contactId: dispContactId,
+                                dispositionId: sysDisp.id,
+                                appliedById: userId,
+                                source: 'CALL',
+                                callRecordId: dispCallRecordId
+                            });
+                            console.log(`[handleCallStatusUpdate] Applied system disposition ${sysDisp.label} for CallRecord ${dispCallRecordId}`);
+                        }
+                    } catch (dispError: any) {
+                        console.error(`[handleCallStatusUpdate] Failed to apply disposition action: ${dispError.message}`);
                     }
-                } catch (dispError: any) {
-                    console.error(`[handleCallStatusUpdate] Failed to apply disposition action: ${dispError.message}`);
-                }
+                })();
             }
         }
       }
