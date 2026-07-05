@@ -794,6 +794,12 @@ export class DialerService {
         statusCallbackMethod: "POST",
         ...(amdEnabled ? {
           machineDetection: "Enable",
+          // Cap AMD at 20s so a result (machine, or human/unknown on timeout) always
+          // arrives before the voice webhook's 30s hold-pause hangs the call up.
+          // Without this, Twilio's 30s default could exceed a shorter pause and drop
+          // a slow/silent human before they could be bridged. Keep this < the pause
+          // length in handleVoiceWebhook, with margin for the callback + bridge redirect.
+          machineDetectionTimeout: 20,
           asyncAmd: "true",
           asyncAmdStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/amd-status?answeringMachineUrl=${encodeURIComponent(amRecordingUrl)}&agentId=${lead.userId}&amdEnabled=true&contactId=${encodeURIComponent(lead.originalContactId || lead.id)}&leadId=${encodeURIComponent(lead.id)}&queueCardId=${encodeURIComponent(lead.queueCardId || lead.id)}&callerFrom=${encodeURIComponent(twilioFrom as string)}&busyRecordingUrl=${encodeURIComponent(busyRecordingUrl)}`,
           asyncAmdStatusCallbackMethod: "POST",
@@ -1148,7 +1154,15 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
       const callRecord = await (prisma.callRecord as any).findUnique({ where: { callSid: sid } });
 
       if (callRecord) {
-        const updateData: any = { status: twilioStatus };
+        // AMD may have already classified this call as a machine (disposition
+        // "MACHINE" / status "machine-detected") just before hanging it up. The
+        // terminal call-status webhook that follows the hangup must NOT relabel it
+        // as CALLED/NO_ANSWER — that corrupted machine calls in reporting and could
+        // fire a CONTACT/NO_ANSWER folder action on a machine.
+        const isMachineRecord =
+          callRecord.disposition === "MACHINE" || callRecord.status === "machine-detected";
+
+        const updateData: any = { status: isMachineRecord ? "machine-detected" : twilioStatus };
 
         if (isTerminal) {
           const endTime = new Date();
@@ -1158,17 +1172,19 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
           updateData.endTime = endTime;
           updateData.sessionId = metadata?.sessionId;
           updateData.duration = duration;
-          updateData.disposition = dbStatus;
+          updateData.disposition = isMachineRecord ? "MACHINE" : dbStatus;
         }
 
         await (prisma.callRecord as any).update({
           where: { callSid: sid },
           data: updateData
         });
-        console.log(`[handleCallStatusUpdate] Updated CallRecord status to ${twilioStatus}${isTerminal ? ', duration: ' + updateData.duration + 's' : ''}`);
+        console.log(`[handleCallStatusUpdate] Updated CallRecord status to ${updateData.status}${isTerminal ? ', duration: ' + updateData.duration + 's' : ''}`);
 
         // ── TASK 3B: Apply Disposition Folder Actions ──
-        if (isTerminal && dbStatus) {
+        // Skip for machine-detected calls — they are neither a live contact nor a
+        // missed human attempt, so they must not land in a CONTACT/NO_ANSWER folder.
+        if (isTerminal && dbStatus && !isMachineRecord) {
             let mappingValue: string | null = null;
             if (dbStatus === LeadCallStatus.CALLED) mappingValue = "CONTACT";
             else if (dbStatus === LeadCallStatus.NO_ANSWER) mappingValue = "NO_ANSWER";

@@ -607,7 +607,10 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     // confirms it's a human. Without this the agent hears 2-5 seconds of machine audio.
     if (req.query.amdEnabled === 'true') {
       console.log(`[VoiceWebhook] AsyncAMD pending for ${currentCallSid} — holding call for AMD result.`);
-      twiml.pause({ length: 25 });
+      // Hold longer than makeCall's 20s machineDetectionTimeout so the AMD result
+      // (and the bridge/hangup redirect it triggers) always lands before this pause
+      // expires. A slow or silent human is bridged instead of being dropped at 25s.
+      twiml.pause({ length: 30 });
       twiml.hangup();
       res.type("text/xml");
       res.send(twiml.toString());
@@ -868,12 +871,24 @@ export const handleAmdStatus: RequestHandler = async (req, res) => {
         const isInPostCall = dialerService.isAgentInPostCall(agentId);
 
         if (isBusy || isInPostCall) {
-          // Agent took another call during the AMD wait — hold this contact for redial.
+          // Agent took another call during the AMD wait — this is a live human we
+          // can't connect right now. Mark the leg as 'callback' (parity with the
+          // non-AMD overflow path in handleVoiceWebhook) so its terminal call-status
+          // webhook schedules a redial. Without this stamp the call ends as
+          // 'completed' and falls through every redial branch — the answered human
+          // is dropped and never called back.
+          const existingMeta = (dialerService as any).activeCalls.get(CallSid);
+          if (existingMeta) {
+            existingMeta.status = "callback";
+            existingMeta.amdPending = false;
+            (dialerService as any).activeCalls.set(CallSid, existingMeta);
+          }
+          // Hold this contact for redial.
           const holdUrl = amdBusyUrl || "https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
           await userClient.calls(CallSid).update({
             twiml: `<Response><Play>${holdUrl}</Play><Hangup/></Response>`
           });
-          console.log(`[AMD] Agent ${agentId} busy — playing hold for ${CallSid}, redial will follow.`);
+          console.log(`[AMD] Agent ${agentId} busy — playing hold for ${CallSid}, redial scheduled on completion.`);
         } else {
           // Guard: if the call was already terminated (status callback beat us here),
           // activeCalls will have been deleted. Acquiring the lock on a dead call
