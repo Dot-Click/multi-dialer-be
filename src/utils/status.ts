@@ -8,8 +8,12 @@ import prisma from "../lib/prisma";
 export const isFeatureLocked = (user: any): boolean => {
   if (!user) return false;
 
-  // Logic: Locked if trial has expired AND they are not subscribed
-  return user.trialStatus === "EXPIRED" && !user.isSubscribed;
+  // Locked whenever the account has no active subscription and isn't
+  // currently on an active trial. Covers both trial-expired accounts AND
+  // accounts that never had a trial granted at all (trialStatus "NONE",
+  // e.g. manually provisioned users) — any account without a subscription
+  // and without a running trial is locked out of the dialer.
+  return !user.isSubscribed && user.trialStatus !== "ACTIVE";
 };
 
 /**
@@ -34,6 +38,13 @@ export const getEffectiveLock = async (
   if (!me) return { locked: false, canPurchase: false };
 
   const canPurchase = me.role === "ADMIN" || me.role === "OWNER";
+
+  // OWNER accounts are platform staff (the super-admin side of the product) —
+  // they manage everyone else's subscriptions and never need one of their
+  // own, so they're never locked regardless of their own trialStatus/isSubscribed.
+  if (me.role === "OWNER") {
+    return { locked: false, canPurchase };
+  }
 
   // Agents inherit the owning admin's subscription status.
   let owner: { trialStatus: any; isSubscribed: boolean } = me;

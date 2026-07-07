@@ -920,6 +920,20 @@ export const changeSubscriptionPlan = async (req: Request, res: Response): Promi
   }
 };
 
+// Agents have no billing of their own — the subscription (and Stripe customer)
+// lives on the admin who created them, so resolve card-management calls to
+// the owning admin's id instead. No-op for admins/owners.
+async function resolveBillingOwnerId(userId: string): Promise<string> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, createdById: true },
+  });
+  if (user?.role === "AGENT" && user.createdById) {
+    return user.createdById;
+  }
+  return userId;
+}
+
 /**
  * Super-admin: start a card-replacement flow for a specific user's subscription.
  * Creates a Stripe SetupIntent scoped to that user's Stripe customer so the raw
@@ -928,7 +942,7 @@ export const changeSubscriptionPlan = async (req: Request, res: Response): Promi
  */
 export const createCardSetupIntent = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId } = req.params;
+    const userId = await resolveBillingOwnerId(req.params.userId);
 
     const sub = await prisma.userSubscription.findFirst({
       where: { userId },
@@ -960,7 +974,7 @@ export const createCardSetupIntent = async (req: Request, res: Response): Promis
  */
 export const updateCardPaymentMethod = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId } = req.params;
+    const userId = await resolveBillingOwnerId(req.params.userId);
     const { paymentMethodId } = req.body;
     const adminId = (req as any).user?.id;
 
