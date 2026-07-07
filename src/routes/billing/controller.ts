@@ -1072,6 +1072,132 @@ export const updateCardPaymentMethod = async (req: Request, res: Response): Prom
   }
 };
 
+// Resolve a Stripe customer's current default card, trying — in order — the
+// subscription-level default_payment_method, the customer-level default, any
+// card attached to the customer at all, and finally the card that paid their
+// most recent invoice. Older UserSubscription rows (created before this
+// feature existed, or via the original signup checkout) never had
+// cardBrand/cardLast4 written locally, so this fills that gap on demand.
+async function resolveCustomerDefaultCard(
+  customerId: string,
+  subscriptionId: string | null,
+): Promise<{ paymentMethodId: string | null; brand: string | null; last4: string | null; expMonth: number | null; expYear: number | null }> {
+  const empty = { paymentMethodId: null, brand: null, last4: null, expMonth: null, expYear: null };
+
+  try {
+    if (subscriptionId) {
+      const sub = await stripe.subscriptions.retrieve(subscriptionId, {
+        expand: ["default_payment_method"],
+      });
+      const pm = sub.default_payment_method as any;
+      if (pm?.card) {
+        return {
+          paymentMethodId: pm.id,
+          brand: pm.card.brand ?? null,
+          last4: pm.card.last4 ?? null,
+          expMonth: pm.card.exp_month ?? null,
+          expYear: pm.card.exp_year ?? null,
+        };
+      }
+    }
+
+    const customer = await stripe.customers.retrieve(customerId, {
+      expand: ["invoice_settings.default_payment_method"],
+    });
+    const customerPm = (customer as any)?.invoice_settings?.default_payment_method;
+    if (customerPm?.card) {
+      return {
+        paymentMethodId: customerPm.id,
+        brand: customerPm.card.brand ?? null,
+        last4: customerPm.card.last4 ?? null,
+        expMonth: customerPm.card.exp_month ?? null,
+        expYear: customerPm.card.exp_year ?? null,
+      };
+    }
+
+    const paymentMethods = await stripe.paymentMethods.list({ customer: customerId, type: "card", limit: 1 });
+    const anyPm = paymentMethods.data[0];
+    if (anyPm?.card) {
+      return {
+        paymentMethodId: anyPm.id,
+        brand: anyPm.card.brand ?? null,
+        last4: anyPm.card.last4 ?? null,
+        expMonth: anyPm.card.exp_month ?? null,
+        expYear: anyPm.card.exp_year ?? null,
+      };
+    }
+
+    // Last resort: the card that paid their most recent invoice.
+    const invoices = await stripe.invoices.list({
+      customer: customerId,
+      status: "paid",
+      limit: 1,
+      expand: ["data.payments.data.payment.payment_intent"],
+    });
+    const latestInvoice = invoices.data[0];
+    if (latestInvoice) {
+      const card = await resolveInvoiceCard(stripe, latestInvoice);
+      if (card) return { paymentMethodId: null, ...card };
+    }
+  } catch (error: any) {
+    console.error("[Billing] Resolve Customer Default Card Error:", error.message);
+  }
+
+  return empty;
+}
+
+/**
+ * Returns the current default card for a user's subscription, resolving
+ * live from Stripe (and backfilling the local cache) when the local mirror
+ * is empty — covers subscriptions created before card tracking existed.
+ */
+export const getCurrentCard = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = await resolveBillingOwnerId(req.params.userId);
+
+    const sub = await prisma.userSubscription.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!sub?.stripeCustomerId) {
+      successResponse(res, 200, "No Stripe customer for this user", {
+        card: { brand: null, last4: null, expMonth: null, expYear: null },
+      });
+      return;
+    }
+
+    if (sub.cardBrand && sub.cardLast4) {
+      successResponse(res, 200, "Current card retrieved", {
+        card: { brand: sub.cardBrand, last4: sub.cardLast4, expMonth: sub.cardExpMonth, expYear: sub.cardExpYear },
+      });
+      return;
+    }
+
+    const resolved = await resolveCustomerDefaultCard(sub.stripeCustomerId, sub.stripeSubscriptionId);
+
+    if (resolved.brand && resolved.last4) {
+      await prisma.userSubscription.update({
+        where: { id: sub.id },
+        data: {
+          defaultPaymentMethodId: resolved.paymentMethodId ?? sub.defaultPaymentMethodId,
+          cardBrand: resolved.brand,
+          cardLast4: resolved.last4,
+          cardExpMonth: resolved.expMonth,
+          cardExpYear: resolved.expYear,
+        },
+      }).catch(() => undefined); // best-effort cache warm — don't fail the read on it
+    }
+
+    successResponse(res, 200, "Current card retrieved", {
+      card: { brand: resolved.brand, last4: resolved.last4, expMonth: resolved.expMonth, expYear: resolved.expYear },
+    });
+  } catch (error: any) {
+    console.error("[Billing] Get Current Card Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 /**
  * Self-service: start a subscription for the current (already logged-in) user
  * who has no UserSubscription row at all yet (e.g. a manually-provisioned or
