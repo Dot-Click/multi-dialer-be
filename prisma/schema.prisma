@@ -1086,6 +1086,16 @@ model UserSubscription {
   billingId            String?      @unique
   billing              Billing?     @relation(fields: [billingId], references: [id])
 
+  // Default payment method mirrored from Stripe (customer/subscription
+  // default_payment_method) so the admin UI can show the current card
+  // without a live Stripe call. Kept in sync by the super-admin "change
+  // card" flow and the payment_method.attached / customer.updated webhooks.
+  defaultPaymentMethodId String?
+  cardBrand              String?
+  cardLast4              String?
+  cardExpMonth           Int?
+  cardExpYear            Int?
+
   @@map("user_subscriptions")
 }
 
@@ -1210,21 +1220,21 @@ model CallSettings {
 }
 
 model CallAnalysis {
-  id           String   @id @default(uuid())
-  callSid      String   @unique
-  leadId       String
-  sentiment    String // POSITIVE | NEUTRAL | NEGATIVE
-  confidence   Float
-  leadInterest String   @default("none") // high | medium | low | none
-  callOutcome  String   @default("no_meaningful_conversation") // interested | callback_requested | not_interested | voicemail | hung_up_early | no_meaningful_conversation
+  id              String   @id @default(uuid())
+  callSid         String   @unique
+  leadId          String
+  sentiment       String // POSITIVE | NEUTRAL | NEGATIVE
+  confidence      Float
+  leadInterest    String   @default("none") // high | medium | low | none
+  callOutcome     String   @default("no_meaningful_conversation") // interested | callback_requested | not_interested | voicemail | hung_up_early | no_meaningful_conversation
   complianceFlags String[] @default([]) // compliance issues detected by AI (do-not-call, no disclosure, abusive language, misrepresentation)
   riskPhrases     String[] @default([]) // exact sensitive / non-compliant phrases spoken
   objections      String[] @default([]) // objections the prospect raised, as detected by AI
-  transcript   String
-  aiSummary    String?
-  recordingUrl String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  transcript      String
+  aiSummary       String?
+  recordingUrl    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@map("call_analysis")
 }

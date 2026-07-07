@@ -372,7 +372,7 @@ export async function getAllUsersFromDb(where: any = {}) {
             userSubscriptions: {
                 orderBy: { createdAt: "desc" },
                 take: 1,
-                select: { plan: true, status: true },
+                select: { plan: true, status: true, cardBrand: true, cardLast4: true },
             },
             billings: {
                 orderBy: { date: "desc" },

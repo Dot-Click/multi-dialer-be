@@ -718,6 +718,64 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     }
     await persistEvent("PROCESSED");
 
+  // ─── payment_method.attached (log + best-effort card sync) ───────────────
+  // Confirms an attach succeeded even if the admin's synchronous request was
+  // interrupted; the authoritative "this is now the default" sync happens in
+  // customer.updated below.
+  } else if (event.type === "payment_method.attached") {
+    try {
+      const pm = event.data.object as any;
+      const stripeCustomerId = typeof pm.customer === "string" ? pm.customer : pm.customer?.id;
+      console.log(`[Stripe Webhook] payment_method.attached: pm=${pm.id}, customer=${stripeCustomerId}`);
+      await persistEvent("PROCESSED");
+    } catch (error: any) {
+      console.error(`[Stripe Webhook] payment_method.attached error:`, error.message);
+      await persistEvent("FAILED");
+    }
+
+  // ─── payment_method.detached (log only) ───────────────────────────────────
+  } else if (event.type === "payment_method.detached") {
+    const pm = event.data.object as any;
+    console.log(`[Stripe Webhook] payment_method.detached: pm=${pm.id}`);
+    await persistEvent("PROCESSED");
+
+  // ─── customer.updated (sync default payment method / card summary) ───────
+  // Catches changes made outside our admin flow (e.g. directly in the Stripe
+  // Dashboard) so the locally-cached card summary never drifts from Stripe.
+  } else if (event.type === "customer.updated") {
+    try {
+      const customer = event.data.object as any;
+      const stripeCustomerId = customer.id as string;
+      const defaultPmId: string | null =
+        typeof customer.invoice_settings?.default_payment_method === "string"
+          ? customer.invoice_settings.default_payment_method
+          : customer.invoice_settings?.default_payment_method?.id ?? null;
+
+      if (defaultPmId) {
+        const subRecord = await prisma.userSubscription.findFirst({ where: { stripeCustomerId } });
+        if (subRecord && subRecord.defaultPaymentMethodId !== defaultPmId) {
+          const pm = await stripe.paymentMethods.retrieve(defaultPmId).catch(() => null);
+          const card = pm?.card;
+          await prisma.userSubscription.update({
+            where: { id: subRecord.id },
+            data: {
+              defaultPaymentMethodId: defaultPmId,
+              cardBrand: card?.brand ?? subRecord.cardBrand,
+              cardLast4: card?.last4 ?? subRecord.cardLast4,
+              cardExpMonth: card?.exp_month ?? subRecord.cardExpMonth,
+              cardExpYear: card?.exp_year ?? subRecord.cardExpYear,
+            },
+          });
+          console.log(`[Stripe Webhook] customer.updated: synced default payment method for customer ${stripeCustomerId}`);
+        }
+      }
+
+      await persistEvent("PROCESSED");
+    } catch (error: any) {
+      console.error(`[Stripe Webhook] customer.updated error:`, error.message);
+      await persistEvent("FAILED");
+    }
+
   } else {
     console.log(`[Stripe Webhook] Unhandled event type: ${event.type} (id=${stripeEventId})`);
   }

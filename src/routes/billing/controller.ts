@@ -920,6 +920,144 @@ export const changeSubscriptionPlan = async (req: Request, res: Response): Promi
   }
 };
 
+/**
+ * Super-admin: start a card-replacement flow for a specific user's subscription.
+ * Creates a Stripe SetupIntent scoped to that user's Stripe customer so the raw
+ * card number is entered client-side via Stripe Elements and never touches
+ * this server (PCI SAQ A) — only the resulting paymentMethodId comes back.
+ */
+export const createCardSetupIntent = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+
+    const sub = await prisma.userSubscription.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!sub?.stripeCustomerId) {
+      errorResponse(res, "No Stripe customer found for this user", 400);
+      return;
+    }
+
+    const setupIntent = await stripe.setupIntents.create({
+      customer: sub.stripeCustomerId,
+      payment_method_types: ["card"],
+    });
+
+    successResponse(res, 200, "Setup intent created", { clientSecret: setupIntent.client_secret });
+  } catch (error: any) {
+    console.error("[Billing] Create Card Setup Intent Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+/**
+ * Super-admin: make a newly-collected payment method the default for both the
+ * Stripe customer and their active subscription (subscription-level overrides
+ * customer-level for renewal billing, so both must be set). If the account is
+ * currently past_due, immediately retries the open invoice on the new card.
+ */
+export const updateCardPaymentMethod = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const { paymentMethodId } = req.body;
+    const adminId = (req as any).user?.id;
+
+    if (!paymentMethodId || typeof paymentMethodId !== "string") {
+      errorResponse(res, "paymentMethodId is required", 400);
+      return;
+    }
+
+    const sub = await prisma.userSubscription.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!sub?.stripeCustomerId) {
+      errorResponse(res, "No Stripe customer found for this user", 400);
+      return;
+    }
+
+    try {
+      await stripe.paymentMethods.attach(paymentMethodId, { customer: sub.stripeCustomerId });
+    } catch (err: any) {
+      // Already attached to this customer (e.g. re-submitted) — safe to continue.
+      if (!/already been attached/i.test(err?.message || "")) {
+        throw err;
+      }
+    }
+
+    await stripe.customers.update(sub.stripeCustomerId, {
+      invoice_settings: { default_payment_method: paymentMethodId },
+    });
+
+    if (sub.stripeSubscriptionId) {
+      await stripe.subscriptions.update(sub.stripeSubscriptionId, {
+        default_payment_method: paymentMethodId,
+      });
+    }
+
+    const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+    const card = pm.card;
+
+    await prisma.userSubscription.update({
+      where: { id: sub.id },
+      data: {
+        defaultPaymentMethodId: paymentMethodId,
+        cardBrand: card?.brand ?? null,
+        cardLast4: card?.last4 ?? null,
+        cardExpMonth: card?.exp_month ?? null,
+        cardExpYear: card?.exp_year ?? null,
+      },
+    });
+
+    // Account was failing on the old card — retry the open invoice immediately
+    // instead of waiting for Stripe's next automatic retry.
+    let retriedInvoiceId: string | null = null;
+    if (String(sub.status) === "past_due" && sub.stripeSubscriptionId) {
+      const openInvoices = await stripe.invoices.list({
+        customer: sub.stripeCustomerId,
+        subscription: sub.stripeSubscriptionId,
+        status: "open",
+        limit: 1,
+      });
+      const openInvoice = openInvoices.data[0];
+      if (openInvoice?.id) {
+        try {
+          const paid = await stripe.invoices.pay(openInvoice.id, { payment_method: paymentMethodId });
+          retriedInvoiceId = paid.id ?? null;
+        } catch (err: any) {
+          console.error("[Billing] Retry invoice on new card failed:", err.message);
+        }
+      }
+    }
+
+    // Audit trail: who changed whose card, and when.
+    await prisma.billingEvent.create({
+      data: {
+        stripeEventId: `admin_card_update_${sub.id}_${paymentMethodId}`,
+        type: "admin.card_updated",
+        payload: { adminId, userId, subscriptionId: sub.id, paymentMethodId, retriedInvoiceId },
+        status: "PROCESSED",
+      },
+    }).catch(() => undefined); // non-critical — don't fail the main flow
+
+    successResponse(res, 200, "Payment method updated successfully", {
+      card: {
+        brand: card?.brand ?? null,
+        last4: card?.last4 ?? null,
+        expMonth: card?.exp_month ?? null,
+        expYear: card?.exp_year ?? null,
+      },
+      retriedInvoiceId,
+    });
+  } catch (error: any) {
+    console.error("[Billing] Update Card Payment Method Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 // Admin-only: all invoices from all users (super admin reports)
 export const getAllInvoicesAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
