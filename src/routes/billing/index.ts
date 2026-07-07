@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { checkRole, protectRoute } from "../../middlewares/auth.middleware";
-import { getBillingPortal, getSubscriptions, getPlans, updatePlan, changeSubscriptionPlan, cancelSubscription, upgradeSubscription, getInvoicesByCustomer, getInvoicesByUser, getAllInvoices, getInvoiceById, getInvoiceCard, createPlan, deletePlan, getFailedPayments, getUpcomingRenewals, getAllInvoicesAdmin, getAllSubscriptionsAdmin, getAccessStatus, createCardSetupIntent, updateCardPaymentMethod } from "./controller";
+import { getBillingPortal, getSubscriptions, getPlans, updatePlan, changeSubscriptionPlan, cancelSubscription, upgradeSubscription, getInvoicesByCustomer, getInvoicesByUser, getAllInvoices, getInvoiceById, getInvoiceCard, createPlan, deletePlan, getFailedPayments, getUpcomingRenewals, getAllInvoicesAdmin, getAllSubscriptionsAdmin, getAccessStatus, createCardSetupIntent, updateCardPaymentMethod, startSubscriptionCheckout } from "./controller";
 
 const router = Router();
 
@@ -15,6 +15,7 @@ router.delete("/plans/:plan", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]),
 router.put("/subscription/:subscriptionId/plan", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), changeSubscriptionPlan);
 router.post("/subscription/cancel", protectRoute, cancelSubscription);
 router.post("/subscription/upgrade", protectRoute, upgradeSubscription);
+router.post("/subscription/start", protectRoute, startSubscriptionCheckout);
 router.get("/invoices/all", protectRoute, getAllInvoices);
 router.get("/invoices/admin-all", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), getAllInvoicesAdmin);
 router.get("/subscriptions/all", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), getAllSubscriptionsAdmin);

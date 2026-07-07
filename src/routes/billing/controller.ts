@@ -1072,6 +1072,64 @@ export const updateCardPaymentMethod = async (req: Request, res: Response): Prom
   }
 };
 
+/**
+ * Self-service: start a subscription for the current (already logged-in) user
+ * who has no UserSubscription row at all yet (e.g. a manually-provisioned or
+ * trial account that never went through the signup checkout). Unlike
+ * upgradeSubscription — which mutates an EXISTING Stripe subscription — this
+ * creates a fresh Stripe Checkout Session, since there's nothing to update
+ * yet. On completion, the checkout.session.completed webhook attaches the new
+ * subscription to this existing account (see handleStripeWebhook).
+ */
+export const startSubscriptionCheckout = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) { errorResponse(res, "Unauthorized", 401); return; }
+
+    const { priceId } = req.body;
+    if (!priceId || typeof priceId !== "string") {
+      errorResponse(res, "priceId is required", 400);
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } });
+    if (!user) { errorResponse(res, "User not found", 404); return; }
+
+    // Reuse an existing Stripe customer if this account has one from a past
+    // (e.g. cancelled) subscription, so we don't fragment billing history
+    // across multiple customer records for the same person.
+    const priorSub = await prisma.userSubscription.findFirst({
+      where: { userId, stripeCustomerId: { not: null } },
+      orderBy: { createdAt: "desc" },
+      select: { stripeCustomerId: true },
+    });
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [{ price: priceId, quantity: 1 }],
+      ...(priorSub?.stripeCustomerId
+        ? { customer: priorSub.stripeCustomerId }
+        : { customer_email: user.email }),
+      success_url: `${envConfig.FRONTEND_URL}/admin/billing?checkout=success`,
+      cancel_url: `${envConfig.FRONTEND_URL}/admin/billing`,
+      metadata: {
+        userId,
+        isExistingUserSubscribe: "true",
+      },
+    });
+
+    if (!session.url) {
+      errorResponse(res, "Failed to create Stripe checkout session", 500);
+      return;
+    }
+
+    successResponse(res, 200, "Checkout session created", { url: session.url });
+  } catch (error: any) {
+    console.error("[Billing] Start Subscription Checkout Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 // Admin-only: all invoices from all users (super admin reports)
 export const getAllInvoicesAdmin = async (req: Request, res: Response): Promise<void> => {
   try {

@@ -179,6 +179,72 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     const session = event.data.object as any;
     const metadata = session.metadata;
 
+    // Existing logged-in user starting their first subscription (e.g. a trial
+    // account that never went through signup checkout) — see
+    // startSubscriptionCheckout in billing/controller.ts. Attaches the new
+    // Stripe subscription to their existing account instead of provisioning
+    // a brand-new one.
+    if (metadata?.isExistingUserSubscribe === "true" && metadata.userId) {
+      try {
+        const userId = metadata.userId as string;
+        const stripeCustomerId = session.customer as string | null;
+        const stripeSubscriptionId = session.subscription as string | null;
+
+        let planName = "STARTER";
+        let billingCycle: any = "MONTHLY";
+        let amountStr: string | null = null;
+        let usersCount = 1;
+
+        if (stripeSubscriptionId) {
+          const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+          const item = stripeSub.items.data[0];
+          const interval = item?.price?.recurring?.interval;
+          billingCycle = interval === "year" ? "YEARLY" : "MONTHLY";
+
+          const quantity = item?.quantity ?? 1;
+          usersCount = quantity;
+          if (typeof item?.price?.unit_amount === "number") {
+            amountStr = String((item.price.unit_amount / 100) * quantity);
+          }
+
+          const priceId = item?.price?.id;
+          if (priceId) {
+            const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+            const product = price.product as any;
+            if (product?.name) planName = product.name;
+          }
+        }
+
+        await prisma.userSubscription.create({
+          data: {
+            userId,
+            plan: planName,
+            status: "ACTIVE",
+            startDate: new Date(),
+            stripeCustomerId,
+            stripeSubscriptionId,
+            billingCycle,
+            amount: amountStr,
+            usersCount,
+          },
+        });
+
+        await prisma.user.update({
+          where: { id: userId },
+          data: { isSubscribed: true },
+        });
+
+        console.log(`[Stripe Webhook] Subscription started for existing user ${userId}: plan=${planName}, cycle=${billingCycle}`);
+        await persistEvent("PROCESSED");
+      } catch (error: any) {
+        console.error(`[Stripe Webhook] Existing-user subscription start failed:`, error.message);
+        await persistEvent("FAILED");
+      }
+
+      res.json({ received: true });
+      return;
+    }
+
     if (metadata && metadata.email) {
       const { fullName, hashedPassword, companyName } = metadata;
       // Normalize to match Better Auth's lowercased sign-in lookup.
