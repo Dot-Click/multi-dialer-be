@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, releaseTwilioResourcesForUser } from "../../services/twilio-account.service";
+import { releaseR2ResourcesForUser } from "../../services/userAssetCleanup.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { sendEmail } from "../../utils/email";
@@ -511,6 +512,10 @@ export async function deleteUserFromDb(id: string) {
             console.error(`[UserService] Twilio teardown failed for user ${id}:`, err.message)
         );
     }
+    // Any role can have their own recordings/profile image in R2.
+    await releaseR2ResourcesForUser(id).catch((err: any) =>
+        console.error(`[UserService] R2 teardown failed for user ${id}:`, err.message)
+    );
 
     await prisma.user.delete({ where: { id } });
     return true;
@@ -518,10 +523,15 @@ export async function deleteUserFromDb(id: string) {
 
 export async function deleteAllUsersFromDb() {
     // Caution: This deletes ALL users
-    const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
-    for (const admin of admins) {
-        await releaseTwilioResourcesForUser(admin.id).catch((err: any) =>
-            console.error(`[UserService] Twilio teardown failed for user ${admin.id}:`, err.message)
+    const allUsers = await prisma.user.findMany({ select: { id: true, role: true } });
+    for (const u of allUsers) {
+        if (u.role === "ADMIN") {
+            await releaseTwilioResourcesForUser(u.id).catch((err: any) =>
+                console.error(`[UserService] Twilio teardown failed for user ${u.id}:`, err.message)
+            );
+        }
+        await releaseR2ResourcesForUser(u.id).catch((err: any) =>
+            console.error(`[UserService] R2 teardown failed for user ${u.id}:`, err.message)
         );
     }
 

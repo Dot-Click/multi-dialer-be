@@ -1,4 +1,4 @@
-import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import r2 from "../lib/config";
 import { randomUUID } from "crypto";
@@ -51,6 +51,31 @@ export async function uploadToR2(
 }
 
 /**
+ * Parses an R2-hosted URL (path-style: `<host>/<bucket>/<key...>`) back into
+ * its bucket + key. Returns null for anything that isn't one of OUR R2 URLs
+ * (e.g. a Twilio recording link) — callers must not touch those.
+ */
+function parseR2Url(storedUrl: string): { bucket: string; key: string } | null {
+  try {
+    const parsed = new URL(storedUrl);
+
+    const isOurR2 =
+      parsed.hostname.endsWith(".r2.cloudflarestorage.com") ||
+      (!!envConfig.R2_PUBLIC_URL && parsed.hostname === envConfig.R2_PUBLIC_URL);
+    if (!isOurR2) return null;
+
+    const segments = parsed.pathname.replace(/^\/+/, "").split("/");
+    const bucket = segments.shift() || envConfig.R2_BUCKET_NAME || "multi-dialer";
+    const key = segments.join("/");
+    if (!key) return null;
+
+    return { bucket, key };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Generate a short-lived presigned GET URL for an object stored in R2.
  *
  * Recordings (and other private objects) are stored against R2's S3 API
@@ -69,29 +94,37 @@ export async function getPresignedUrlFromStoredUrl(
 ): Promise<string | null> {
   if (!storedUrl) return storedUrl ?? null;
 
+  const parsed = parseR2Url(storedUrl);
+  // Not one of ours (e.g. a Twilio recording link) — return untouched,
+  // otherwise we'd mangle its path into a bogus R2 key and produce a URL
+  // that 403s (which surfaces as "no supported sources" in the <audio> player).
+  if (!parsed) return storedUrl;
+
   try {
-    const parsed = new URL(storedUrl);
-
-    // Only presign URLs that live in OUR R2. Anything else (e.g. a Twilio
-    // recording link) is returned untouched — otherwise we'd mangle its path
-    // into a bogus R2 key and produce a URL that 403s (which surfaces as
-    // "no supported sources" in the <audio> player).
-    const isOurR2 =
-      parsed.hostname.endsWith(".r2.cloudflarestorage.com") ||
-      (!!envConfig.R2_PUBLIC_URL && parsed.hostname === envConfig.R2_PUBLIC_URL);
-    if (!isOurR2) return storedUrl;
-
-    // pathname is "/<bucket>/<key...>" (path-style addressing)
-    const segments = parsed.pathname.replace(/^\/+/, "").split("/");
-    const bucket = segments.shift() || envConfig.R2_BUCKET_NAME || "multi-dialer";
-    const key = segments.join("/");
-    if (!key) return storedUrl;
-
-    const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+    const command = new GetObjectCommand({ Bucket: parsed.bucket, Key: parsed.key });
     return await getSignedUrl(r2, command, { expiresIn });
   } catch (error) {
     console.error("[R2 Presign Error]", error);
     return storedUrl;
+  }
+}
+
+/**
+ * Deletes an object from R2 given the URL that was persisted at upload time.
+ * No-ops (and never throws) for URLs that aren't ours (e.g. a raw Twilio
+ * link) or that fail to parse — this is best-effort storage cleanup and must
+ * never block the caller's primary delete operation.
+ */
+export async function deleteFromR2(storedUrl: string | null | undefined): Promise<void> {
+  if (!storedUrl) return;
+
+  const parsed = parseR2Url(storedUrl);
+  if (!parsed) return;
+
+  try {
+    await r2.send(new DeleteObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }));
+  } catch (error: any) {
+    console.error(`[R2 Delete Error] Failed to delete ${storedUrl}:`, error?.message || error);
   }
 }
 

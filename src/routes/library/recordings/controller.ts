@@ -4,7 +4,7 @@ import { successResponse, errorResponse } from "../../../utils/handler";
 import { insertRecordingInDb } from "./service";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { updateRecordingSchema } from "../../../schemas/recording.schema";
-import { uploadToR2 } from "../../../utils/r2-uploader";
+import { uploadToR2, deleteFromR2 } from "../../../utils/r2-uploader";
 import { resolveTenantUserIds } from "../../../utils/tenant";
 
 export const getAllRecordingsOfSpecificUser = async (req: Request, res: Response): Promise<void> => {
@@ -191,6 +191,12 @@ export const updateRecording = async (
       data: updateData,
     });
 
+    // A new file replaced the old one — the previous R2 object is now
+    // unreferenced, so clean it up rather than leaving it orphaned forever.
+    if (file && recording.url && recording.url !== updated.url) {
+      await deleteFromR2(recording.url);
+    }
+
     successResponse(res, 200, "Recording updated", updated);
   } catch (error: any) {
     if (error.code === "P2025") {
@@ -221,6 +227,7 @@ export const deleteRecording = async (
     }
 
     await prisma.recording.delete({ where: { id } });
+    await deleteFromR2(recording.url);
     successResponse(res, 200, "Recording deleted");
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error", 500);

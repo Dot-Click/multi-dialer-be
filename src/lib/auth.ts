@@ -15,6 +15,7 @@ import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/ser
 import { ensureDncFolder } from "../routes/contact/service";
 import { initializeUserAccount } from "../routes/user/service";
 import { releaseTwilioResourcesForUser } from "../services/twilio-account.service";
+import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -246,12 +247,13 @@ export const auth = betterAuth({
         }
       }
 
-      // Tear down Twilio resources BEFORE Better Auth's admin plugin deletes
-      // the user row. This is the actual code path the super-admin "Delete"
-      // button hits (authClient.admin.removeUser -> POST /admin/remove-user)
-      // — it does a raw prisma.user.delete() with no app-level cleanup, so
-      // this is the only place to release the account's Twilio numbers and
-      // close its sub-account before the row (and its FK-linked data) is gone.
+      // Tear down Twilio + R2 resources BEFORE Better Auth's admin plugin
+      // deletes the user row. This is the actual code path the super-admin
+      // "Delete" button hits (authClient.admin.removeUser -> POST
+      // /admin/remove-user) — it does a raw prisma.user.delete() with no
+      // app-level cleanup, so this is the only place to release the
+      // account's Twilio numbers, close its sub-account, and delete its R2
+      // files before the row (and its FK-linked data) is gone.
       if (ctx.path.startsWith("/admin/remove-user")) {
         const targetUserId = ctx.body?.userId;
         if (targetUserId) {
@@ -259,11 +261,17 @@ export const auth = betterAuth({
             where: { id: targetUserId },
             select: { role: true },
           });
+          // Only ADMIN accounts own a Twilio sub-account of their own.
           if (targetUser?.role === "ADMIN") {
             await releaseTwilioResourcesForUser(targetUserId).catch((err: any) =>
               console.error(`[Auth] Twilio teardown failed for user ${targetUserId} before admin delete:`, err.message)
             );
           }
+          // Any role (admin or agent) can have their own recordings/profile
+          // image in R2.
+          await releaseR2ResourcesForUser(targetUserId).catch((err: any) =>
+            console.error(`[Auth] R2 teardown failed for user ${targetUserId} before admin delete:`, err.message)
+          );
         }
       }
 
