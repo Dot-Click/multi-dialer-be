@@ -516,9 +516,22 @@ function billingStatusToApi(s: string): string {
 // Map a Billing ledger row (+ its user) into the invoice shape the frontend expects.
 function mapBillingRow(b: any) {
   const paid = b.status === "PAID";
-  const latestSubStatus = (b.user?.userSubscriptions?.[0]?.status ?? "").toUpperCase();
+  const latestSub = b.user?.userSubscriptions?.[0];
+  const latestSubStatus = (latestSub?.status ?? "").toUpperCase();
   const isCancelled = latestSubStatus === "CANCELLED" || latestSubStatus === "CANCELED";
   const isOnTrial = b.user?.trialStatus === "ACTIVE" && !b.user?.isSubscribed && !isCancelled;
+
+  // The Billing ledger only gets its own cardBrand/cardLast4 resolved at the
+  // moment an invoice is marked paid (best-effort, can silently miss). The
+  // customer's UserSubscription record is kept fresh far more reliably (any
+  // Stripe customer.updated event, the admin "change card" flow, and an
+  // on-demand backfill) — fall back to it whenever the ledger's own card is
+  // empty, so this table stays consistent with the Subscription List.
+  const cardBrand = b.cardBrand ?? latestSub?.cardBrand ?? null;
+  const cardLast4 = b.cardLast4 ?? latestSub?.cardLast4 ?? null;
+  const cardExpMonth = latestSub?.cardExpMonth ?? null;
+  const cardExpYear = latestSub?.cardExpYear ?? null;
+
   return {
     id: b.stripeInvoiceId ?? b.id, // detail/PDF actions key off the Stripe invoice id
     number: b.invoiceNumber,
@@ -527,8 +540,8 @@ function mapBillingRow(b: any) {
     customerEmail: b.user?.email ?? null,
     plan: b.planName ?? (b.plan ? String(b.plan) : null) ?? "—",
     paymentMethod:
-      b.cardBrand || b.cardLast4
-        ? { brand: b.cardBrand ?? null, last4: b.cardLast4 ?? null, expMonth: null, expYear: null }
+      cardBrand || cardLast4
+        ? { brand: cardBrand, last4: cardLast4, expMonth: cardExpMonth, expYear: cardExpYear }
         : null,
     amount_paid: paid ? b.amount : 0,
     amount_due: paid ? 0 : b.amount,
@@ -548,7 +561,7 @@ export const getAllInvoices = async (req: Request, res: Response): Promise<void>
 
     const rows = await prisma.billing.findMany({
       where: { userId },
-      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true } } } } },
+      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, cardBrand: true, cardLast4: true, cardExpMonth: true, cardExpYear: true } } } } },
       orderBy: { date: "desc" },
     });
 
@@ -660,7 +673,7 @@ export const getInvoicesByUser = async (req: Request, res: Response): Promise<vo
     // Served from the local Billing ledger for this user.
     const rows = await prisma.billing.findMany({
       where: { userId },
-      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true } } } } },
+      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, cardBrand: true, cardLast4: true, cardExpMonth: true, cardExpYear: true } } } } },
       orderBy: { date: "desc" },
     });
 
@@ -1260,7 +1273,7 @@ export const startSubscriptionCheckout = async (req: Request, res: Response): Pr
 export const getAllInvoicesAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
     const rows = await prisma.billing.findMany({
-      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true } } } } },
+      include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, cardBrand: true, cardLast4: true, cardExpMonth: true, cardExpYear: true } } } } },
       orderBy: { date: "desc" },
     });
 
