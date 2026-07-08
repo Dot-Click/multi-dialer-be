@@ -6,7 +6,7 @@ import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, release
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
+// import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
 import { encryptEIN as encrypt } from "../../utils/encryption";
 import { syncBillingFromInvoice } from "../../services/billingLedger.service";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
@@ -421,60 +421,60 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
         console.log(`[Stripe Webhook] UserSubscription created for ${email}: plan=${planName}, cycle=${billingCycle}`);
 
-        const subEmail = `slingvo.${newUser.id.replace(/-/g, "")}@slingvo.com`;
-        const subPassword = crypto.randomBytes(12).toString("hex");
-        const nameParts = (newUser.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
-        const firstName = nameParts[0] || "User";
-        const lastName = nameParts.slice(1).join(" ") || "User";
+        // const subEmail = `slingvo.${newUser.id.replace(/-/g, "")}@slingvo.com`;
+        // const subPassword = crypto.randomBytes(12).toString("hex");
+        // const nameParts = (newUser.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
+        // const firstName = nameParts[0] || "User";
+        // const lastName = nameParts.slice(1).join(" ") || "User";
 
-        try {
-          const defaultBaseZip = envConfig.MYPLUSLEADS_DEFAULT_BASE_ZIP;
-          const { accountId } = await createMyPlusLeadsAccount({
-            email: subEmail,
-            password: subPassword,
-            firstName,
-            lastName,
-            phone: "0000000000",
-            address: "123 Main St",
-            city: "Austin",
-            state: "TX",
-            zip: defaultBaseZip || "78701",
-            baseZip: defaultBaseZip || "78701",
-          });
+        // try {
+        //   const defaultBaseZip = envConfig.MYPLUSLEADS_DEFAULT_BASE_ZIP;
+        //   const { accountId } = await createMyPlusLeadsAccount({
+        //     email: subEmail,
+        //     password: subPassword,
+        //     firstName,
+        //     lastName,
+        //     phone: "0000000000",
+        //     address: "123 Main St",
+        //     city: "Austin",
+        //     state: "TX",
+        //     zip: defaultBaseZip || "78701",
+        //     baseZip: defaultBaseZip || "78701",
+        //   });
 
-          await prisma.myPlusLeadsConfig.create({
-            data: {
-              userId: newUser.id,
-              subAccountEmail: subEmail,
-              subAccountPassword: encrypt(subPassword),
-              subAccountId: accountId != null ? String(accountId) : null,
-              status: "CONNECTED",
-              errorMessage: null,
-            },
-          });
+        //   await prisma.myPlusLeadsConfig.create({
+        //     data: {
+        //       userId: newUser.id,
+        //       subAccountEmail: subEmail,
+        //       subAccountPassword: encrypt(subPassword),
+        //       subAccountId: accountId != null ? String(accountId) : null,
+        //       status: "CONNECTED",
+        //       errorMessage: null,
+        //     },
+        //   });
 
-          syncLeadsForUser(newUser.id)
-            .then((result) => {
-              console.log(`[MyPlusLeads] Initial sync for ${email}: imported ${result.imported}, skipped ${result.skipped}`);
-            })
-            .catch(async (err) => {
-              const message = err?.message ?? String(err);
-              console.error(`[MyPlusLeads] Initial sync failed for ${email}:`, message);
-              await prisma.myPlusLeadsConfig.update({
-                where: { userId: newUser.id },
-                data: { errorMessage: message },
-              }).catch(() => undefined);
-            });
-        } catch (err) {
-          console.error("[Stripe Webhook] MyPlusLeads account creation failed:", err);
-          await prisma.myPlusLeadsConfig.create({
-            data: {
-              userId: newUser.id,
-              status: "FAILED",
-              errorMessage: err instanceof Error ? err.message : String(err),
-            },
-          });
-        }
+        //   syncLeadsForUser(newUser.id)
+        //     .then((result) => {
+        //       console.log(`[MyPlusLeads] Initial sync for ${email}: imported ${result.imported}, skipped ${result.skipped}`);
+        //     })
+        //     .catch(async (err) => {
+        //       const message = err?.message ?? String(err);
+        //       console.error(`[MyPlusLeads] Initial sync failed for ${email}:`, message);
+        //       await prisma.myPlusLeadsConfig.update({
+        //         where: { userId: newUser.id },
+        //         data: { errorMessage: message },
+        //       }).catch(() => undefined);
+        //     });
+        // } catch (err) {
+        //   console.error("[Stripe Webhook] MyPlusLeads account creation failed:", err);
+        //   await prisma.myPlusLeadsConfig.create({
+        //     data: {
+        //       userId: newUser.id,
+        //       status: "FAILED",
+        //       errorMessage: err instanceof Error ? err.message : String(err),
+        //     },
+        //   });
+        // }
 
         console.log(`[Stripe Webhook] Full provisioning successful for ${email}`);
 
@@ -609,21 +609,21 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           },
         });
 
-        const config = await prisma.myPlusLeadsConfig.findUnique({
-          where: { userId: subRecord.userId },
-        });
+        // const config = await prisma.myPlusLeadsConfig.findUnique({
+        //   where: { userId: subRecord.userId },
+        // });
 
-        if (config?.subAccountId && config.status === "CONNECTED") {
-          try {
-            await disableMyPlusLeadsAccount(config.subAccountId);
-            await prisma.myPlusLeadsConfig.update({
-              where: { userId: subRecord.userId },
-              data: { status: "NEED_SETUP", errorMessage: null },
-            });
-          } catch (err) {
-            console.error("[Stripe Webhook] MyPlusLeads disable failed:", err);
-          }
-        }
+        // if (config?.subAccountId && config.status === "CONNECTED") {
+        //   try {
+        //     await disableMyPlusLeadsAccount(config.subAccountId);
+        //     await prisma.myPlusLeadsConfig.update({
+        //       where: { userId: subRecord.userId },
+        //       data: { status: "NEED_SETUP", errorMessage: null },
+        //     });
+        //   } catch (err) {
+        //     console.error("[Stripe Webhook] MyPlusLeads disable failed:", err);
+        //   }
+        // }
 
         try {
           await releaseAllNumbersForUser(subRecord.userId);
