@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, releaseTwilioResourcesForUser } from "../../services/twilio-account.service";
 import { releaseR2ResourcesForUser } from "../../services/userAssetCleanup.service";
+import { getUserPlanLimits } from "../../services/planLimits.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { sendEmail } from "../../utils/email";
@@ -30,6 +31,22 @@ export async function createUserInDb(payload: any) {
 
     const existing = await prisma.user.findUnique({ where: { email: rest.email } });
     if (existing) throwHttp(400, "User with this email already exists");
+
+    // Enforce the owning admin's plan-configured agent-seat cap. Hard cap
+    // only (v1) — no metered overage billing for extra seats, so this just
+    // blocks creation once the included/max seat count is reached.
+    if (rest.role === "AGENT" && rest.createdById) {
+        const limits = await getUserPlanLimits(rest.createdById);
+        const seatCap = limits.maxAgentSeats ?? limits.includedAgentSeats;
+        if (seatCap != null) {
+            const currentAgentCount = await prisma.user.count({
+                where: { createdById: rest.createdById, role: "AGENT" },
+            });
+            if (currentAgentCount >= seatCap) {
+                throwHttp(403, `Your plan allows up to ${seatCap} agent seat(s). Upgrade your plan to add more agents.`);
+            }
+        }
+    }
 
     // Use a transaction for atomicity
     const newUser = await prisma.$transaction(async (tx) => {

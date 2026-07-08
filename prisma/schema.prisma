@@ -1113,6 +1113,45 @@ model PlanFeature {
   @@map("plan_features")
 }
 
+// Structured, machine-readable entitlements for a dynamic Stripe-product plan.
+// Keyed by `planKey` — the same normalized string stored as UserSubscription.plan
+// / Stripe product.metadata.plan (see planKeyFromProduct in billing/controller.ts).
+// Decoupled from Stripe itself: Stripe remains the source of truth for pricing,
+// this table is the source of truth for what a plan actually unlocks. A `null`
+// on any numeric field means "unlimited" for that limit.
+model PlanLimit {
+  id          String  @id @default(uuid())
+  planKey     String  @unique
+  displayName String?
+
+  // Dialer pacing — max simultaneous lines the power dialer may run.
+  maxDialerLines Int?
+
+  // Agent seats — hard cap, no metered overage billing (v1).
+  includedAgentSeats Int?
+  maxAgentSeats      Int?
+
+  // Phone numbers — included free count; extraNumberPriceCents overrides
+  // Twilio's live list price for add-on numbers when set.
+  includedNumbers       Int?
+  extraNumberPriceCents Int?
+
+  // Feature toggles
+  callRecordingEnabled          Boolean @default(true)
+  aiInsightsLevel               String  @default("FULL") // NONE | BASIC | FULL
+  stirShakenEnabled             Boolean @default(true)
+  smartNumberRotationEnabled    Boolean @default(true)
+  teamDashboardEnabled          Boolean @default(true)
+  priorityRoutingEnabled        Boolean @default(true)
+  aiCallCoachingEnabled         Boolean @default(true)
+  advancedDeliverabilityEnabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("plan_limits")
+}
+
 model CallerId {
   id              String         @id @default(cuid())
   label           String

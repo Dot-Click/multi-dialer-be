@@ -9,6 +9,7 @@ import mediaCenterRoutes from "./library/mediaCenter"
 import recordingsRoutes from "./library/recordings"
 import callerIdRoutes from "./systemSettings/callerId"
 import callSettingsRoutes from "./systemSettings/callSettings"
+import planLimitsRoutes from "./planLimits"
 import callbackPromptRoutes from "./library/callBackPrompt";
 import miscFieldsRoutes from "./systemSettings/miscFields"
 import appearanceRoutes from "./systemSettings/appearance"
@@ -91,6 +92,7 @@ router.use("/report", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), SuperAd
 router.use("/super-admin/caller-ids", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), superAdminCallerIdRoutes)
 
 router.use("/billing", billingRouter)
+router.use("/plan-limits", planLimitsRoutes)
 router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
 router.use("/email-history", protectRoute, emailHistoryRoutes)

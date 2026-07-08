@@ -10,6 +10,7 @@ import twilio from "twilio";
 import { insertCallerIdInDb, resolveAdminId } from "../systemSettings/callerId/service";
 import { getTwilioClient, getUserTwilioSubAccountSid, transferNumberToSubAccount, releaseNumber } from "../../services/twilio-account.service";
 import { resolveBillableCustomer, addNumberToAddonSubscription, removeAddonSubscriptionItem, getMonthlyPriceCentsForCountry } from "../../services/phoneNumberBilling.service";
+import { getUserPlanLimits } from "../../services/planLimits.service";
 import { chunkArray } from "@/utils/helpers";
 
 const { jwt: { AccessToken } } = twilio;
@@ -265,12 +266,23 @@ export const agentReady: RequestHandler = async (req, res) => {
  */
 export const addLeadsToDialer: RequestHandler = async (req, res) => {
   try {
-    const { leads, callerId, callerIds, pacing, maxCallsPerId }: { leads: any[], callerId?: string, callerIds?: string | string[], pacing?: number, maxCallsPerId?: number } = req.body;
+    const { leads, callerId, callerIds, maxCallsPerId }: { leads: any[], callerId?: string, callerIds?: string | string[], pacing?: number, maxCallsPerId?: number } = req.body;
+    let pacing: number | undefined = req.body.pacing;
     const userId = req.user?.id;
 
     if (!userId) {
       errorResponse(res, { message: "Unauthorized. Please log in." }, 401);
       return;
+    }
+
+    // Clamp the requested pacing (simultaneous lines) to the plan's cap.
+    // Defense in depth — the call-settings modal should already cap the
+    // dropdown, but this is the actual point a dialing session takes effect.
+    if (pacing != null) {
+      const limits = await getUserPlanLimits(userId);
+      if (limits.maxDialerLines != null && pacing > limits.maxDialerLines) {
+        pacing = limits.maxDialerLines;
+      }
     }
 
     // Explicitly reset the agent block state so they aren't phantom-locked from a previous dropped run!
@@ -1216,6 +1228,28 @@ export const buyNumber: RequestHandler = async (req, res) => {
       return;
     }
 
+    // Self-service purchase — this path buys directly from Twilio with no
+    // Stripe charge at all, so it must never exceed the plan's included free
+    // count (that's what the paid add-on flow above is for). Enforce here
+    // rather than silently letting an admin add unlimited free numbers.
+    const limits = await getUserPlanLimits(userId);
+    if (limits.includedNumbers != null) {
+      const systemSettingIds = (
+        await prisma.system_Setting.findMany({ where: { userId }, select: { id: true } })
+      ).map((s) => s.id);
+      const currentCount = await prisma.callerId.count({
+        where: { systemSettingId: { in: systemSettingIds } },
+      });
+      if (currentCount >= limits.includedNumbers) {
+        errorResponse(
+          res,
+          { message: `Your plan includes ${limits.includedNumbers} number(s). Contact support to add a paid add-on number.` },
+          403
+        );
+        return;
+      }
+    }
+
     const userClient = await getTwilioClient(userId);
     const number = await userClient.incomingPhoneNumbers.create({
       phoneNumber: phoneNumber,
@@ -1271,7 +1305,21 @@ async function buyNumberOnBehalfOfUser(
     return;
   }
 
-  const { amountCents, currency } = await getMonthlyPriceCentsForCountry(masterClient, countryCode || "US");
+  // Use the plan's configured flat add-on price when set (e.g. $2/number),
+  // overriding Twilio's live list price so overage billing matches the
+  // pricing sheet regardless of country. Only hit Twilio's pricing API when
+  // no override is configured.
+  const limits = await getUserPlanLimits(targetUserId);
+  let amountCents: number;
+  let currency: string;
+  if (limits.extraNumberPriceCents != null) {
+    amountCents = limits.extraNumberPriceCents;
+    currency = "usd";
+  } else {
+    const livePricing = await getMonthlyPriceCentsForCountry(masterClient, countryCode || "US");
+    amountCents = livePricing.amountCents;
+    currency = livePricing.currency;
+  }
   const numberLabel = label || phoneNumber;
 
   const purchased = await masterClient.incomingPhoneNumbers.create({ phoneNumber });
