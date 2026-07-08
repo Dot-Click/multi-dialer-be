@@ -14,6 +14,7 @@ import { newUserSignupTemp, loginAlertTemp, sendEmail } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { ensureDncFolder } from "../routes/contact/service";
 import { initializeUserAccount } from "../routes/user/service";
+import { releaseTwilioResourcesForUser } from "../services/twilio-account.service";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -242,6 +243,27 @@ export const auth = betterAuth({
             data: { updatedAt: new Date() },
           });
           console.log(`[Auth] User \${session.userId} logged out. updatedAt updated.`);
+        }
+      }
+
+      // Tear down Twilio resources BEFORE Better Auth's admin plugin deletes
+      // the user row. This is the actual code path the super-admin "Delete"
+      // button hits (authClient.admin.removeUser -> POST /admin/remove-user)
+      // — it does a raw prisma.user.delete() with no app-level cleanup, so
+      // this is the only place to release the account's Twilio numbers and
+      // close its sub-account before the row (and its FK-linked data) is gone.
+      if (ctx.path.startsWith("/admin/remove-user")) {
+        const targetUserId = ctx.body?.userId;
+        if (targetUserId) {
+          const targetUser = await prisma.user.findUnique({
+            where: { id: targetUserId },
+            select: { role: true },
+          });
+          if (targetUser?.role === "ADMIN") {
+            await releaseTwilioResourcesForUser(targetUserId).catch((err: any) =>
+              console.error(`[Auth] Twilio teardown failed for user ${targetUserId} before admin delete:`, err.message)
+            );
+          }
         }
       }
 

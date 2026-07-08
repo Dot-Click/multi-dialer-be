@@ -1054,7 +1054,7 @@ model Lead {
   status      String      @default("PENDING")
   queueStatus QueueStatus @default(ACTIVE)
   userId      String
-  user        User        @relation(fields: [userId], references: [id])
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
@@ -1068,7 +1068,7 @@ model Lead {
 model UserSubscription {
   id     String             @id @default(uuid())
   userId String
-  user   User               @relation(fields: [userId], references: [id])
+  user   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   // The real (dynamic) Stripe product name this subscription is on
   // (e.g. "pro", "Premium"). Free text — not the legacy fixed enum.
   plan   String
