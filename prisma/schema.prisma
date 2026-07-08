@@ -1145,6 +1145,9 @@ model CallerId {
   stripeSubscriptionItemId String?
   numberBillingStatus      NumberBillingStatus?  @default(ACTIVE)
 
+  // Hot-path lookup: makeCall / recordCall resolve a CallerId by its Twilio
+  // number on every dial. Without this it was a full table scan of caller_id.
+  @@index([twillioNumber])
   @@map("caller_id")
 }
 

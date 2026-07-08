@@ -154,6 +154,18 @@ export class DialerService {
   /** Users who have explicitly stopped their dialer session — blocks in-flight processQueue batches. */
   private stoppedUsers: Set<string> = new Set();
 
+  // ── Per-session settings cache ──────────────────────────────────────────────
+  // checkCompliance runs on every processQueue pump and makeCall re-reads call
+  // settings on every dial; both hit the DB repeatedly with values that barely
+  // change during a session. Cache them with a short TTL and invalidate on
+  // session start/stop so a session picks up fresh settings but steady-state
+  // dialing doesn't pay the round-trips.
+  private static readonly SETTINGS_TTL_MS = 30_000;
+  /** userId -> cached TCPA/timezone snapshot used by checkCompliance. */
+  private complianceCache: Map<string, { snapshot: { hasReg: boolean; tcpaFrom: string | null; tcpaTo: string | null; tcpaAutodialing: boolean; timeZone: string }; expiresAt: number }> = new Map();
+  /** userId -> cached call-settings snapshot (recording URLs + amdEnabled) used by makeCall. */
+  private callSettingsCache: Map<string, { snapshot: { amRecordingUrl: string; busyRecordingUrl: string; amdEnabled: boolean }; expiresAt: number }> = new Map();
+
   // ── Reconciliation watchdog (Layer 1) ──────────────────────────────────────
   /** Handle for the periodic reconciliation loop. */
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -203,6 +215,11 @@ export class DialerService {
   async addLeadsToQueue(userId: string, leads: Lead[], callerId?: string | string[], pacing?: number, maxCallsPerId?: number) {
     // Clear any previous stop signal so a fresh session can dial normally.
     this.stoppedUsers.delete(userId);
+
+    // Drop cached settings so this session reads the latest compliance window,
+    // recording URLs, and amdEnabled (the agent may have just changed them).
+    this.complianceCache.delete(userId);
+    this.callSettingsCache.delete(userId);
 
     // ── Store session pacing ──────────────────────────────────────────────────
     if (pacing && pacing > 0) {
@@ -335,6 +352,10 @@ export class DialerService {
   async clearQueue(userId: string) {
     // Signal any in-progress processQueue batch to stop firing new calls immediately.
     this.stoppedUsers.add(userId);
+
+    // Drop cached settings so the next session re-reads fresh values.
+    this.complianceCache.delete(userId);
+    this.callSettingsCache.delete(userId);
 
     const queue = this.userQueues.get(userId);
     if (queue) {
@@ -593,25 +614,42 @@ export class DialerService {
 
   public async checkCompliance(userId: string): Promise<{ isAllowed: boolean; autodialingEnabled: boolean }> {
     try {
-      const settings = await prisma.system_Setting.findFirst({
-        where: { userId },
-        include: { regulatorySetting: true },
-      });
-
-      if (!settings || !settings.regulatorySetting) {
-        return { isAllowed: true, autodialingEnabled: true }; // Default to allowed if no settings
+      // Serve the TCPA window + timezone from a short-lived cache. Only the DB
+      // reads are cached; the time-of-day comparison below is always recomputed
+      // against the current clock so the window still opens/closes on time.
+      const nowMs = Date.now();
+      let cached = this.complianceCache.get(userId);
+      if (!cached || cached.expiresAt <= nowMs) {
+        const settings = await prisma.system_Setting.findFirst({
+          where: { userId },
+          include: { regulatorySetting: true },
+        });
+        const reg = settings?.regulatorySetting;
+        let timeZone = "UTC";
+        try {
+          const company = await prisma.company.findFirst();
+          if (company?.defaultTimeZone) {
+            timeZone = company.defaultTimeZone;
+          }
+        } catch (e) { }
+        cached = {
+          snapshot: {
+            hasReg: !!(settings && reg),
+            tcpaFrom: reg?.tcpaFrom ?? null,
+            tcpaTo: reg?.tcpaTo ?? null,
+            tcpaAutodialing: reg?.tcpaAutodialing ?? true,
+            timeZone,
+          },
+          expiresAt: nowMs + DialerService.SETTINGS_TTL_MS,
+        };
+        this.complianceCache.set(userId, cached);
       }
 
-      const { tcpaFrom, tcpaTo, tcpaAutodialing } = settings.regulatorySetting;
+      const { hasReg, tcpaFrom, tcpaTo, tcpaAutodialing, timeZone } = cached.snapshot;
 
-      // Make timezone aware (defaults to UTC if no company found)
-      let timeZone = "UTC";
-      try {
-        const company = await prisma.company.findFirst();
-        if (company?.defaultTimeZone) {
-          timeZone = company.defaultTimeZone;
-        }
-      } catch (e) { }
+      if (!hasReg) {
+        return { isAllowed: true, autodialingEnabled: true }; // Default to allowed if no settings
+      }
 
       const now = new Date();
       let currentStr = "";
@@ -678,6 +716,31 @@ export class DialerService {
     return null;
   }
 
+  /**
+   * Recording URLs + amdEnabled for a user, served from a short-lived cache so
+   * makeCall doesn't re-read system settings on every dial. Invalidated on
+   * session start/stop (addLeadsToQueue / clearQueue), so a new session always
+   * reflects the latest settings; within a session staleness is bounded by TTL.
+   */
+  private async getCallSettingsSnapshot(userId: string): Promise<{ amRecordingUrl: string; busyRecordingUrl: string; amdEnabled: boolean }> {
+    const nowMs = Date.now();
+    const cached = this.callSettingsCache.get(userId);
+    if (cached && cached.expiresAt > nowMs) {
+      return cached.snapshot;
+    }
+    const settings = await prisma.system_Setting.findFirst({
+      where: { userId },
+      include: { callSettings: { include: { answeringMachineRecording: true, busyRecording: true } } }
+    });
+    const snapshot = {
+      amRecordingUrl: settings?.callSettings[0]?.answeringMachineRecording?.url || "",
+      busyRecordingUrl: settings?.callSettings[0]?.busyRecording?.url || "",
+      amdEnabled: settings?.callSettings[0]?.amdEnabled ?? false,
+    };
+    this.callSettingsCache.set(userId, { snapshot, expiresAt: nowMs + DialerService.SETTINGS_TTL_MS });
+    return snapshot;
+  }
+
   private async makeCall(lead: Lead, preAssignedNumber?: string | null) {
     try {
 
@@ -742,14 +805,9 @@ export class DialerService {
 
       const twilioFrom = fromNumber?.startsWith('+') ? fromNumber : `+${fromNumber}`;
 
-      // Also fetch system settings to get answeringMachineRecordingUrl
-      const settings = await prisma.system_Setting.findFirst({
-        where: { userId: lead.userId },
-        include: { callSettings: { include: { answeringMachineRecording: true, busyRecording: true } } }
-      });
-      const amRecordingUrl = settings?.callSettings[0]?.answeringMachineRecording?.url || "";
-      const busyRecordingUrl = settings?.callSettings[0]?.busyRecording?.url || "";
-      const amdEnabled = settings?.callSettings[0]?.amdEnabled ?? false;
+      // Recording URLs + amdEnabled from a short-lived per-user cache instead of a
+      // fresh DB read on every dial (invalidated on session start/stop).
+      const { amRecordingUrl, busyRecordingUrl, amdEnabled } = await this.getCallSettingsSnapshot(lead.userId);
 
       // Guard: Check if lead.userId is missing, empty, "undefined", or "null"
       if (!lead.userId || lead.userId === 'undefined' || lead.userId === 'null') {
