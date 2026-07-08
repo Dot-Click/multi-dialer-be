@@ -2,6 +2,7 @@ import twilio from "twilio";
 import { client as masterClient } from "../lib/config";
 import prisma from "../lib/prisma";
 import { envConfig } from "../lib/config";
+import { removeAddonSubscriptionItem, cancelAddonSubscriptionForUser } from "./phoneNumberBilling.service";
 
 /**
  * Creates a Twilio Sub-Account for a user.
@@ -129,6 +130,63 @@ export async function releaseNumber(twilioSid: string, ownerClient: ReturnType<t
     } catch (error: any) {
         console.error(`[TwilioService] Failed to release number ${twilioSid}:`, error.message);
         throw error;
+    }
+}
+
+/**
+ * Permanently closes a Twilio sub-account. Twilio does not allow closed
+ * accounts to be reopened, so this must only be called when the owning
+ * user's account is being permanently deleted. Must be issued from the
+ * PARENT (master) account — a sub-account cannot close itself.
+ */
+export async function closeTwilioSubAccount(subAccountSid: string) {
+    try {
+        await masterClient.api.v2010.accounts(subAccountSid).update({ status: "closed" });
+        console.log(`[TwilioService] Closed sub-account: ${subAccountSid}`);
+    } catch (error: any) {
+        console.error(`[TwilioService] Failed to close sub-account ${subAccountSid}:`, error.message);
+        throw error;
+    }
+}
+
+/**
+ * Full Twilio teardown for a user whose account is being permanently
+ * deleted: releases every phone number they own (plan-included AND paid
+ * add-on), stops billing for any add-on numbers, cancels their dedicated
+ * add-on subscription, and finally closes their Twilio sub-account itself.
+ * Only meaningful for ADMIN accounts — agents don't own a sub-account or
+ * numbers of their own (they use their admin's), so callers should not
+ * invoke this for AGENT/OWNER users.
+ */
+export async function releaseTwilioResourcesForUser(userId: string): Promise<void> {
+    const callerIds = await prisma.callerId.findMany({
+        where: { systemSetting: { userId } },
+        select: { id: true, twillioSid: true, billingSource: true, stripeSubscriptionItemId: true },
+    });
+
+    if (callerIds.length > 0) {
+        const ownerClient = await getTwilioClient(userId);
+        for (const c of callerIds) {
+            if (c.twillioSid) {
+                await releaseNumber(c.twillioSid, ownerClient).catch((err: any) =>
+                    console.error(`[UserDeletion] Failed to release number ${c.twillioSid} for user ${userId}:`, err.message)
+                );
+            }
+            if (c.billingSource === "PAID_ADDON" && c.stripeSubscriptionItemId) {
+                await removeAddonSubscriptionItem(c.stripeSubscriptionItemId);
+            }
+        }
+    }
+
+    // Cancel their dedicated add-on subscription, if any (safe no-op otherwise).
+    await cancelAddonSubscriptionForUser(userId);
+
+    // Close the sub-account itself so it stops existing on Twilio entirely.
+    const subAccountSid = await getUserTwilioSubAccountSid(userId);
+    if (subAccountSid) {
+        await closeTwilioSubAccount(subAccountSid).catch((err: any) =>
+            console.error(`[UserDeletion] Failed to close Twilio sub-account ${subAccountSid} for user ${userId}:`, err.message)
+        );
     }
 }
 

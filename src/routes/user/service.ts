@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import Stripe from "stripe";
 import prisma from "../../lib/prisma";
-import { createTwilioSubAccount } from "../../services/twilio-account.service";
+import { createTwilioSubAccount, releaseTwilioResourcesForUser } from "../../services/twilio-account.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { sendEmail } from "../../utils/email";
@@ -504,12 +504,27 @@ export async function deleteUserFromDb(id: string) {
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throwHttp(404, "User not found");
 
+    // Only ADMIN accounts own a Twilio sub-account + numbers of their own —
+    // agents use their admin's, and OWNER (platform staff) have none at all.
+    if (existing.role === "ADMIN") {
+        await releaseTwilioResourcesForUser(id).catch((err: any) =>
+            console.error(`[UserService] Twilio teardown failed for user ${id}:`, err.message)
+        );
+    }
+
     await prisma.user.delete({ where: { id } });
     return true;
 }
 
 export async function deleteAllUsersFromDb() {
     // Caution: This deletes ALL users
+    const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+    for (const admin of admins) {
+        await releaseTwilioResourcesForUser(admin.id).catch((err: any) =>
+            console.error(`[UserService] Twilio teardown failed for user ${admin.id}:`, err.message)
+        );
+    }
+
     await prisma.user.deleteMany({});
     return true;
 }

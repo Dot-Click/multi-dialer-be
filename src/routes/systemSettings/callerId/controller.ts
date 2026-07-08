@@ -433,17 +433,20 @@ export const deleteCallerId = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Paid add-on numbers stop being billed and get released back to Twilio
-    // the moment they're removed.
+    // Always release the number back to Twilio — whether it's a paid add-on
+    // or a plan-included number, deleting it here should never leave the
+    // number sitting active (and billable) on the user's Twilio sub-account.
+    if (callerId.twillioSid) {
+      const ownerClient = await getTwilioClient(userId);
+      await releaseNumber(callerId.twillioSid, ownerClient).catch((err: any) =>
+        console.error(`[deleteCallerId] Failed to release ${callerId.twillioSid} from Twilio:`, err.message)
+      );
+    }
+
+    // Paid add-on numbers additionally stop being billed on Stripe.
     if (callerId.billingSource === "PAID_ADDON") {
       if (callerId.stripeSubscriptionItemId) {
         await removeAddonSubscriptionItem(callerId.stripeSubscriptionItemId);
-      }
-      if (callerId.twillioSid) {
-        const ownerClient = await getTwilioClient(userId);
-        await releaseNumber(callerId.twillioSid, ownerClient).catch((err: any) =>
-          console.error(`[deleteCallerId] Failed to release ${callerId.twillioSid} from Twilio:`, err.message)
-        );
       }
       const remaining = await prisma.callerId.count({
         where: { billingSource: "PAID_ADDON", id: { not: id }, systemSettingId: systemSettings.id },
