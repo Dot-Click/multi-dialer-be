@@ -5,6 +5,7 @@ import Stripe from "stripe";
 import { envConfig } from "@/lib/config";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
 import { getEffectiveLock } from "../../utils/status";
+import { getAddonSubscriptionIds } from "../../services/billingLedger.service";
 
 // Initialize Stripe (requires STRIPE_SECRET_KEY in .env)
 const stripe = new Stripe(envConfig.STRIPE_SECRET_KEY || "", {
@@ -103,6 +104,18 @@ async function createStripePrice(params: {
   });
 }
 
+// Product names used for the per-seat/per-number add-on subscriptions created
+// on the fly by agentSeatBilling/phoneNumberBilling services (see product_data
+// in addSeatToAddonSubscription / addNumberToAddonSubscription). These are
+// internal billing plumbing, never a customer-facing plan — products created
+// before the `internalAddon` metadata tag existed won't have it, so we also
+// match on the well-known name pattern to catch those.
+function isInternalAddonProduct(product: any): boolean {
+  if (product.metadata?.internalAddon === "true") return true;
+  const name = product.name || "";
+  return name === "Extra Agent Seat" || name.startsWith("Phone Number Add-on");
+}
+
 async function getStripePlans() {
   if (!envConfig.STRIPE_SECRET_KEY) {
     throw new Error("STRIPE_SECRET_KEY is required to load pricing tiers from Stripe.");
@@ -111,15 +124,17 @@ async function getStripePlans() {
   const products = await stripe.products.list({ limit: 100 });
 
   const plans = await Promise.all(
-    products.data.map(async (product) => {
-      const prices = await stripe.prices.list({
-        product: product.id,
-        active: true,
-        type: "recurring",
-        limit: 100,
-      });
-      return serializeStripePlan(product, prices.data);
-    }),
+    products.data
+      .filter((product) => !isInternalAddonProduct(product))
+      .map(async (product) => {
+        const prices = await stripe.prices.list({
+          product: product.id,
+          active: true,
+          type: "recurring",
+          limit: 100,
+        });
+        return serializeStripePlan(product, prices.data);
+      }),
   );
 
   return plans.filter((plan) => plan.monthlyStripePriceId || plan.yearlyStripePriceId);
@@ -476,9 +491,18 @@ export const getInvoicesByCustomer = async (req: Request, res: Response): Promis
 
     const invoiceList = await stripe.invoices.list({ customer: customerId, limit: 20 });
 
-    const productNames = await resolveProductNames(invoiceList.data);
+    // Exclude invoices billed on an internal add-on subscription (extra phone
+    // numbers/agent seats) — those aren't a customer-facing "plan" and would
+    // otherwise show up looking like a second subscription.
+    const addonIds = await getAddonSubscriptionIds();
+    const filteredInvoices = invoiceList.data.filter((inv) => {
+      const subId = typeof inv.subscription === "string" ? inv.subscription : (inv.subscription as any)?.id;
+      return !subId || !addonIds.includes(subId);
+    });
 
-    const invoices = invoiceList.data.map((inv) => ({
+    const productNames = await resolveProductNames(filteredInvoices);
+
+    const invoices = filteredInvoices.map((inv) => ({
       id: inv.id,
       number: inv.number,
       plan: planFromInvoice(inv, productNames) ?? "—",
@@ -559,8 +583,12 @@ export const getAllInvoices = async (req: Request, res: Response): Promise<void>
   try {
     const userId = (req as any).user.id;
 
+    // Exclude add-on subscription rows. notIn treats NULL as "not matched" in
+    // Postgres (three-valued logic), which would silently drop legitimate rows
+    // that predate this column — so explicitly keep NULLs via the OR.
+    const addonIds = await getAddonSubscriptionIds();
     const rows = await prisma.billing.findMany({
-      where: { userId },
+      where: { userId, OR: [{ stripeSubscriptionId: null }, { stripeSubscriptionId: { notIn: addonIds } }] },
       include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, cardBrand: true, cardLast4: true, cardExpMonth: true, cardExpYear: true } } } } },
       orderBy: { date: "desc" },
     });
@@ -586,9 +614,18 @@ export const getAllInvoices = async (req: Request, res: Response): Promise<void>
     }
 
     const invoiceList = await stripe.invoices.list({ customer: sub.stripeCustomerId, limit: 50 });
-    const productNames = await resolveProductNames(invoiceList.data);
 
-    const invoices = invoiceList.data.map((inv) => ({
+    // Same exclusion as getInvoicesByCustomer — add-on subscription invoices
+    // aren't a customer-facing "plan".
+    const addonIdsFallback = await getAddonSubscriptionIds();
+    const filteredInvoiceList = invoiceList.data.filter((inv) => {
+      const subId = typeof inv.subscription === "string" ? inv.subscription : (inv.subscription as any)?.id;
+      return !subId || !addonIdsFallback.includes(subId);
+    });
+
+    const productNames = await resolveProductNames(filteredInvoiceList);
+
+    const invoices = filteredInvoiceList.map((inv) => ({
       id: inv.id,
       number: inv.number ?? null,
       plan: planFromInvoice(inv, productNames) ?? "—",
@@ -670,9 +707,11 @@ export const getInvoicesByUser = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    // Served from the local Billing ledger for this user.
+    // Served from the local Billing ledger for this user. Excludes add-on
+    // subscription rows (see getAllInvoices for the notIn/NULL note).
+    const addonIds = await getAddonSubscriptionIds();
     const rows = await prisma.billing.findMany({
-      where: { userId },
+      where: { userId, OR: [{ stripeSubscriptionId: null }, { stripeSubscriptionId: { notIn: addonIds } }] },
       include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, cardBrand: true, cardLast4: true, cardExpMonth: true, cardExpYear: true } } } } },
       orderBy: { date: "desc" },
     });
@@ -1272,7 +1311,10 @@ export const startSubscriptionCheckout = async (req: Request, res: Response): Pr
 // Admin-only: all invoices from all users (super admin reports)
 export const getAllInvoicesAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
+    // Excludes add-on subscription rows (see getAllInvoices for the notIn/NULL note).
+    const addonIds = await getAddonSubscriptionIds();
     const rows = await prisma.billing.findMany({
+      where: { OR: [{ stripeSubscriptionId: null }, { stripeSubscriptionId: { notIn: addonIds } }] },
       include: { user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, userSubscriptions: { orderBy: { createdAt: "desc" }, take: 1, select: { status: true, cardBrand: true, cardLast4: true, cardExpMonth: true, cardExpYear: true } } } } },
       orderBy: { date: "desc" },
     });

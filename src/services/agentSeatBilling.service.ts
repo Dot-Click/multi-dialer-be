@@ -49,7 +49,7 @@ export async function addSeatToAddonSubscription(
     currency,
     unit_amount: monthlyPriceCents,
     recurring: { interval: "month" },
-    product_data: { name: "Extra Agent Seat" },
+    product_data: { name: "Extra Agent Seat", metadata: { internalAddon: "true" } },
   });
 
   let existing = await prisma.agentSeatSubscription.findUnique({ where: { userId: adminUserId } });

@@ -1,4 +1,5 @@
 import prisma from "../../lib/prisma";
+import { getAddonSubscriptionIds } from "../../services/billingLedger.service";
 
 
 export async function getUserOverviewInDb() {
@@ -226,6 +227,7 @@ export async function getUserSubscriptionStatusInDb() {
 export async function getRevenueGrowthInDb() {
   const now = new Date();
   const results = [];
+  const addonIds = await getAddonSubscriptionIds();
 
   for (let i = 5; i >= 0; i--) {
     const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -233,9 +235,13 @@ export async function getRevenueGrowthInDb() {
     const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
 
     // Contracted revenue = all billing rows (any status) for the month, normalised
-    // to a monthly figure so YEARLY rows don't distort the bar chart.
+    // to a monthly figure so YEARLY rows don't distort the bar chart. Excludes
+    // add-on subscription rows — see getAllInvoices for the notIn/NULL note.
     const rows = await prisma.billing.findMany({
-      where: { date: { gte: startOfMonth, lte: endOfMonth } },
+      where: {
+        date: { gte: startOfMonth, lte: endOfMonth },
+        OR: [{ stripeSubscriptionId: null }, { stripeSubscriptionId: { notIn: addonIds } }],
+      },
       select: { amount: true, billingCycle: true },
     });
 
@@ -258,14 +264,20 @@ export async function getRevenueGrowthInDb() {
 export async function getCollectedRevenueGrowthInDb() {
   const now = new Date();
   const results = [];
+  const addonIds = await getAddonSubscriptionIds();
 
   for (let i = 5; i >= 0; i--) {
     const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
     const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
 
+    // Excludes add-on subscription rows — see getAllInvoices for the notIn/NULL note.
     const agg = await prisma.billing.aggregate({
-      where: { status: "PAID", date: { gte: startOfMonth, lte: endOfMonth } },
+      where: {
+        status: "PAID",
+        date: { gte: startOfMonth, lte: endOfMonth },
+        OR: [{ stripeSubscriptionId: null }, { stripeSubscriptionId: { notIn: addonIds } }],
+      },
       _sum: { amount: true },
     });
 
@@ -286,7 +298,10 @@ function normalizeSubStatus(status: string): string {
 
 export async function getBillingReportDetailInDb() {
   // Pull all billing rows, newest first, with user + latest subscription status.
+  // Excludes add-on subscription rows — see getAllInvoices for the notIn/NULL note.
+  const addonIds = await getAddonSubscriptionIds();
   const billingRows = await prisma.billing.findMany({
+    where: { OR: [{ stripeSubscriptionId: null }, { stripeSubscriptionId: { notIn: addonIds } }] },
     include: {
       user: {
         include: {
@@ -357,6 +372,10 @@ export async function getDashboardSummaryInDb() {
   const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
+  // Excludes add-on subscription rows — see getAllInvoices for the notIn/NULL note.
+  const addonIds = await getAddonSubscriptionIds();
+  const notAddon = { OR: [{ stripeSubscriptionId: null }, { stripeSubscriptionId: { notIn: addonIds } }] };
+
   const [
     currRevAgg, prevRevAgg,
     currActivePayers, prevActivePayers,
@@ -365,21 +384,21 @@ export async function getDashboardSummaryInDb() {
   ] = await Promise.all([
     // Total Revenue — sum of PAID billing rows by invoice date
     prisma.billing.aggregate({
-      where: { status: "PAID", date: { gte: currentMonthStart, lte: currentMonthEnd } },
+      where: { status: "PAID", date: { gte: currentMonthStart, lte: currentMonthEnd }, ...notAddon },
       _sum: { amount: true },
     }),
     prisma.billing.aggregate({
-      where: { status: "PAID", date: { gte: previousMonthStart, lte: previousMonthEnd } },
+      where: { status: "PAID", date: { gte: previousMonthStart, lte: previousMonthEnd }, ...notAddon },
       _sum: { amount: true },
     }),
     // Active Subscriptions — distinct users with a PAID invoice this month
     prisma.billing.groupBy({
       by: ["userId"],
-      where: { status: "PAID", date: { gte: currentMonthStart, lte: currentMonthEnd } },
+      where: { status: "PAID", date: { gte: currentMonthStart, lte: currentMonthEnd }, ...notAddon },
     }),
     prisma.billing.groupBy({
       by: ["userId"],
-      where: { status: "PAID", date: { gte: previousMonthStart, lte: previousMonthEnd } },
+      where: { status: "PAID", date: { gte: previousMonthStart, lte: previousMonthEnd }, ...notAddon },
     }),
     // New Signups — stays on User (signup is not a billing event)
     prisma.user.count({

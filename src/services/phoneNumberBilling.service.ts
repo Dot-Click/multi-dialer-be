@@ -74,7 +74,7 @@ export async function addNumberToAddonSubscription(
     currency,
     unit_amount: monthlyPriceCents,
     recurring: { interval: "month" },
-    product_data: { name: `Phone Number Add-on — ${label}` },
+    product_data: { name: `Phone Number Add-on — ${label}`, metadata: { internalAddon: "true" } },
   });
 
   let existing = await prisma.phoneNumberSubscription.findUnique({ where: { userId } });
