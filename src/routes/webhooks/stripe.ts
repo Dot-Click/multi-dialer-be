@@ -12,6 +12,7 @@ import { triggerZapierWebhook } from "../../lib/zapier";
 import { encryptEIN as encrypt } from "../../utils/encryption";
 import { syncBillingFromInvoice } from "../../services/billingLedger.service";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
+import { planKeyFromName } from "../../services/planLimits.service";
 
 function getStripeClient() {
   const key = envConfig.STRIPE_SECRET_KEY;
@@ -383,37 +384,9 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           },
         });
 
-        // 4.5 Buy a US Phone Number (STRICT: No internal try/catch)
-        // TODO: Uncomment in production — auto-purchases a phone number for the user's sub-account
-        console.log(`[Stripe Webhook] Skipping primary US number purchase for ${email} (Provisioning Disabled)`);
-
-        const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
-
-        await prisma.callerId.create({
-          data: {
-            label: `Primary Line (${purchased.phoneNumber})`,
-            countryCode: "US",
-            twillioNumber: purchased.phoneNumber,
-            twillioSid: purchased.sid,
-            systemSettingId: systemSetting.id,
-            numberOfLines: 1,
-          },
-        });
-
-        // 5. Setup basic Library and folders
-        await prisma.library.create({
-          data: { userId: newUser.id },
-        });
-
-        await prisma.contactFolder.create({
-          data: {
-            name: "General Leads",
-            isSystem: true,
-            userId: newUser.id,
-          },
-        });
-
-        // 6. Create UserSubscription record
+        // 5. Create UserSubscription record — resolved before the phone number
+        // purchase below, since how many numbers to buy depends on this plan's
+        // included-numbers entitlement.
         const stripeCustomerId = session.customer as string | null;
         const stripeSubscriptionId = session.subscription as string | null;
 
@@ -469,6 +442,50 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         });
 
         console.log(`[Stripe Webhook] UserSubscription created for ${email}: plan=${planName}, cycle=${billingCycle}`);
+
+        // 5.5 Buy this plan's included phone numbers (STRICT: No internal try/catch).
+        // These are free — part of the plan, not the paid add-on flow in
+        // phoneNumberBilling.service.ts. `includedNumbers` is null when a plan
+        // has no matching PlanLimit row (fail-open/unlimited) — that means "no
+        // cap on how many they may buy", not "buy unlimited at signup", so we
+        // fall back to a single starter number, matching prior behavior.
+        const planKey = planKeyFromName(planName);
+        const planLimit = await prisma.planLimit.findUnique({ where: { planKey } });
+        const includedNumbersToPurchase = planLimit
+          ? Math.max(0, planLimit.includedNumbers ?? 1)
+          : 1;
+
+        console.log(
+          `[Stripe Webhook] Purchasing ${includedNumbersToPurchase} included number(s) for ${email} (plan=${planName}).`,
+        );
+
+        for (let i = 0; i < includedNumbersToPurchase; i++) {
+          const purchased = await purchaseUSPhoneNumber(subAccount.sid, subAccount.authToken);
+
+          await prisma.callerId.create({
+            data: {
+              label: i === 0 ? `Primary Line (${purchased.phoneNumber})` : `Line ${i + 1} (${purchased.phoneNumber})`,
+              countryCode: "US",
+              twillioNumber: purchased.phoneNumber,
+              twillioSid: purchased.sid,
+              systemSettingId: systemSetting.id,
+              numberOfLines: 1,
+            },
+          });
+        }
+
+        // 6. Setup basic Library and folders
+        await prisma.library.create({
+          data: { userId: newUser.id },
+        });
+
+        await prisma.contactFolder.create({
+          data: {
+            name: "General Leads",
+            isSystem: true,
+            userId: newUser.id,
+          },
+        });
 
         // const subEmail = `slingvo.${newUser.id.replace(/-/g, "")}@slingvo.com`;
         // const subPassword = crypto.randomBytes(12).toString("hex");
