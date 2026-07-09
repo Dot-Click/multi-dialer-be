@@ -41,12 +41,16 @@ export async function addSeatToAddonSubscription(
 ): Promise<{ stripeSubscriptionItemId: string }> {
   const stripe = getStripeClient();
 
-  const priceData: any = {
+  // `price_data.product_data` (inline product creation) is only accepted by
+  // the Prices API itself — subscriptions.create/subscriptionItems.create
+  // reject it ("unknown parameter ... did you mean product?"). So create the
+  // Price up front and reference it by id everywhere below.
+  const price = await stripe.prices.create({
     currency,
     unit_amount: monthlyPriceCents,
     recurring: { interval: "month" },
     product_data: { name: "Extra Agent Seat" },
-  };
+  });
 
   let existing = await prisma.agentSeatSubscription.findUnique({ where: { userId: adminUserId } });
 
@@ -57,7 +61,7 @@ export async function addSeatToAddonSubscription(
     const stripeSub = await stripe.subscriptions.create({
       customer: stripeCustomerId,
       default_payment_method: paymentMethodId,
-      items: [{ price_data: priceData }],
+      items: [{ price: price.id }],
       payment_behavior: "error_if_incomplete",
       collection_method: "charge_automatically",
       expand: ["latest_invoice.payment_intent"],
@@ -80,7 +84,7 @@ export async function addSeatToAddonSubscription(
   // waiting for the next billing cycle.
   const item = await stripe.subscriptionItems.create({
     subscription: existing.stripeSubscriptionId,
-    price_data: priceData,
+    price: price.id,
     proration_behavior: "create_prorations",
   });
 
