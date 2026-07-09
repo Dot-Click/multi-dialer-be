@@ -3,6 +3,7 @@ import { successResponse, errorResponse } from "@/utils/handler";
 import { RequestHandler } from "express";
 import { getNumberReputation } from "@/services/twilio-lookup";
 import { client } from "@/lib/config";
+import { getUserPlanLimits } from "@/services/planLimits.service";
 
 /**
  * Get agent specific report
@@ -277,6 +278,12 @@ export const getSalesAgentsPerformance: RequestHandler = async (req, res) => {
             return;
         }
 
+        const limits = await getUserPlanLimits(requesterId);
+        if (!limits.teamDashboardEnabled) {
+            errorResponse(res, { message: "Your plan doesn't include the Team Dashboard. Upgrade your plan to unlock it." }, 403);
+            return;
+        }
+
         const agents = await prisma.user.findMany({
             where: { createdById: requesterId },
             select: { id: true, fullName: true }
@@ -356,6 +363,12 @@ export const getAgentCallMetrics: RequestHandler = async (req, res) => {
 
         if (requesterRole !== 'ADMIN' && requesterRole !== 'OWNER') {
             errorResponse(res, { message: "Only admins or owners can access this report" }, 403);
+            return;
+        }
+
+        const limits = await getUserPlanLimits(requesterId);
+        if (!limits.teamDashboardEnabled) {
+            errorResponse(res, { message: "Your plan doesn't include the Team Dashboard. Upgrade your plan to unlock it." }, 403);
             return;
         }
 
@@ -605,6 +618,13 @@ function formatDuration(seconds: number): string {
 export const refreshDialerHealth: RequestHandler = async (req, res) => {
     try {
         const { id: userId, role } = req.user!;
+
+        const limits = await getUserPlanLimits(userId);
+        if (!limits.advancedDeliverabilityEnabled) {
+            errorResponse(res, { message: "Your plan doesn't include advanced deliverability tracking. Upgrade your plan to unlock it." }, 403);
+            return;
+        }
+
         let targetUserIds = [userId];
 
         if (role === 'ADMIN' || role === 'OWNER') {

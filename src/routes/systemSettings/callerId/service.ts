@@ -1,6 +1,7 @@
 import prisma from "../../../lib/prisma";
 import { validateData } from "../../../middlewares/vald.middleware";
 import { createCallerIdSchema } from "../../../schemas/callerId.schema";
+import { getUserPlanLimits } from "../../../services/planLimits.service";
 
 export async function insertCallerIdInDb(payload: any, userId: string) {
   try {
@@ -83,6 +84,15 @@ export async function recordCallAndRotateIfNeeded(
   console.log("[recordCall] adminId:", adminId);
   console.log("[recordCall] callerNumber:", callerNumber);
   console.log("[recordCall] maxCallsPerCid:", maxCallsPerCid);
+
+  // Plan gate: smartNumberRotationEnabled=false skips freeze/rotation
+  // tracking entirely — the number is used without any reputation-protecting
+  // cooldown. Fails open (rotation on) if the plan lookup fails.
+  const rotationLimits = await getUserPlanLimits(adminId).catch(() => null);
+  if (rotationLimits && rotationLimits.smartNumberRotationEnabled === false) {
+    console.log("[recordCall] Smart number rotation disabled for this plan — skipping freeze/rotation tracking.");
+    return { callCount: 0, isFrozen: false, unfreezeAt: null, secondsRemaining: 0, rotated: false };
+  }
 
   // ── Step 1: Find the SystemSetting for this admin ─────────────────────────
   const systemSetting = await prisma.system_Setting.findFirst({

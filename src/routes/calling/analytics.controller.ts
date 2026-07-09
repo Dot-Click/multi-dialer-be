@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/utils/handler";
 import { dialerService } from "./services";
 import { RequestHandler } from "express";
+import { getUserPlanLimits } from "../../services/planLimits.service";
 
 /**
  * Get aggregate statistics for the analytics dashboard
@@ -540,6 +541,12 @@ export const getAiCoaching: RequestHandler = async (req, res) => {
         const userId = req.user?.id;
         if (!userId) {
             errorResponse(res, { message: "Unauthorized" }, 401);
+            return;
+        }
+
+        const limits = await getUserPlanLimits(userId);
+        if (!limits.aiCallCoachingEnabled) {
+            errorResponse(res, { message: "Your plan doesn't include AI Call Coaching. Upgrade your plan to unlock it." }, 403);
             return;
         }
 

@@ -500,6 +500,20 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     console.log(`[VoiceWebhook] Extracted agentId ${agentId} from caller identity.`);
   }
 
+  // Plan gate: only attach Twilio's <Dial record> attribute (and thus create
+  // a recording) when the owning admin's plan has callRecordingEnabled. Fails
+  // open (recording on) if agentId can't be resolved — same fail-open pattern
+  // getUserPlanLimits itself uses for missing/unmatched plans.
+  let callRecordingEnabled = true;
+  if (agentId && agentId !== 'undefined' && agentId !== 'null') {
+    try {
+      const limits = await getUserPlanLimits(agentId);
+      callRecordingEnabled = limits.callRecordingEnabled;
+    } catch (err: any) {
+      console.error(`[VoiceWebhook] Plan limits lookup failed for ${agentId}, defaulting recording to enabled:`, err.message);
+    }
+  }
+
 
   console.log("================= Voice Webhook Dispatcher ================");
   console.log("Caller:", callerValue);
@@ -601,8 +615,12 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
 
     const dial = twiml.dial({
       callerId: callerId,
-      record: "record-from-answer-dual",
-      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(contactId || "")}&leadId=${encodeURIComponent(leadId || "")}`,
+      ...(callRecordingEnabled
+        ? {
+            record: "record-from-answer-dual" as const,
+            recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(contactId || "")}&leadId=${encodeURIComponent(leadId || "")}`,
+          }
+        : {}),
     });
     dial.number({
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
@@ -698,11 +716,15 @@ export const handleVoiceWebhook: RequestHandler = async (req, res) => {
     const dial = twiml.dial({
       callerId: bridgeCallerId,
       answerOnBridge: true, // Customer is answered now, bridge to agent
-      record: "record-from-answer-dual",
-      // Pass contact/lead context so the recording can be attached to the right
-      // CallRecord even when the recording's CallSid is a bridge child leg (the
-      // power-dialer case, where SID-only matching was dropping recordings).
-      recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(contactId || "")}&leadId=${encodeURIComponent(leadId || "")}`,
+      ...(callRecordingEnabled
+        ? {
+            record: "record-from-answer-dual" as const,
+            // Pass contact/lead context so the recording can be attached to the right
+            // CallRecord even when the recording's CallSid is a bridge child leg (the
+            // power-dialer case, where SID-only matching was dropping recordings).
+            recordingStatusCallback: `${envConfig.BACKEND_URL}/api/calling/webhooks/recording-status?contactId=${encodeURIComponent(contactId || "")}&leadId=${encodeURIComponent(leadId || "")}`,
+          }
+        : {}),
     });
 
     const clientNode = dial.client({

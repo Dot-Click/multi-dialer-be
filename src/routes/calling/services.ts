@@ -8,6 +8,7 @@ import Groq from "groq-sdk";
 import { moveToDncInDb } from "../contact/service";
 import { resolveTenantRootId } from "../../utils/tenant";
 import { resolveAdminId, recordCallAndRotateIfNeeded } from "../systemSettings/callerId/service";
+import { getUserPlanLimits } from "../../services/planLimits.service";
 
 
 enum LeadCallStatus {
@@ -1491,6 +1492,22 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
       });
       console.log(`[R2] Recording saved to CallRecord ${callRecord.id} (callSid ${callRecord.callSid}): ${r2Url}`);
 
+      // Plan gate: aiInsightsLevel=NONE means this plan doesn't get
+      // transcription/sentiment analysis at all — the recording itself is
+      // still saved above regardless. Fails open (FULL) if the plan lookup
+      // fails, same pattern getUserPlanLimits itself uses.
+      const insightsLimits = callRecord.userId ? await getUserPlanLimits(callRecord.userId).catch(() => null) : null;
+      const aiInsightsLevel = insightsLimits?.aiInsightsLevel ?? "FULL";
+
+      if (aiInsightsLevel === "NONE") {
+        console.log(`[Recording] aiInsightsLevel=NONE for this plan — skipping transcription/sentiment for ${callSid}.`);
+        return;
+      }
+
+      // BASIC gets sentiment + transcript only; FULL additionally gets the
+      // narrative AI summary and compliance/risk/objection extraction.
+      const isFullInsights = aiInsightsLevel !== "BASIC";
+
       // 3. Transcription + sentiment are best-effort — never let a failure here
       //    undo the recording attachment above.
       try {
@@ -1538,10 +1555,10 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
             confidence: sentimentAnalysis?.confidence || 0,
             leadInterest,
             callOutcome,
-            complianceFlags,
-            riskPhrases,
-            objections,
-            aiSummary: buildAiSummary(sentimentAnalysis),
+            complianceFlags: isFullInsights ? complianceFlags : [],
+            riskPhrases: isFullInsights ? riskPhrases : [],
+            objections: isFullInsights ? objections : [],
+            aiSummary: isFullInsights ? buildAiSummary(sentimentAnalysis) : "",
             transcript: richTranscript || transcription.text
           },
           create: {
@@ -1552,10 +1569,10 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
             confidence: sentimentAnalysis?.confidence || 0,
             leadInterest,
             callOutcome,
-            complianceFlags,
-            riskPhrases,
-            objections,
-            aiSummary: buildAiSummary(sentimentAnalysis),
+            complianceFlags: isFullInsights ? complianceFlags : [],
+            riskPhrases: isFullInsights ? riskPhrases : [],
+            objections: isFullInsights ? objections : [],
+            aiSummary: isFullInsights ? buildAiSummary(sentimentAnalysis) : "",
             transcript: richTranscript || transcription.text
           }
         });
