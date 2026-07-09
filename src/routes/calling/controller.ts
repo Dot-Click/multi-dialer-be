@@ -1181,10 +1181,41 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
       return;
     }
 
+    // The actual price a purchase will be charged — mirrors the logic in
+    // buyNumber/buySelfServiceAddonNumber/buyNumberOnBehalfOfUser so what's
+    // shown here always matches what happens on "Buy & Add Number". Within
+    // the plan's included free count it's $0; past it, the plan's configured
+    // flat add-on price (extraNumberPriceCents) if set, else Twilio's live
+    // price for this country (the same `pricing` payload above).
+    const effectiveUserId = targetUserId || userId;
+    const limits = await getUserPlanLimits(effectiveUserId);
+
+    let isWithinIncludedCount = true;
+    if (limits.includedNumbers != null) {
+      const systemSettingIds = (
+        await prisma.system_Setting.findMany({ where: { userId: effectiveUserId }, select: { id: true } })
+      ).map((s) => s.id);
+      const currentCount = await prisma.callerId.count({ where: { systemSettingId: { in: systemSettingIds } } });
+      isWithinIncludedCount = currentCount < limits.includedNumbers;
+    }
+
+    let effectivePriceCents = 0;
+    let effectiveCurrency = "usd";
+    if (!isWithinIncludedCount) {
+      if (limits.extraNumberPriceCents != null) {
+        effectivePriceCents = limits.extraNumberPriceCents;
+      } else {
+        const priceEntry = (pricing as any)?.phoneNumberPrices?.[0];
+        const amount = parseFloat(priceEntry?.current_price ?? "1.15");
+        effectivePriceCents = Math.round((isNaN(amount) ? 1.15 : amount) * 100);
+        effectiveCurrency = ((pricing as any)?.priceUnit || "usd").toLowerCase();
+      }
+    }
 
     const data = {
       numbers,
-      pricing
+      pricing,
+      billing: { isWithinIncludedCount, effectivePriceCents, effectiveCurrency },
     }
 
     console.log("numbers", data);
