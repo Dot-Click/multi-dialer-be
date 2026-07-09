@@ -16,6 +16,7 @@ import { ensureDncFolder } from "../routes/contact/service";
 import { initializeUserAccount } from "../routes/user/service";
 import { releaseTwilioResourcesForUser } from "../services/twilio-account.service";
 import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service";
+import { getUserPlanLimits } from "../services/planLimits.service";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -272,6 +273,31 @@ export const auth = betterAuth({
           await releaseR2ResourcesForUser(targetUserId).catch((err: any) =>
             console.error(`[Auth] R2 teardown failed for user ${targetUserId} before admin delete:`, err.message)
           );
+        }
+      }
+
+      // Enforce the owning admin's plan-configured agent-seat cap BEFORE
+      // Better Auth's admin plugin creates the row. This is the actual code
+      // path an admin's own "Add Agent" UI hits (authClient.admin.createUser
+      // -> POST /admin/create-user) — it's a raw creation with no app-level
+      // business logic, so createUserInDb's seat-cap check (which only runs
+      // for the separate custom POST /user route) never runs for it.
+      if (ctx.path.startsWith("/admin/create-user")) {
+        const role = ctx.body?.data?.role ?? ctx.body?.role;
+        const createdById = ctx.body?.data?.createdById ?? ctx.body?.createdById;
+        if (role === "AGENT" && createdById) {
+          const limits = await getUserPlanLimits(createdById);
+          const seatCap = limits.maxAgentSeats ?? limits.includedAgentSeats;
+          if (seatCap != null) {
+            const currentAgentCount = await prisma.user.count({
+              where: { createdById, role: "AGENT" },
+            });
+            if (currentAgentCount >= seatCap) {
+              throw new APIError("FORBIDDEN", {
+                message: `Your plan allows up to ${seatCap} agent seat(s). Upgrade your plan to add more agents.`,
+              });
+            }
+          }
         }
       }
 
