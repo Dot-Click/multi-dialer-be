@@ -4,6 +4,8 @@ import Stripe from "stripe";
 import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
+import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling.service";
+import { sendEmail } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 // import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
@@ -87,6 +89,53 @@ async function releaseAddonNumbersForUncollectibleInvoice(invoice: any): Promise
     });
     if (remaining === 0) {
       await cancelAddonSubscriptionForUser(ownerUserId);
+    }
+  }
+}
+
+// Bans every agent whose paid overage seat was billed on an invoice Stripe
+// has given up collecting on, and alerts the owning admin. Matches invoice
+// line items to User rows via stripeAgentSeatItemId. Cancels the underlying
+// subscription item so the deactivated seat stops being billed, and clears
+// the seat-billing fields so the freed slot no longer counts against the
+// admin's paid-overage total. Safe to call more than once for the same
+// invoice — already-banned agents simply won't be found and are skipped.
+async function deactivateAgentSeatsForUncollectibleInvoice(invoice: any): Promise<void> {
+  const subscriptionItemIds: string[] = (invoice.lines?.data || [])
+    .map((line: any) => line.subscription_item)
+    .filter(Boolean);
+
+  for (const subscriptionItemId of subscriptionItemIds) {
+    const agent = await prisma.user.findFirst({
+      where: { stripeAgentSeatItemId: subscriptionItemId },
+      include: { createdBy: { select: { id: true, email: true, fullName: true } } },
+    });
+    if (!agent) continue;
+
+    console.log(`[Stripe Webhook] Deactivating unpaid overage agent seat ${agent.id} (${agent.email}) for admin ${agent.createdById}.`);
+
+    await removeAgentSeatSubscriptionItem(subscriptionItemId);
+
+    await prisma.user.update({
+      where: { id: agent.id },
+      data: {
+        banned: true,
+        banReason: "Unpaid extra agent seat",
+        stripeAgentSeatItemId: null,
+        agentSeatMonthlyPriceCents: null,
+      },
+    });
+
+    if (agent.createdBy?.email) {
+      await sendEmail(
+        agent.createdBy.email,
+        "Extra Agent Seat Payment Failed — Agent Deactivated",
+        `<div style="font-family: Arial, sans-serif; padding: 20px;">
+          <p>Hi ${agent.createdBy.fullName ?? "there"},</p>
+          <p>We were unable to collect payment for the extra agent seat billed for <strong>${agent.fullName ?? agent.email}</strong>. This agent's account has been deactivated.</p>
+          <p>Update your payment method and re-purchase the seat from User Management to restore access.</p>
+        </div>`
+      ).catch((err: any) => console.error(`[Stripe Webhook] Failed to send seat-payment-failed email to ${agent.createdBy?.email}:`, err.message));
     }
   }
 }
@@ -739,6 +788,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       console.log(`[Stripe Webhook] invoice.marked_uncollectible: id=${invoice.id}, customer=${invoice.customer}`);
 
       await releaseAddonNumbersForUncollectibleInvoice(invoice);
+      await deactivateAgentSeatsForUncollectibleInvoice(invoice);
 
       await persistEvent("PROCESSED");
     } catch (error: any) {

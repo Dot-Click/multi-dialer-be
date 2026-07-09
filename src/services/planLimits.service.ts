@@ -7,6 +7,7 @@ export interface PlanLimits {
   maxDialerLines: number | null;
   includedAgentSeats: number | null;
   maxAgentSeats: number | null;
+  extraAgentSeatPriceCents: number | null;
   includedNumbers: number | null;
   extraNumberPriceCents: number | null;
   callRecordingEnabled: boolean;
@@ -26,6 +27,7 @@ const UNLIMITED_DEFAULTS: Omit<PlanLimits, "planKey" | "displayName" | "matched"
   maxDialerLines: null,
   includedAgentSeats: null,
   maxAgentSeats: null,
+  extraAgentSeatPriceCents: null,
   includedNumbers: null,
   extraNumberPriceCents: null,
   callRecordingEnabled: true,
@@ -85,6 +87,7 @@ export async function getUserPlanLimits(userId: string): Promise<PlanLimits> {
     maxDialerLines: limit.maxDialerLines,
     includedAgentSeats: limit.includedAgentSeats,
     maxAgentSeats: limit.maxAgentSeats,
+    extraAgentSeatPriceCents: limit.extraAgentSeatPriceCents,
     includedNumbers: limit.includedNumbers,
     extraNumberPriceCents: limit.extraNumberPriceCents,
     callRecordingEnabled: limit.callRecordingEnabled,

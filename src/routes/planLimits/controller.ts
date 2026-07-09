@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { getUserPlanLimits, planKeyFromName } from "../../services/planLimits.service";
+import { countPaidOverageSeats } from "../../services/agentSeatBilling.service";
 
 /**
  * The current user's effective plan entitlements (agents resolve to their
@@ -17,7 +18,17 @@ export const getMyPlanLimits = async (req: Request, res: Response): Promise<void
     }
 
     const limits = await getUserPlanLimits(userId);
-    successResponse(res, 200, "Plan limits retrieved", limits);
+
+    // Agents inherit their owning admin's plan; the paid-overage seat count
+    // is likewise tracked against the admin, not the individual agent.
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, createdById: true },
+    });
+    const effectiveAdminId = user?.role === "AGENT" && user.createdById ? user.createdById : userId;
+    const activePaidOverageSeats = await countPaidOverageSeats(effectiveAdminId);
+
+    successResponse(res, 200, "Plan limits retrieved", { ...limits, activePaidOverageSeats });
   } catch (error: any) {
     console.error("[PlanLimits] Get My Plan Limits Error:", error);
     errorResponse(res, error.message || "Internal server error", 500);
@@ -60,6 +71,7 @@ export const upsertPlanLimits = async (req: Request, res: Response): Promise<voi
       maxDialerLines: numOrNull(body.maxDialerLines),
       includedAgentSeats: numOrNull(body.includedAgentSeats),
       maxAgentSeats: numOrNull(body.maxAgentSeats),
+      extraAgentSeatPriceCents: numOrNull(body.extraAgentSeatPriceCents),
       includedNumbers: numOrNull(body.includedNumbers),
       extraNumberPriceCents: numOrNull(body.extraNumberPriceCents),
       callRecordingEnabled: boolOrDefault(body.callRecordingEnabled, true),

@@ -4,6 +4,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, releaseTwilioResourcesForUser } from "../../services/twilio-account.service";
 import { releaseR2ResourcesForUser } from "../../services/userAssetCleanup.service";
 import { getUserPlanLimits } from "../../services/planLimits.service";
+import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { sendEmail } from "../../utils/email";
@@ -32,9 +33,11 @@ export async function createUserInDb(payload: any) {
     const existing = await prisma.user.findUnique({ where: { email: rest.email } });
     if (existing) throwHttp(400, "User with this email already exists");
 
-    // Enforce the owning admin's plan-configured agent-seat cap. Hard cap
-    // only (v1) — no metered overage billing for extra seats, so this just
-    // blocks creation once the included/max seat count is reached.
+    // Enforce the owning admin's plan-configured agent-seat cap. Past the
+    // included cap, creation is still allowed if `rest.stripeAgentSeatItemId`
+    // is a genuine, unconsumed overage seat already paid for via POST
+    // /agent-seats/purchase (validatePurchasedAgentSeat) — it gets persisted
+    // onto the new row below so it can't be reused for a second agent.
     if (rest.role === "AGENT" && rest.createdById) {
         const limits = await getUserPlanLimits(rest.createdById);
         const seatCap = limits.maxAgentSeats ?? limits.includedAgentSeats;
@@ -43,7 +46,14 @@ export async function createUserInDb(payload: any) {
                 where: { createdById: rest.createdById, role: "AGENT" },
             });
             if (currentAgentCount >= seatCap) {
-                throwHttp(403, `Your plan allows up to ${seatCap} agent seat(s). Upgrade your plan to add more agents.`);
+                const hasPaidSeat = rest.stripeAgentSeatItemId
+                    ? await validatePurchasedAgentSeat(rest.createdById, rest.stripeAgentSeatItemId)
+                    : false;
+                if (!hasPaidSeat) {
+                    throwHttp(403, limits.extraAgentSeatPriceCents != null
+                        ? `Your plan allows up to ${seatCap} agent seat(s). Purchase an extra seat to add more agents.`
+                        : `Your plan allows up to ${seatCap} agent seat(s). Upgrade your plan to add more agents.`);
+                }
             }
         }
     }

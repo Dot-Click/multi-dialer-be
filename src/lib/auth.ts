@@ -17,6 +17,7 @@ import { initializeUserAccount } from "../routes/user/service";
 import { releaseTwilioResourcesForUser } from "../services/twilio-account.service";
 import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service";
 import { getUserPlanLimits } from "../services/planLimits.service";
+import { validatePurchasedAgentSeat } from "../services/agentSeatBilling.service";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -51,6 +52,8 @@ export const auth = betterAuth({
       isSubscribed: { type: "boolean", required: false },
       createdById: { type: "string", required: false },
       defaultCallerId: { type: "string", required: false },
+      stripeAgentSeatItemId: { type: "string", required: false },
+      agentSeatMonthlyPriceCents: { type: "number", required: false },
     },
   },
   trustedOrigins: [
@@ -282,9 +285,17 @@ export const auth = betterAuth({
       // -> POST /admin/create-user) — it's a raw creation with no app-level
       // business logic, so createUserInDb's seat-cap check (which only runs
       // for the separate custom POST /user route) never runs for it.
+      //
+      // Past the included cap, creation is still allowed if the request
+      // carries a stripeAgentSeatItemId from a just-completed POST
+      // /agent-seats/purchase call — validatePurchasedAgentSeat confirms it's
+      // a genuine, unconsumed overage seat this admin already paid for.
+      // additionalFields on `user` persist it onto the new agent row so it
+      // can never be reused for a second agent.
       if (ctx.path.startsWith("/admin/create-user")) {
         const role = ctx.body?.data?.role ?? ctx.body?.role;
         const createdById = ctx.body?.data?.createdById ?? ctx.body?.createdById;
+        const stripeAgentSeatItemId = ctx.body?.data?.stripeAgentSeatItemId ?? ctx.body?.stripeAgentSeatItemId;
         if (role === "AGENT" && createdById) {
           const limits = await getUserPlanLimits(createdById);
           const seatCap = limits.maxAgentSeats ?? limits.includedAgentSeats;
@@ -293,9 +304,16 @@ export const auth = betterAuth({
               where: { createdById, role: "AGENT" },
             });
             if (currentAgentCount >= seatCap) {
-              throw new APIError("FORBIDDEN", {
-                message: `Your plan allows up to ${seatCap} agent seat(s). Upgrade your plan to add more agents.`,
-              });
+              const hasPaidSeat = stripeAgentSeatItemId
+                ? await validatePurchasedAgentSeat(createdById, stripeAgentSeatItemId)
+                : false;
+              if (!hasPaidSeat) {
+                throw new APIError("FORBIDDEN", {
+                  message: limits.extraAgentSeatPriceCents != null
+                    ? `Your plan allows up to ${seatCap} agent seat(s). Purchase an extra seat to add more agents.`
+                    : `Your plan allows up to ${seatCap} agent seat(s). Upgrade your plan to add more agents.`,
+                });
+              }
             }
           }
         }

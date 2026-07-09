@@ -45,6 +45,7 @@ import { checkFeatureLocked } from "../middlewares/featureLock.middleware";
 import { envConfig } from "@/lib/config";
 import paymentRoutes from "./payment";
 import calendarSyncRoutes from "./calendarSync";
+import agentSeatsRoutes from "./agentSeats";
 
 const router = Router()
 
@@ -93,6 +94,7 @@ router.use("/super-admin/caller-ids", protectRoute, checkRole(["OWNER", "SUPER_A
 
 router.use("/billing", billingRouter)
 router.use("/plan-limits", planLimitsRoutes)
+router.use("/agent-seats", agentSeatsRoutes)
 router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
 router.use("/email-history", protectRoute, emailHistoryRoutes)

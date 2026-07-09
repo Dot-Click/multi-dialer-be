@@ -269,8 +269,15 @@ model User {
   myPlusLeadsConfig       MyPlusLeadsConfig?
   a2pRegistration         A2P_Registration?
   phoneNumberSubscription PhoneNumberSubscription?
+  agentSeatSubscription   AgentSeatSubscription?
   dispositionLogs         ContactDispositionLog[]
   dialListSessions        DialListSession[]
+
+  // Paid overage agent-seat billing (self-service "buy extra seat" flow).
+  // Non-null stripeAgentSeatItemId marks this agent as a PAID_ADDON seat —
+  // set on the AGENT row itself, mirroring CallerId's inline billing fields.
+  stripeAgentSeatItemId     String?
+  agentSeatMonthlyPriceCents Int?
 
   // Calendar & Task System
   callbacks              Callback[]
@@ -1127,9 +1134,13 @@ model PlanLimit {
   // Dialer pacing — max simultaneous lines the power dialer may run.
   maxDialerLines Int?
 
-  // Agent seats — hard cap, no metered overage billing (v1).
-  includedAgentSeats Int?
-  maxAgentSeats      Int?
+  // Agent seats — includedAgentSeats/maxAgentSeats define the free cap.
+  // extraAgentSeatPriceCents is the flat monthly price to buy a seat beyond
+  // that cap via the self-service paid add-on flow. Null means this plan
+  // does not offer paid overage seats (cap stays a hard block).
+  includedAgentSeats       Int?
+  maxAgentSeats            Int?
+  extraAgentSeatPriceCents Int?
 
   // Phone numbers — included free count; extraNumberPriceCents overrides
   // Twilio's live list price for add-on numbers when set.
@@ -1204,6 +1215,23 @@ model PhoneNumberSubscription {
   updatedAt            DateTime @updatedAt
 
   @@map("phone_number_subscriptions")
+}
+
+// One dedicated Stripe subscription per admin, holding a subscription item
+// for each paid-overage agent seat bought beyond their plan's included cap.
+// Kept separate from their plan subscription so plan changes never touch
+// seat billing — mirrors PhoneNumberSubscription.
+model AgentSeatSubscription {
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeCustomerId     String
+  stripeSubscriptionId String
+  status               String   @default("active")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("agent_seat_subscriptions")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
