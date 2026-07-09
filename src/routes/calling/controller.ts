@@ -1231,7 +1231,7 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
 
 export const buyNumber: RequestHandler = async (req, res) => {
   try {
-    const { phoneNumber, countryCode, label, userId: targetUserId } = req.body;
+    const { phoneNumber, countryCode, label, userId: targetUserId, confirmOverageCharge } = req.body;
     const userId: string = req.user?.id || "";
 
     if (!userId) {
@@ -1260,10 +1260,12 @@ export const buyNumber: RequestHandler = async (req, res) => {
     }
 
     // Self-service purchase — numbers within the plan's included free count
-    // buy directly from Twilio with no Stripe charge. Past that count, fall
-    // through to the same paid add-on billing the super-admin "buy on behalf
-    // of" flow uses (just charged to the buyer themselves, on their own
-    // sub-account, with no master-account transfer needed).
+    // buy directly from Twilio with no Stripe charge. Past that count, this
+    // is a paid add-on: the first attempt is rejected with the price instead
+    // of silently charging, and the caller must explicitly resubmit with
+    // confirmOverageCharge:true (set after the user confirms in a dialog) —
+    // same two-step "you can't add this — pay extra to unlock" pattern as
+    // the agent-seat overage flow.
     const limits = await getUserPlanLimits(userId);
     if (limits.includedNumbers != null) {
       const systemSettingIds = (
@@ -1273,6 +1275,26 @@ export const buyNumber: RequestHandler = async (req, res) => {
         where: { systemSettingId: { in: systemSettingIds } },
       });
       if (currentCount >= limits.includedNumbers) {
+        if (!confirmOverageCharge) {
+          let priceCents: number;
+          let currency = "usd";
+          if (limits.extraNumberPriceCents != null) {
+            priceCents = limits.extraNumberPriceCents;
+          } else {
+            const userClientForPricing = await getTwilioClient(userId);
+            const live = await getMonthlyPriceCentsForCountry(userClientForPricing, countryCode || "US");
+            priceCents = live.amountCents;
+            currency = live.currency;
+          }
+          res.status(402).json({
+            success: false,
+            requiresPayment: true,
+            priceCents,
+            currency,
+            message: `Your plan includes ${limits.includedNumbers} number(s) and you've reached that limit. Adding this number costs $${(priceCents / 100).toFixed(2)}/mo.`,
+          });
+          return;
+        }
         await buySelfServiceAddonNumber(res, userId, phoneNumber, countryCode, label, limits);
         return;
       }
