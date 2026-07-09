@@ -1228,10 +1228,11 @@ export const buyNumber: RequestHandler = async (req, res) => {
       return;
     }
 
-    // Self-service purchase — this path buys directly from Twilio with no
-    // Stripe charge at all, so it must never exceed the plan's included free
-    // count (that's what the paid add-on flow above is for). Enforce here
-    // rather than silently letting an admin add unlimited free numbers.
+    // Self-service purchase — numbers within the plan's included free count
+    // buy directly from Twilio with no Stripe charge. Past that count, fall
+    // through to the same paid add-on billing the super-admin "buy on behalf
+    // of" flow uses (just charged to the buyer themselves, on their own
+    // sub-account, with no master-account transfer needed).
     const limits = await getUserPlanLimits(userId);
     if (limits.includedNumbers != null) {
       const systemSettingIds = (
@@ -1241,11 +1242,7 @@ export const buyNumber: RequestHandler = async (req, res) => {
         where: { systemSettingId: { in: systemSettingIds } },
       });
       if (currentCount >= limits.includedNumbers) {
-        errorResponse(
-          res,
-          { message: `Your plan includes ${limits.includedNumbers} number(s). Contact support to add a paid add-on number.` },
-          403
-        );
+        await buySelfServiceAddonNumber(res, userId, phoneNumber, countryCode, label, limits);
         return;
       }
     }
@@ -1366,6 +1363,88 @@ async function buyNumberOnBehalfOfUser(
     console.error("[buyNumberOnBehalfOfUser] Billing/transfer failed, releasing number:", error.message);
     await releaseNumber(purchased.sid, masterClient).catch(() => undefined);
     errorResponse(res, { message: error.message || "Failed to charge the user for this number." }, 402);
+  }
+}
+
+/**
+ * Self-service paid add-on: the buyer is already the owner of their own
+ * Twilio sub-account, so unlike buyNumberOnBehalfOfUser this buys directly
+ * on that sub-account — no master-account purchase + transfer needed.
+ *   1. resolve billable Stripe customer + payment method
+ *   2. buy from Twilio on the user's own sub-account
+ *   3. charge the user (Stripe subscription item, immediate invoice)
+ *   4. on billing failure: release the number, roll back
+ */
+async function buySelfServiceAddonNumber(
+  res: Response,
+  userId: string,
+  phoneNumber: string,
+  countryCode: string | undefined,
+  label: string | undefined,
+  limits: Awaited<ReturnType<typeof getUserPlanLimits>>,
+) {
+  let billableCustomer;
+  try {
+    billableCustomer = await resolveBillableCustomer(userId);
+  } catch (err: any) {
+    errorResponse(res, { message: err.message }, 400);
+    return;
+  }
+
+  const userClient = await getTwilioClient(userId);
+
+  // Use the plan's configured flat add-on price when set, else Twilio's live
+  // list price for the number's country — same fallback the on-behalf-of
+  // flow uses.
+  let amountCents: number;
+  let currency: string;
+  if (limits.extraNumberPriceCents != null) {
+    amountCents = limits.extraNumberPriceCents;
+    currency = "usd";
+  } else {
+    const livePricing = await getMonthlyPriceCentsForCountry(userClient, countryCode || "US");
+    amountCents = livePricing.amountCents;
+    currency = livePricing.currency;
+  }
+  const numberLabel = label || phoneNumber;
+
+  const purchased = await userClient.incomingPhoneNumbers.create({ phoneNumber });
+
+  try {
+    const { stripeSubscriptionItemId } = await addNumberToAddonSubscription(
+      userId,
+      billableCustomer.stripeCustomerId,
+      billableCustomer.paymentMethodId,
+      amountCents,
+      currency,
+      numberLabel,
+    );
+
+    let systemSettings = await prisma.system_Setting.findFirst({ where: { userId } });
+    if (!systemSettings) {
+      systemSettings = await prisma.system_Setting.create({ data: { userId } });
+    }
+
+    const newCallerId = await prisma.callerId.create({
+      data: {
+        label: numberLabel,
+        countryCode: countryCode || "US",
+        twillioNumber: purchased.phoneNumber,
+        twillioSid: purchased.sid,
+        systemSettingId: systemSettings.id,
+        billingSource: "PAID_ADDON",
+        monthlyPriceCents: amountCents,
+        currency,
+        stripeSubscriptionItemId,
+        numberBillingStatus: "ACTIVE",
+      },
+    });
+
+    successResponse(res, 200, "Number bought and billed successfully", { number: purchased, callerId: newCallerId });
+  } catch (error: any) {
+    console.error("[buySelfServiceAddonNumber] Billing failed, releasing number:", error.message);
+    await releaseNumber(purchased.sid, userClient).catch(() => undefined);
+    errorResponse(res, { message: error.message || "Failed to charge you for this number." }, 402);
   }
 }
 
