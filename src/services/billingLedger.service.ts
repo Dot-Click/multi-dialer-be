@@ -15,6 +15,14 @@ export async function getAddonSubscriptionIds(): Promise<string[]> {
   return [...numberSubs.map(s => s.stripeSubscriptionId), ...seatSubs.map(s => s.stripeSubscriptionId)].filter(Boolean);
 }
 
+// Newer Stripe API versions moved the subscription reference off Invoice onto
+// invoice.parent.subscription_details.subscription — this API version no
+// longer has a top-level `invoice.subscription` field at all.
+export function subscriptionIdFromInvoice(invoice: any): string | null {
+  const details = invoice?.parent?.subscription_details?.subscription;
+  return typeof details === "string" ? details : details?.id ?? null;
+}
+
 // Best-effort map of a dynamic Stripe product name to the fixed Plan enum.
 export function mapPlanEnum(name?: string | null): "STARTER" | "PROFESSIONAL" | "ENTERPRISE" | null {
   const n = (name || "").toUpperCase();
@@ -49,10 +57,7 @@ export async function syncBillingFromInvoice(
     return "skipped";
   }
 
-  const stripeSubscriptionId =
-    typeof invoice.subscription === "string"
-      ? invoice.subscription
-      : invoice.subscription?.id ?? null;
+  const stripeSubscriptionId = subscriptionIdFromInvoice(invoice);
 
   // Never mirror an internal add-on subscription's invoice into the ledger —
   // it would get stamped with the main plan's name (sub.plan below) and show

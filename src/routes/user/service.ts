@@ -5,6 +5,7 @@ import { createTwilioSubAccount, releaseTwilioResourcesForUser } from "../../ser
 import { releaseR2ResourcesForUser } from "../../services/userAssetCleanup.service";
 import { getUserPlanLimits } from "../../services/planLimits.service";
 import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.service";
+import { subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { sendEmail } from "../../utils/email";
@@ -471,8 +472,7 @@ export async function updateUserSubscriptionInDb(userId: string, planId: string)
         });
         if (latestBilling?.stripeInvoiceId) {
             const invoice = await stripe.invoices.retrieve(latestBilling.stripeInvoiceId) as any;
-            const sub = invoice.subscription;
-            stripeSubscriptionId = typeof sub === "string" ? sub : (sub?.id ?? null);
+            stripeSubscriptionId = subscriptionIdFromInvoice(invoice);
         }
     }
 

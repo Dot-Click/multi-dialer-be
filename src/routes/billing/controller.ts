@@ -5,7 +5,7 @@ import Stripe from "stripe";
 import { envConfig } from "@/lib/config";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
 import { getEffectiveLock } from "../../utils/status";
-import { getAddonSubscriptionIds } from "../../services/billingLedger.service";
+import { getAddonSubscriptionIds, subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 
 // Initialize Stripe (requires STRIPE_SECRET_KEY in .env)
 const stripe = new Stripe(envConfig.STRIPE_SECRET_KEY || "", {
@@ -496,7 +496,7 @@ export const getInvoicesByCustomer = async (req: Request, res: Response): Promis
     // otherwise show up looking like a second subscription.
     const addonIds = await getAddonSubscriptionIds();
     const filteredInvoices = invoiceList.data.filter((inv) => {
-      const subId = typeof inv.subscription === "string" ? inv.subscription : (inv.subscription as any)?.id;
+      const subId = subscriptionIdFromInvoice(inv);
       return !subId || !addonIds.includes(subId);
     });
 
@@ -619,7 +619,7 @@ export const getAllInvoices = async (req: Request, res: Response): Promise<void>
     // aren't a customer-facing "plan".
     const addonIdsFallback = await getAddonSubscriptionIds();
     const filteredInvoiceList = invoiceList.data.filter((inv) => {
-      const subId = typeof inv.subscription === "string" ? inv.subscription : (inv.subscription as any)?.id;
+      const subId = subscriptionIdFromInvoice(inv);
       return !subId || !addonIdsFallback.includes(subId);
     });
 
