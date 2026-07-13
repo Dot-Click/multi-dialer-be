@@ -35,6 +35,43 @@ export const getMyPlanLimits = async (req: Request, res: Response): Promise<void
   }
 };
 
+/**
+ * Public/unauthenticated: every configured PlanLimit row, for display on the
+ * landing page and signup screen (both unauthenticated) — numeric
+ * entitlements (numbers, seats, dialer lines), the AI insights tier, and
+ * every feature toggle (STIR/SHAKEN, smart rotation, team dashboard,
+ * priority routing, AI call coaching, advanced deliverability, call
+ * recording). Nothing here is sensitive — safe to expose in full.
+ */
+export const getPublicPlanLimits = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rows = await prisma.planLimit.findMany({
+      select: {
+        planKey: true,
+        displayName: true,
+        maxDialerLines: true,
+        includedAgentSeats: true,
+        extraAgentSeatPriceCents: true,
+        includedNumbers: true,
+        extraNumberPriceCents: true,
+        aiInsightsLevel: true,
+        callRecordingEnabled: true,
+        stirShakenEnabled: true,
+        smartNumberRotationEnabled: true,
+        teamDashboardEnabled: true,
+        priorityRoutingEnabled: true,
+        aiCallCoachingEnabled: true,
+        advancedDeliverabilityEnabled: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    successResponse(res, 200, "Plan limits retrieved", rows);
+  } catch (error: any) {
+    console.error("[PlanLimits] Get Public Plan Limits Error:", error);
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 /** Super-admin: every configured PlanLimit row. */
 export const getAllPlanLimits = async (req: Request, res: Response): Promise<void> => {
   try {
