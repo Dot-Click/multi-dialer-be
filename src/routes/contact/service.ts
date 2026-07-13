@@ -254,6 +254,11 @@ export async function createContactInDb(payload: {
       include: {
         emails: true,
         phones: true,
+        callRecords: {
+          orderBy: { startTime: "desc" },
+          take: 1,
+          select: { startTime: true },
+        },
       },
     });
 
@@ -278,6 +283,11 @@ export async function getAllContactsFromDb(userId: string, role: string) {
       include: {
         emails: true,
         phones: true,
+        callRecords: {
+          orderBy: { startTime: "desc" },
+          take: 1,
+          select: { startTime: true },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -311,6 +321,11 @@ export async function getAllContactsFromDb(userId: string, role: string) {
       include: {
         emails: true,
         phones: true,
+        callRecords: {
+          orderBy: { startTime: "desc" },
+          take: 1,
+          select: { startTime: true },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -340,6 +355,11 @@ export async function getAllContactsFromDb(userId: string, role: string) {
       include: {
         emails: true,
         phones: true,
+        callRecords: {
+          orderBy: { startTime: "desc" },
+          take: 1,
+          select: { startTime: true },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -354,6 +374,11 @@ export async function getAllContactsFromDb(userId: string, role: string) {
     include: {
       emails: true,
       phones: true,
+      callRecords: {
+        orderBy: { startTime: "desc" },
+        take: 1,
+        select: { startTime: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -872,6 +897,11 @@ export async function getContactsByListFromDb(
     include: {
       emails: true,
       phones: true,
+      callRecords: {
+        orderBy: { startTime: "desc" },
+        take: 1,
+        select: { startTime: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -917,6 +947,11 @@ export async function getContactsByFolderFromDb(
     include: {
       emails: true,
       phones: true,
+      callRecords: {
+        orderBy: { startTime: "desc" },
+        take: 1,
+        select: { startTime: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
