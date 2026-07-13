@@ -236,8 +236,14 @@ export const removeContactFromPowerQueue: RequestHandler = async (req, res) => {
       return;
     }
 
-    const removed = dialerService.removeQueuedContactCards(userId, contactId, exceptQueueCardId);
-    successResponse(res, 200, "Queued phone cards removed", { removed });
+    // With exceptQueueCardId the caller wants only the queue trimmed (keep one
+    // card). Otherwise this is a full removal (Trash / DNC / Contacted): purge
+    // the contact from the whole session so none of its OTHER numbers get
+    // dialed or redialed — cancels pending redials and hangs up its other legs.
+    const removed = exceptQueueCardId
+      ? dialerService.removeQueuedContactCards(userId, contactId, exceptQueueCardId)
+      : await dialerService.purgeContactFromSession(userId, contactId);
+    successResponse(res, 200, "Contact removed from session", { removed });
   } catch (error: any) {
     errorResponse(res, { message: error.message || "Failed to remove queued phone cards" }, 500);
   }

@@ -133,6 +133,10 @@ export class DialerService {
    *  live/tearing down. Lets that call's own terminal webhook honor the ready
    *  signal instead of wiping it and stranding the agent back in post-call. */
   private agentReadyForCall: Map<string, string> = new Map();
+  /** userId -> set of contactIds removed from THIS session (Trash / DNC /
+   *  Contacted). No number belonging to these contacts may be dialed or
+   *  redialed again for the rest of the session. Cleared on clearQueue. */
+  private removedContacts: Map<string, Set<string>> = new Map();
   private sidToRootSid: Map<string, string> = new Map(); // childSid -> parentSid for logical association
   private lastActivity: Map<string, number> = new Map(); // userId -> timestamp
   private leadsInFlight: Map<string, Set<string>> = new Map(); // userId -> Set of leadIds in transit
@@ -383,6 +387,7 @@ export class DialerService {
     this.postCallEnteredAt.delete(userId);
     this.agentReadyState.delete(userId);
     this.agentReadyForCall.delete(userId);
+    this.removedContacts.delete(userId);
     this.userActiveSessions.delete(userId);
     this.lastActivity.delete(userId);
     this.sessionPacing.delete(userId);
@@ -418,6 +423,66 @@ export class DialerService {
     // We identify them by checking leads that belonged to this user's active calls
     // (leadToCallerIdMap is shared so we leave it — it persists per-lead across sessions)
     console.log(`[DialerService] Hardware reset of stuck states for user ${userId} complete.`);
+  }
+
+  /**
+   * Fully remove a contact from the live session (Trash / DNC / Contacted).
+   * Unlike removeQueuedContactCards (queue only), this also:
+   *  - suppresses the contact so no number of it is ever dialed/redialed again
+   *    this session (covers cards already in flight or scheduled to redial),
+   *  - cancels every pending redial timer for the contact's numbers,
+   *  - hangs up the contact's other in-flight legs (ringing / on hold), leaving
+   *    the call the agent is actively bridged to (lock owner) untouched.
+   * This is what makes Trash on a multi-number contact stop the OTHER numbers.
+   */
+  async purgeContactFromSession(userId: string, contactId: string): Promise<number> {
+    if (!userId || !contactId) return 0;
+
+    // 1. Suppress for the rest of the session (blocks makeCall + requeue).
+    if (!this.removedContacts.has(userId)) this.removedContacts.set(userId, new Set());
+    this.removedContacts.get(userId)!.add(contactId);
+
+    // 2. Cancel pending redials for this contact. Redial guard keys are the
+    //    per-number queueCardId (`${contactId}_phone_N`) or the contactId itself.
+    const userRedials = this.pendingRedials.get(userId);
+    if (userRedials) {
+      for (const guardKey of Array.from(userRedials)) {
+        if (guardKey === contactId || guardKey.startsWith(contactId)) {
+          this.cancelPendingRedial(userId, guardKey);
+        }
+      }
+    }
+
+    // 3. Remove any not-yet-dialed queued cards for this contact.
+    const removed = this.removeQueuedContactCards(userId, contactId);
+
+    // 4. Hang up the contact's other live legs (ringing/on-hold). Leave the leg
+    //    the agent is bridged to (lock owner) alone so we never cut their call.
+    const lockOwner = this.agentBridgedCallId.get(userId);
+    const sidsToHangup: string[] = [];
+    for (const [sid, meta] of this.activeCalls.entries()) {
+      if (meta.userId === userId && meta.contactId === contactId && sid !== lockOwner) {
+        sidsToHangup.push(sid);
+      }
+    }
+    for (const sid of sidsToHangup) {
+      this.activeCalls.delete(sid);
+      this.sidToRootSid.delete(sid);
+    }
+    if (sidsToHangup.length > 0) {
+      try {
+        const client = await getTwilioClient(userId);
+        await Promise.all(sidsToHangup.map((sid) =>
+          client.calls(sid).update({ status: "completed" }).catch(() => { /* already ended */ })
+        ));
+        console.log(`[DialerService] Purged contact ${contactId}: hung up ${sidsToHangup.length} in-flight leg(s).`);
+      } catch (e: any) {
+        console.warn(`[DialerService] purgeContactFromSession: Twilio hangup failed: ${e?.message}`);
+      }
+    }
+
+    console.log(`[DialerService] Contact ${contactId} removed from session for user ${userId} (queued removed: ${removed}).`);
+    return removed;
   }
 
   removeQueuedContactCards(userId: string, contactId: string, exceptQueueCardId?: string) {
@@ -753,6 +818,15 @@ export class DialerService {
 
   private async makeCall(lead: Lead, preAssignedNumber?: string | null) {
     try {
+      // Contact was trashed / removed from this session — do not dial any of its
+      // numbers, even if this card was already in flight when Trash was pressed
+      // or a redial slipped through. Free the slot and pull the next lead.
+      if (lead.originalContactId && this.removedContacts.get(lead.userId)?.has(lead.originalContactId)) {
+        console.log(`[makeCall] Skipping lead ${lead.id} — contact ${lead.originalContactId} was removed this session.`);
+        this.leadsInFlight.get(lead.userId)?.delete(lead.id);
+        this.processQueue(lead.userId);
+        return;
+      }
 
       await this.updateLeadStatusInDB(lead.id, "CALLING");
 
@@ -1726,6 +1800,14 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
     
     const userRedials = this.pendingRedials.get(userId)!;
     const guardKey = queueCardId || contactId || leadId;
+
+    // Contact was trashed / removed from this session — never reschedule any of
+    // its numbers, even if a still-ringing leg terminates and asks for a redial.
+    if (this.removedContacts.get(userId)?.has(contactId)) {
+      console.log(`[DialerService] Not scheduling redial for lead ${leadId} — contact ${contactId} was removed this session.`);
+      userRedials.delete(guardKey);
+      return;
+    }
 
     if (userRedials.has(guardKey)) {
       console.log(`[DialerService] Redial already pending for ${guardKey}, skipping duplicate timer.`);
