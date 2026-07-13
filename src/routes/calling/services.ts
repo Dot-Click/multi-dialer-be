@@ -116,7 +116,7 @@ function buildAiSummary(a: any): string {
 export class DialerService {
   private static instance: DialerService;
   private userQueues: Map<string, PriorityCallQueue> = new Map(); // userId -> Queue
-  private activeCalls: Map<string, { leadId?: string; contactId?: string; queueCardId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean; attempts?: number; amdPending?: boolean }> = new Map(); // SID -> Metadata
+  private activeCalls: Map<string, { leadId?: string; contactId?: string; queueCardId?: string; userId: string; sessionId?: string; isBrowserCall?: boolean; status?: string; isRedial?: boolean; attempts?: number; amdPending?: boolean; agentConnected?: boolean }> = new Map(); // SID -> Metadata
   private userActiveSessions: Map<string, string> = new Map(); // userId -> current sessionId
   private agentBusyState: Map<string, boolean> = new Map(); // userId -> boolean
   private agentBridgedCallId: Map<string, string> = new Map(); // userId -> callSid that holds the lock
@@ -178,8 +178,11 @@ export class DialerService {
   private static readonly RECONCILE_INTERVAL_MS = 15_000;
   /** Only query Twilio for a call if we haven't heard a status for it in this long. */
   private static readonly CALL_STALE_MS = 45_000;
-  /** Recover an agent stuck in post-call with no live calls after this long. */
-  private static readonly POSTCALL_GRACE_MS = 3 * 60_000;
+  /** Recover an agent stuck in post-call with no live calls after this long.
+   *  Kept short: post-call should only ever be armed for calls the agent truly
+   *  spoke on, so a parked post-call past this window means the disposition
+   *  signal was lost — every extra second here is dead queue time. */
+  private static readonly POSTCALL_GRACE_MS = 45_000;
 
   private constructor() {
     // Start cleanup loop for stale associations every 30 minutes
@@ -594,7 +597,6 @@ export class DialerService {
       const settings = await prisma.system_Setting.findFirst({
         where: { userId },
         include: {
-          caller_id: true,
           callSettings: true,
         },
       });
@@ -602,11 +604,13 @@ export class DialerService {
       // Default to 1 if no settings found
       if (!settings) return 1;
 
-      // Extract numberOfLines from caller_id or callSettings
-      const linesFromCallerId = settings.caller_id[0]?.numberOfLines || 1;
-      const linesFromSettings = settings.callSettings[0]?.numberOfLines || 1;
-
-      return Math.max(linesFromCallerId, linesFromSettings);
+      // Fall back to the persisted power-dialer pacing. NOTE: `numberOfLines`
+      // must NOT be used here — that field is the dials-per-caller-ID rotation
+      // threshold, not a concurrency setting. Using it as capacity made a
+      // "rotate after 10 dials" configuration dial 10 people at once (or,
+      // inversely, users who set pacing got their rotation threshold ignored).
+      const pacingFromSettings = (settings.callSettings[0] as any)?.pacing;
+      return pacingFromSettings && pacingFromSettings > 0 ? pacingFromSettings : 1;
     } catch (error) {
       console.error(`Error fetching capacity for user ${userId}:`, error);
       return 1;
@@ -628,7 +632,12 @@ export class DialerService {
         const reg = settings?.regulatorySetting;
         let timeZone = "UTC";
         try {
-          const company = await prisma.company.findFirst();
+          // The TCPA window must be evaluated in THIS tenant's timezone. An
+          // unfiltered findFirst() returned the first company row in the whole
+          // database, so one tenant's timezone silently opened/closed every
+          // other tenant's calling window.
+          const rootId = await resolveTenantRootId(userId);
+          const company = await prisma.company.findFirst({ where: { userId: rootId } });
           if (company?.defaultTimeZone) {
             timeZone = company.defaultTimeZone;
           }
@@ -1147,6 +1156,12 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
     let userId = metadata?.userId?.toString().trim() || providedAgentId;
 
     if (metadata) {
+      // The agent's browser (child) leg answered — the agent is genuinely on
+      // this call. Only calls with this flag owe a post-call disposition when
+      // they end; calls that never reached the agent must not freeze the queue.
+      if (isChildLeg && (twilioStatus === 'answered' || twilioStatus === 'in-progress')) {
+        metadata.agentConnected = true;
+      }
       // PROTECTION: If this call is already marked as 'callback' (overflow),
       // do not let Twilio's 'answered' or 'in-progress' events turn it back to Green.
       if (metadata.status === 'callback' && (twilioStatus === 'answered' || twilioStatus === 'in-progress')) {
@@ -1313,8 +1328,17 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
         if (isMachineDetected) {
           console.log(`[handleCallStatusUpdate] Lead ${leadId || contactId} was machine-detected. Skipping redial.`);
         } else if (metadata?.status === 'callback') {
-          console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Ensuring redial.`);
-          this.requeueLeadForRedial(userId, leadId, contactId, 2000, currentAttempts, queueCardId);
+          // Overflow (agent was busy) redial. This MUST count as an attempt and
+          // respect maxAttempts — previously the attempt count was passed through
+          // unchanged, so a customer who kept answering while the agent was busy
+          // was re-called in an infinite ~12s loop. The 15s delay also gives the
+          // agent a chance to actually free up before the same person is re-dialed.
+          if (currentAttempts < maxAttempts) {
+            console.log(`[handleCallStatusUpdate] Customer ${leadId || contactId} hung up while on hold. Scheduling redial (Attempt ${currentAttempts + 1}/${maxAttempts}).`);
+            this.requeueLeadForRedial(userId, leadId, contactId, 15000, currentAttempts + 1, queueCardId);
+          } else {
+            console.log(`[handleCallStatusUpdate] Overflow lead ${leadId || contactId} reached max attempts (${maxAttempts}). Stopping redials.`);
+          }
         }
         // 2. Redial on technical failure or no-answer (Power Dialer behavior)
         else if (["busy", "no-answer", "failed"].includes(twilioStatus)) {
@@ -1377,12 +1401,21 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
         const preDispositioned = !!readyForSid && (readyForSid === sid || readyForSid === rootSid);
         this.agentReadyForCall.delete(userId!);
         this.agentReadyState.delete(userId!);
+        // Post-call is only owed when the agent actually spoke on this call:
+        // either their browser leg answered the bridge (agentConnected) or they
+        // placed the call from the browser themselves (isBrowserCall). A call
+        // that acquired the lock but never reached the agent (device offline,
+        // customer hung up mid-bridge, bridge failed) must NOT freeze the queue
+        // waiting for a disposition the UI will never prompt for.
+        const agentSpokeOnCall = !!metadata?.agentConnected || !!metadata?.isBrowserCall;
         if (preDispositioned) {
           console.log(`[handleCallStatusUpdate] Agent ${userId} already dispositioned ${sid} before teardown. Advancing without re-entering post-call.`);
           this.agentPostCallState.delete(userId!);
           this.postCallEnteredAt.delete(userId!);
-        } else {
+        } else if (agentSpokeOnCall) {
           this.agentPostCallState.add(userId!);
+        } else {
+          console.log(`[handleCallStatusUpdate] Lock owner ${sid} ended without the agent ever connecting. Skipping post-call gate so the queue keeps moving.`);
         }
         this.setAgentBusy(userId!, false);
         this.agentBridgedCallId.delete(userId!);
@@ -1399,11 +1432,17 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
         
         if (!hasOtherCalls && userId && this.isAgentBusy(userId)) {
            console.log(`[handleCallStatusUpdate] No other active calls for ${userId}. Clearing stuck lock.`);
-           // Same rule as the lock-owner branch above: always enter post-call so the
-           // agent must disposition before the queue advances. Never let a stale
-           // `agentReadyState` from a prior call skip this gate.
+           // Same rule as the lock-owner branch above: enter post-call only when
+           // the agent actually spoke on this call. A stuck lock cleared off the
+           // back of a never-bridged leg must not park the queue behind a
+           // disposition prompt the UI never shows. Never let a stale
+           // `agentReadyState` from a prior call skip this gate either.
            this.agentReadyState.delete(userId);
-           this.agentPostCallState.add(userId);
+           if (metadata?.agentConnected || metadata?.isBrowserCall) {
+             this.agentPostCallState.add(userId);
+           } else {
+             console.log(`[handleCallStatusUpdate] Cleared lock for ${userId} from never-bridged leg ${sid}. Skipping post-call gate.`);
+           }
            this.setAgentBusy(userId, false);
            this.agentBridgedCallId.delete(userId);
            // Delete SID BEFORE processing queue so capacity is accurate
@@ -1722,8 +1761,12 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
             id: lead.id,
             fullName: lead.fullName,
             phone: lead.phone,
-            // High priority so it jumps to the front of the queue
-            priority: 999,
+            // Re-enter at the lead's ORIGINAL priority, not an absolute jump to
+            // the front. A fixed 999 outranked every fresh lead (frontend
+            // priorities are queue.length - idx), so the same handful of
+            // unanswered numbers were redialed 3x each before the queue ever
+            // moved deeper — the "stuck on the first 3-4 contacts" symptom.
+            priority: lead.priority ?? 0,
             userId: lead.userId,
             originalContactId: contactId,
             queueCardId: queueCardId || contactId || leadId,

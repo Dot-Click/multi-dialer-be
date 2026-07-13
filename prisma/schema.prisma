@@ -1279,6 +1279,12 @@ model CallSettings {
   sendEmail              Boolean @default(false)
   sendText               Boolean @default(false)
   amdEnabled             Boolean @default(false)
+  // Power dialer session defaults. `numberOfLines` above is the dials-per-
+  // caller-ID rotation threshold; `pacing` is the number of simultaneous
+  // lines. They were previously conflated and pacing was never persisted,
+  // so reopening a saved configuration silently reverted to manual/1x.
+  dialerMode             String  @default("manual")
+  pacing                 Int     @default(1)
 
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)

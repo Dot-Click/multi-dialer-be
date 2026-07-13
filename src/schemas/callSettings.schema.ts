@@ -22,6 +22,8 @@ export const createCallSettingsSchema = z.object({
   sendEmail: z.boolean().optional(),
   sendText: z.boolean().optional(),
   amdEnabled: z.boolean().optional(),
+  dialerMode: z.enum(["manual", "power"]).optional(),
+  pacing: z.number().int().positive().max(10).optional(),
 });
 
 export const updateCallSettingsSchema = z.object({
@@ -46,4 +48,6 @@ export const updateCallSettingsSchema = z.object({
   sendEmail: z.boolean().optional(),
   sendText: z.boolean().optional(),
   amdEnabled: z.boolean().optional(),
+  dialerMode: z.enum(["manual", "power"]).optional(),
+  pacing: z.number().int().positive().max(10).optional(),
 });
