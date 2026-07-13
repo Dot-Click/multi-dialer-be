@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "node --import=tsx --env-file=.env --watch src/index.ts",
     "generate": "prisma generate",
+    "postinstall": "prisma generate",
     "seed": "tsx scripts/seeder.ts",
     "migrate": "prisma migrate dev",
     "studio": "prisma studio",
-    "build": "tsc && tsc-alias && npm run copy-assets",
+    "build": "prisma generate && tsc && tsc-alias && npm run copy-assets",
     "copy-assets": "node scripts/copy-assets.js",
     "start": "node dist/index.js",
     "dbpush": "prisma db push"
