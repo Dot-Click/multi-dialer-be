@@ -35,7 +35,6 @@ export const getCalendarEvents = async (req: Request, res: Response): Promise<vo
       where: whereClause,
       include: calendarInclude,
       orderBy: { startDate: "desc" },
-      take: 10
     });
 
     successResponse(res, 200, "Calendar events fetched", events);
@@ -47,7 +46,7 @@ export const getCalendarEvents = async (req: Request, res: Response): Promise<vo
 export const getAllCalendarEvents = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: userId, role } = req.user!;
-    let whereClause: any = { assignToId: userId };
+    let whereClause: any = { assignToId: userId, status: { not: "MET" } };
 
     if (role === 'ADMIN' || role === 'OWNER') {
       const agents = await prisma.user.findMany({
@@ -56,7 +55,8 @@ export const getAllCalendarEvents = async (req: Request, res: Response): Promise
       });
       const agentIds = agents.map(a => a.id);
       whereClause = {
-        assignToId: { in: [userId, ...agentIds] }
+        assignToId: { in: [userId, ...agentIds] },
+        status: { not: "MET" },
       };
     }
 
