@@ -33,11 +33,20 @@ export async function upsertSmtpConfigInDb(companyId: string, payload: {
   port: number;
   secure: boolean;
   username: string;
-  password: string;
+  password?: string;
   fromName: string;
   fromEmail: string;
 }) {
-  const encryptedPassword = encryptSmtpPassword(payload.password);
+  const existing = await prisma.smtpConfig.findUnique({ where: { companyId }, select: { password: true } });
+
+  // On create a password is required; on update it's optional — omitting it keeps the stored one.
+  if (!existing && !payload.password) {
+    throwHttp(400, "Password is required when setting up SMTP for the first time.");
+  }
+
+  const encryptedPassword = payload.password
+    ? encryptSmtpPassword(payload.password)
+    : existing!.password;
 
   const config = await prisma.smtpConfig.upsert({
     where: { companyId },
@@ -49,7 +58,6 @@ export async function upsertSmtpConfigInDb(companyId: string, payload: {
       password: encryptedPassword,
       fromName: payload.fromName,
       fromEmail: payload.fromEmail,
-      // Any credential change invalidates the previous verification.
       isVerified: false,
       verifiedAt: null,
     },

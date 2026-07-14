@@ -5,7 +5,7 @@ export const upsertSmtpConfigSchema = z.object({
   port: z.number().int().min(1).max(65535),
   secure: z.boolean().default(true),
   username: z.string().min(1, "Username is required"),
-  password: z.string().min(1, "Password is required"),
+  password: z.string().optional(),
   fromName: z.string().min(1, "From name is required"),
   fromEmail: z.string().email("A valid from email is required"),
 });
