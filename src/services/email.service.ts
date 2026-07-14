@@ -91,8 +91,6 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
 export async function sendEmail(options: SendEmailOptions) {
   const { to, from, subject, text, html, userId, contactId, leadId, templateId, companyId, replyToEmail } = options;
 
-  const replyTo = replyToEmail || from || undefined;
-
   let status: EmailStatus = EmailStatus.SENT;
   let errorMsg: string | null = null;
   let messageId: string | null = null;
@@ -128,6 +126,10 @@ export async function sendEmail(options: SendEmailOptions) {
   const fromEmail = transport.kind === "smtp" ? transport.fromEmail : (envConfig.SES_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com");
   const fromName = transport.kind === "smtp" ? transport.fromName : (options.fromName || envConfig.SES_FROM_NAME || "Dialer System");
   const fromHeader = `${fromName} <${fromEmail}>`;
+
+  // For SMTP, Reply-To is always the configured fromEmail — not the agent's
+  // personal address — so replies land in the company inbox, not a personal one.
+  const replyTo = transport.kind === "smtp" ? fromEmail : (replyToEmail || from || undefined);
 
   console.log(`[EmailService] Sending email to ${to} from ${fromHeader} via ${transport.kind} (replyTo: ${replyTo})`);
 
