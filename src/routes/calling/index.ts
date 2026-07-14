@@ -6,6 +6,7 @@ import {
   buyNumber,
   addLeadsToDialer,
   getDialerStatus,
+  getDailyCallStats,
   sendSms,
   handleVoiceWebhook,
   handleRecordingStatus,
@@ -76,6 +77,7 @@ router.post("/stop-dialing", protectRoute, stopDialing);
 router.post("/queue/remove-contact", protectRoute, removeContactFromPowerQueue);
 router.post("/agent-ready", protectRoute, agentReady);
 router.get("/status", protectRoute, getDialerStatus);
+router.get("/daily-stats", protectRoute, getDailyCallStats);
 router.get("/debug", protectRoute, getDialerDebug);
 router.get("/debug/:userId", protectRoute, getDialerDebug);
 router.get("/status/:sid", protectRoute, getCallStatus);

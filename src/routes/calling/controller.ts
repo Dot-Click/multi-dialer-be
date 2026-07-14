@@ -449,6 +449,34 @@ export const getDialerStatus: RequestHandler = async (req, res) => {
 };
 
 /**
+ * Total calls THIS agent has placed today (from midnight, server-local time),
+ * scoped strictly to req.user.id — not the admin's whole team. Used to seed
+ * the "Daily Progress" figure on the dialer screen so it reflects the agent's
+ * real daily total (including calls from earlier sessions today) instead of
+ * starting back at 0 whenever the page reloads or a new session begins.
+ * Works identically for manual and power dialer — both write CallRecord rows.
+ */
+export const getDailyCallStats: RequestHandler = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      errorResponse(res, { message: "Unauthorized" }, 401);
+      return;
+    }
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const callsToday = await prisma.callRecord.count({
+      where: { userId, startTime: { gte: todayStart } },
+    });
+    successResponse(res, 200, "Daily call stats fetched", { callsToday });
+    return;
+  } catch (error: any) {
+    errorResponse(res, { message: error.message });
+    return;
+  }
+};
+
+/**
  * Debug: live in-memory dialer state for one user (queue, active calls + ages,
  * agent lock owner, post-call flag, frozen caller IDs, watchdog status). Lets
  * a stuck session be inspected directly instead of grepping multi-user logs.
