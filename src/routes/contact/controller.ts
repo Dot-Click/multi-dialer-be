@@ -48,6 +48,7 @@ import {
   permanentlyDeleteContactFromDb,
   getHotlistFromDb,
   sendTemplateEmailInDb,
+  sendFreeformEmailInDb,
   scheduleTemplateEmailInDb,
   bulkAssignContactsToListInDb,
   bulkMoveToDncInDb,
@@ -1278,6 +1279,21 @@ export const sendTemplateEmail = async (req: Request, res: Response) => {
       return;
     }
     await sendTemplateEmailInDb(id, templateId, (req as any).user.id);
+    successResponse(res, 200, "Email sent successfully", null);
+  } catch (error: any) {
+    errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
+  }
+};
+
+export const sendFreeformEmail = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { subject, html } = req.body;
+    if (!id || !subject || !html) {
+      errorResponse(res, "Contact ID, subject and message body are required", 400);
+      return;
+    }
+    await sendFreeformEmailInDb(id, (req as any).user.id, subject, html);
     successResponse(res, 200, "Email sent successfully", null);
   } catch (error: any) {
     errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);

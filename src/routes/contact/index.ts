@@ -35,6 +35,7 @@ import {
   getAllBackupContacts,
   getHotlist,
   sendTemplateEmail,
+  sendFreeformEmail,
   scheduleTemplateEmail,
   bulkAssignContactsToList,
   bulkAssignContactsToFolder,
@@ -85,6 +86,7 @@ router.patch("/:id/assign", assignContactToList);
 router.patch("/:id/groups", assignContactToGroups);
 router.post("/:id/leadsheet/send-email", sendLeadSheetEmail);
 router.post("/:id/send-template-email", sendTemplateEmail);
+router.post("/:id/send-email", sendFreeformEmail);
 router.post("/:id/schedule-template-email", scheduleTemplateEmail);
 
 // Attachments

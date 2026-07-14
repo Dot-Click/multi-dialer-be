@@ -2695,6 +2695,22 @@ export async function sendTemplateEmailInDb(contactId: string, templateId: strin
   return true;
 }
 
+export async function sendFreeformEmailInDb(contactId: string, userId: string, subject: string, html: string) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    include: { emails: true },
+  });
+  if (!contact) throwHttp(404, "Contact not found");
+
+  const email = contact.emails.find((e) => e.isPrimary)?.email || contact.emails[0]?.email;
+  if (!email) throwHttp(400, "Contact has no email address");
+
+  const { companyId, agentEmail } = await resolveCompanyContext(userId);
+  await sendEmail(email, subject, html, { userId, contactId, companyId, replyToEmail: agentEmail });
+
+  return true;
+}
+
 export async function scheduleTemplateEmailInDb(contactId: string, templateId: string, scheduledAt: string) {
   // Since we don't have a background worker set up in this demo, 
   // we'll just log it to the console and return success.
