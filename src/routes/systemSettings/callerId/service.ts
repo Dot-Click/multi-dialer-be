@@ -29,6 +29,41 @@ export async function insertCallerIdInDb(payload: any, userId: string) {
       });
     }
 
+    // Guard against duplicate CallerId rows for the same physical number.
+    // Twilio itself refuses to re-provision a number it already owns, so this
+    // only fires for: re-entering an already-saved number (manual add form),
+    // or a number that was released and later re-acquired while a stale row
+    // for it still lingered in the DB (no unique constraint on twillioNumber
+    // exists to catch this at the DB level). Reusing the existing row instead
+    // of inserting a second one is exactly what prevents the duplicate-row
+    // class of bug that caused "31 numbers selected, only 19 arrived" for a
+    // client whose caller_id table had several numbers duplicated this way.
+    const twillioNumber = (callerIdData as any).twillioNumber as string | undefined;
+    if (twillioNumber) {
+      const existing = await prisma.callerId.findFirst({
+        where: { twillioNumber, systemSettingId: systemSettings.id },
+      });
+      if (existing) {
+        console.warn(
+          `[insertCallerIdInDb] CallerId already exists for ${twillioNumber} ` +
+          `(systemSettingId=${systemSettings.id}). Reusing id=${existing.id} instead of creating a duplicate.`
+        );
+        const updated = await prisma.callerId.update({
+          where: { id: existing.id },
+          data: {
+            label: callerIdData.label ?? existing.label,
+            twillioSid: (callerIdData as any).twillioSid ?? existing.twillioSid,
+            countryCode: callerIdData.countryCode ?? existing.countryCode,
+            ...(agentIds ? { agents: { connect: agentIds.map((id: string) => ({ id })) } } : {}),
+          },
+          include: {
+            agents: { select: { id: true, fullName: true, email: true } },
+          },
+        });
+        return updated;
+      }
+    }
+
     // Insert CallerId into DB with systemSettingId
     const callerId = await prisma.callerId.create({
       data: {

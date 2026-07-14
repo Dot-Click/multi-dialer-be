@@ -1452,20 +1452,42 @@ async function buyNumberOnBehalfOfUser(
       systemSettings = await prisma.system_Setting.create({ data: { userId: targetUserId } });
     }
 
-    const newCallerId = await prisma.callerId.create({
-      data: {
-        label: numberLabel,
-        countryCode: countryCode || "US",
-        twillioNumber: purchased.phoneNumber,
-        twillioSid: purchased.sid,
-        systemSettingId: systemSettings.id,
-        billingSource: "PAID_ADDON",
-        monthlyPriceCents: amountCents,
-        currency,
-        stripeSubscriptionItemId,
-        numberBillingStatus: "ACTIVE",
-      },
+    // Guard against a duplicate CallerId row for this number (e.g. a stale row
+    // left over from a previously released instance of the same number).
+    // Twilio has already sold and billed this number by this point, so on a
+    // match we update the existing row with the fresh purchase/billing details
+    // instead of creating a second row for the same physical number.
+    const existingCallerId = await prisma.callerId.findFirst({
+      where: { twillioNumber: purchased.phoneNumber, systemSettingId: systemSettings.id },
     });
+    const newCallerId = existingCallerId
+      ? await prisma.callerId.update({
+          where: { id: existingCallerId.id },
+          data: {
+            label: numberLabel,
+            countryCode: countryCode || "US",
+            twillioSid: purchased.sid,
+            billingSource: "PAID_ADDON",
+            monthlyPriceCents: amountCents,
+            currency,
+            stripeSubscriptionItemId,
+            numberBillingStatus: "ACTIVE",
+          },
+        })
+      : await prisma.callerId.create({
+          data: {
+            label: numberLabel,
+            countryCode: countryCode || "US",
+            twillioNumber: purchased.phoneNumber,
+            twillioSid: purchased.sid,
+            systemSettingId: systemSettings.id,
+            billingSource: "PAID_ADDON",
+            monthlyPriceCents: amountCents,
+            currency,
+            stripeSubscriptionItemId,
+            numberBillingStatus: "ACTIVE",
+          },
+        });
 
     successResponse(res, 200, "Number bought and billed successfully", { number: purchased, callerId: newCallerId });
   } catch (error: any) {
@@ -1534,20 +1556,42 @@ async function buySelfServiceAddonNumber(
       systemSettings = await prisma.system_Setting.create({ data: { userId } });
     }
 
-    const newCallerId = await prisma.callerId.create({
-      data: {
-        label: numberLabel,
-        countryCode: countryCode || "US",
-        twillioNumber: purchased.phoneNumber,
-        twillioSid: purchased.sid,
-        systemSettingId: systemSettings.id,
-        billingSource: "PAID_ADDON",
-        monthlyPriceCents: amountCents,
-        currency,
-        stripeSubscriptionItemId,
-        numberBillingStatus: "ACTIVE",
-      },
+    // Guard against a duplicate CallerId row for this number (e.g. a stale row
+    // left over from a previously released instance of the same number).
+    // Twilio has already sold and billed this number by this point, so on a
+    // match we update the existing row with the fresh purchase/billing details
+    // instead of creating a second row for the same physical number.
+    const existingCallerId = await prisma.callerId.findFirst({
+      where: { twillioNumber: purchased.phoneNumber, systemSettingId: systemSettings.id },
     });
+    const newCallerId = existingCallerId
+      ? await prisma.callerId.update({
+          where: { id: existingCallerId.id },
+          data: {
+            label: numberLabel,
+            countryCode: countryCode || "US",
+            twillioSid: purchased.sid,
+            billingSource: "PAID_ADDON",
+            monthlyPriceCents: amountCents,
+            currency,
+            stripeSubscriptionItemId,
+            numberBillingStatus: "ACTIVE",
+          },
+        })
+      : await prisma.callerId.create({
+          data: {
+            label: numberLabel,
+            countryCode: countryCode || "US",
+            twillioNumber: purchased.phoneNumber,
+            twillioSid: purchased.sid,
+            systemSettingId: systemSettings.id,
+            billingSource: "PAID_ADDON",
+            monthlyPriceCents: amountCents,
+            currency,
+            stripeSubscriptionItemId,
+            numberBillingStatus: "ACTIVE",
+          },
+        });
 
     successResponse(res, 200, "Number bought and billed successfully", { number: purchased, callerId: newCallerId });
   } catch (error: any) {

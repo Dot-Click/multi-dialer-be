@@ -658,16 +658,28 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
             // 3. Perform the deep reputation check
             const result = await getNumberReputation(phoneNumber);
             
-            // 4. Update or create in our database
-            const existing = await prisma.callerId.findFirst({
-                where: { twillioSid: tn.sid }
-            });
+            // 4. Update or create in our database. Match by SID first; if the
+            // number was released and re-provisioned, Twilio hands out a NEW
+            // SID for the same digits, so also fall back to matching by
+            // twillioNumber within this tenant before creating — otherwise this
+            // sync creates a second row for a number already on file, the same
+            // duplicate-row bug the buy-number paths guard against.
+            const existing =
+                (await prisma.callerId.findFirst({ where: { twillioSid: tn.sid } })) ||
+                (await prisma.callerId.findFirst({
+                    where: { twillioNumber: phoneNumber, systemSettingId: systemSettings.id },
+                }));
 
             if (existing) {
                 dbOps.push(prisma.callerId.update({
                     where: { id: existing.id },
                     data: {
                         twillioNumber: phoneNumber,
+                        // Re-attach to the CURRENT Twilio resource. If this row was
+                        // found via the number fallback (stale SID from a released
+                        // + re-provisioned number), this refreshes it to the live SID
+                        // instead of leaving a dangling reference to the old one.
+                        twillioSid: tn.sid,
                         reputationStatus: result?.status || "unknown",
                         reputationScore: result?.score || 100,
                         lastReputationCheck: new Date(),
