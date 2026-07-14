@@ -62,7 +62,7 @@ type EmailTransport =
 export async function getEmailTransporter(companyId?: string): Promise<EmailTransport> {
   if (companyId) {
     const smtpConfig = await prisma.smtpConfig.findUnique({ where: { companyId } });
-    if (smtpConfig && smtpConfig.isVerified) {
+    if (smtpConfig) {
       const smtpSecure = smtpConfig.port === 465 ? true : false;
       const transporter = nodemailer.createTransport({
         host: smtpConfig.host,
