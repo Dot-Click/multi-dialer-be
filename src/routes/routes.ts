@@ -46,6 +46,7 @@ import { envConfig } from "@/lib/config";
 import paymentRoutes from "./payment";
 import calendarSyncRoutes from "./calendarSync";
 import agentSeatsRoutes from "./agentSeats";
+import smtpSettingsRoutes from "./settings/smtp";
 
 const router = Router()
 
@@ -79,6 +80,7 @@ router.use("/system-settings/integration", protectRoute, checkRole(["ADMIN", "OW
 router.use("/system-settings/regulatory", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), regulatoryRoutes)
 router.use("/system-settings/audit-logs", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), auditLogRoutes)
 router.use("/system-settings/dispositions", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), dispositionRoutes)
+router.use("/settings/smtp", protectRoute, checkRole(["ADMIN", "OWNER"]), smtpSettingsRoutes)
 
 // Contacts & Lists
 router.use("/contact", protectRoute, contactRoutes)

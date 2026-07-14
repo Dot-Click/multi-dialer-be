@@ -260,7 +260,15 @@ export const sendEmail = async (
     to: string,
     subject: string,
     html: string,
-    tracking?: { userId: string; contactId?: string; leadId?: string; templateId?: string; includeUnsubscribe?: boolean }
+    tracking?: {
+        userId: string;
+        contactId?: string;
+        leadId?: string;
+        templateId?: string;
+        includeUnsubscribe?: boolean;
+        companyId?: string;
+        replyToEmail?: string;
+    }
 ) => {
     try {
         return await trackedSendEmail({
@@ -274,6 +282,8 @@ export const sendEmail = async (
             leadId: tracking?.leadId,
             templateId: tracking?.templateId,
             includeUnsubscribe: tracking?.includeUnsubscribe,
+            companyId: tracking?.companyId,
+            replyToEmail: tracking?.replyToEmail,
         });
     }
     catch (error) {

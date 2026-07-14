@@ -2,6 +2,7 @@ import cron from "node-cron";
 import prisma from "../lib/prisma";
 import { createInternalNotification } from "../routes/notification/controller";
 import { sendEmail, getBaseEmailTemplate } from "../services/email.service";
+import { resolveCompanyContext } from "../utils/resolveCompany";
 
 /**
  * Appointment Reminder Job
@@ -87,9 +88,12 @@ export const startAppointmentReminderJob = () => {
                                     <div class="info-item"><span class="info-label">Time:</span><span class="info-value">${event.startDate.toLocaleString()}</span></div>
                                 </div>
                             `);
+                            const { companyId } = await resolveCompanyContext(event.assignToId);
                             await sendEmail({
                                 to: assigneeSettings.appointmentReminderEmail,
-                                from: event.assignBy.email,
+                                from: event.assignTo.email,
+                                replyToEmail: event.assignTo.email,
+                                companyId,
                                 subject: `⏰ Reminder: ${event.title}`,
                                 text: `Reminder: ${event.title} starting soon.`,
                                 html: htmlContent,
@@ -120,9 +124,12 @@ export const startAppointmentReminderJob = () => {
                                 <div class="info-item"><span class="info-label">Time:</span><span class="info-value">${event.startDate.toLocaleString()}</span></div>
                             </div>
                         `);
+                        const { companyId } = await resolveCompanyContext(event.assignById);
                         await sendEmail({
                             to: creatorSettings.appointmentReminderEmail,
                             from: "system@multidialer.com",
+                            replyToEmail: event.assignBy.email,
+                            companyId,
                             subject: `⏰ Organizer Reminder: ${event.title}`,
                             text: `Reminder: ${event.title} you organized is starting soon.`,
                             html: htmlContent,
@@ -193,9 +200,12 @@ export const startAppointmentReminderJob = () => {
                     ${task.notes ? `<div class="info-item"><span class="info-label">Notes:</span><span class="info-value">${task.notes}</span></div>` : ""}
                 </div>
               `);
+              const { companyId } = await resolveCompanyContext(task.agentId);
               await sendEmail({
                 to: toEmail,
                 from: "system@multidialer.com",
+                replyToEmail: task.agent.email,
+                companyId,
                 subject: `⏰ Task due soon: ${task.title}`,
                 text: `Reminder: your task "${task.title}" is due at ${dueStr}.`,
                 html: htmlContent,

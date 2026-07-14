@@ -56,7 +56,8 @@ export const envConfig = {
   MYPLUSLEADS_DEFAULT_BASE_ZIP: process.env.MYPLUSLEADS_DEFAULT_BASE_ZIP,
   ZAPIER_WEBHOOK_URL: process.env.ZAPIER_WEBHOOK_URL,
   EIN_ENCRYPTION_KEY: process.env.EIN_ENCRYPTION_KEY,
-  
+  SMTP_ENCRYPTION_KEY: process.env.SMTP_ENCRYPTION_KEY,
+
   // R2 Configuration
   R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID,
   R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID,

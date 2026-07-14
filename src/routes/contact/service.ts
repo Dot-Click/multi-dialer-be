@@ -6,6 +6,7 @@ import { uploadToR2, getPresignedUrlFromStoredUrl } from "../../utils/r2-uploade
 import { randomUUID } from "crypto";
 import { createInternalNotification } from "../notification/controller";
 import { resolveTenantUserIds, resolveTenantRootId } from "../../utils/tenant";
+import { resolveCompanyContext } from "../../utils/resolveCompany";
 import { envConfig } from "@/lib/config";
 
 
@@ -1367,11 +1368,12 @@ export async function sendLeadSheetEmailInDb(
     leadSheet.title,
     questionsAndAnswers,
   );
+  const { companyId, agentEmail } = await resolveCompanyContext(userId);
   await sendEmail(
     recipientEmail,
     `Lead Sheet: ${leadSheet.title} - ${contact.fullName}`,
     html,
-    { userId, contactId }
+    { userId, contactId, companyId, replyToEmail: agentEmail }
   );
 
   return true;
@@ -2687,7 +2689,8 @@ export async function sendTemplateEmailInDb(contactId: string, templateId: strin
     }
   }
 
-  await sendEmail(email, subject, content, { userId, contactId, templateId, includeUnsubscribe: true });
+  const { companyId, agentEmail } = await resolveCompanyContext(userId);
+  await sendEmail(email, subject, content, { userId, contactId, templateId, includeUnsubscribe: true, companyId, replyToEmail: agentEmail });
 
   return true;
 }

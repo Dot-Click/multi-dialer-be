@@ -1633,7 +1633,33 @@ model Company {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  smtpConfig SmtpConfig?
+
   @@map("companies")
+}
+
+model SmtpConfig {
+  id        String  @id @default(cuid())
+  companyId String  @unique
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  host   String
+  port   Int
+  secure Boolean @default(true)
+
+  username String
+  password String // Encrypted at rest (AES-256), never stored/returned in plaintext.
+
+  fromName  String
+  fromEmail String
+
+  isVerified Boolean   @default(false)
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("smtp_configs")
 }
 
 model AuditLog {
