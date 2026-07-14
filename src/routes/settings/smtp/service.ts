@@ -82,10 +82,13 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
   if (!config) throwHttp(404, "SMTP configuration not found. Save your settings first.");
 
   try {
+    const smtpSecure = config.port === 465 ? true : false;
     const transporter = nodemailer.createTransport({
       host: config.host,
       port: config.port,
-      secure: config.secure,
+      secure: smtpSecure,
+      requireTLS: !smtpSecure,
+      tls: { rejectUnauthorized: false },
       auth: {
         user: config.username,
         pass: decryptSmtpPassword(config.password),
