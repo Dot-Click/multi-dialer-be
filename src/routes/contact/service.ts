@@ -2856,7 +2856,9 @@ export const getDuplicateContactsFromDb = async (userId: string) => {
     return {
       ...c,
       duplicateReason: reasons.join(", "),
-      locationContext: [...folderNames.map(n => `Folder: ${n}`), ...listNames.map(n => `List: ${n}`)].join(", ")
+      locationContext: [...folderNames.map(n => `Folder: ${n}`), ...listNames.map(n => `List: ${n}`)].join(", "),
+      folderNames,
+      listNames,
     };
   });
 };
