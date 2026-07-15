@@ -211,11 +211,11 @@ export const addContactNote = async (
 };
 
 export const getDuplicateContacts = async (
-  _req: Request,
+  req: Request,
   res: Response,
 ): Promise<void> => {
   try {
-    const duplicates = await getDuplicateContactsFromDb();
+    const duplicates = await getDuplicateContactsFromDb((req as any).user.id);
     successResponse(res, 200, "Duplicate contacts fetched", duplicates);
   } catch (error: any) {
     errorResponse(

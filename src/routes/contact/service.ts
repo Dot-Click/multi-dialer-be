@@ -2718,7 +2718,12 @@ export async function scheduleTemplateEmailInDb(contactId: string, templateId: s
   console.log(`[SCHEDULED] Email template ${templateId} to contact ${contactId} at ${scheduledAt}`);
   return true;
 }
-export const getDuplicateContactsFromDb = async () => {
+export const getDuplicateContactsFromDb = async (userId: string) => {
+  // Scope duplicate detection to the caller's tenant (self + their agents).
+  // OWNER gets `null` back, meaning "no scoping, see everything".
+  const tenantUserIds = await resolveTenantUserIds(userId);
+  const tenantFilter = tenantUserIds ? { userId: { in: tenantUserIds } } : {};
+
   // ── 1. Find Duplicate identifiers ───────────────────────────────
 
   // A. Phones
@@ -2726,6 +2731,7 @@ export const getDuplicateContactsFromDb = async () => {
     by: ['number'],
     _count: { number: true },
     having: { number: { _count: { gt: 1 } } },
+    where: { contact: tenantFilter },
   });
   const dupPhoneNumbers = dupPhones.map((p) => p.number);
 
@@ -2734,15 +2740,22 @@ export const getDuplicateContactsFromDb = async () => {
     by: ['email'],
     _count: { email: true },
     having: { email: { _count: { gt: 1 } } },
+    where: { contact: tenantFilter },
   });
   const dupEmailAddresses = dupEmailsRaw.map((e) => e.email);
 
   // C. Property Addresses
+  // CSV imports store a missing address as "" rather than null (see importContactsInDb),
+  // so blank fields must be excluded alongside null — otherwise every no-address contact
+  // groups into one bucket and gets falsely flagged as a duplicate.
   const dupPropAddresses = await prisma.contact.groupBy({
     by: ['address', 'city', 'state', 'zip'],
     _count: { id: true },
     having: { id: { _count: { gt: 1 } } },
-    where: { address: { not: null }, city: { not: null }, state: { not: null } }
+    where: {
+      NOT: [{ address: null }, { address: "" }, { city: null }, { city: "" }, { state: null }, { state: "" }],
+      ...tenantFilter,
+    }
   });
 
   // D. Mailing Addresses
@@ -2750,12 +2763,16 @@ export const getDuplicateContactsFromDb = async () => {
     by: ['mailingAddress', 'mailingCity', 'mailingState', 'mailingZip'],
     _count: { id: true },
     having: { id: { _count: { gt: 1 } } },
-    where: { mailingAddress: { not: null }, mailingCity: { not: null }, mailingState: { not: null } }
+    where: {
+      NOT: [{ mailingAddress: null }, { mailingAddress: "" }, { mailingCity: null }, { mailingCity: "" }, { mailingState: null }, { mailingState: "" }],
+      ...tenantFilter,
+    }
   });
 
   // ── 2. Fetch All Contacts with Duplicates ──────────────────────────
   const contacts = await prisma.contact.findMany({
     where: {
+      ...tenantFilter,
       OR: [
         { phones: { some: { number: { in: dupPhoneNumbers } } } },
         { emails: { some: { email: { in: dupEmailAddresses } } } },
@@ -2783,6 +2800,11 @@ export const getDuplicateContactsFromDb = async () => {
     include: {
       phones: true,
       emails: true,
+      callRecords: {
+        orderBy: { startTime: 'desc' },
+        take: 1,
+        select: { startTime: true },
+      },
     },
     orderBy: {
       fullName: 'asc',
@@ -3124,6 +3146,40 @@ export async function mergeContactsInDb(
 
     const duplicates = contacts.filter(c => c.id !== masterId);
     if (duplicates.length === 0) return master;
+
+    // 1.5 Guard: only merge contacts that actually match the master on at
+    // least one identifier. The duplicates table lists every contact flagged
+    // as a duplicate of ANYONE, not just the master — without this check, a
+    // careless multi-select (e.g. "select all") would silently fold totally
+    // unrelated contacts into one record.
+    const normalizeAddress = (c: (typeof contacts)[number]) =>
+      c.address && c.city && c.state
+        ? `${c.address}|${c.city}|${c.state}|${c.zip || ""}`.toLowerCase()
+        : null;
+    const normalizeMailingAddress = (c: (typeof contacts)[number]) =>
+      c.mailingAddress && c.mailingCity && c.mailingState
+        ? `${c.mailingAddress}|${c.mailingCity}|${c.mailingState}|${c.mailingZip || ""}`.toLowerCase()
+        : null;
+
+    const masterPhones = new Set(master.phones.map(p => p.number));
+    const masterEmails = new Set(master.emails.map(e => e.email.toLowerCase().trim()));
+    const masterAddress = normalizeAddress(master);
+    const masterMailingAddress = normalizeMailingAddress(master);
+
+    const unrelated = duplicates.filter(d => {
+      const sharesPhone = d.phones.some(p => masterPhones.has(p.number));
+      const sharesEmail = d.emails.some(e => masterEmails.has(e.email.toLowerCase().trim()));
+      const sharesAddress = masterAddress !== null && normalizeAddress(d) === masterAddress;
+      const sharesMailingAddress = masterMailingAddress !== null && normalizeMailingAddress(d) === masterMailingAddress;
+      return !(sharesPhone || sharesEmail || sharesAddress || sharesMailingAddress);
+    });
+
+    if (unrelated.length > 0) {
+      throwHttp(
+        400,
+        `These contacts don't share a phone, email, or address with the selected primary contact, so they can't be merged: ${unrelated.map(c => c.fullName).join(", ")}`
+      );
+    }
 
     // 2. Aggregate Data
     // PHONES: Unique by number
