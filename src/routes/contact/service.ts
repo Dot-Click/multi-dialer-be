@@ -584,7 +584,7 @@ export async function updateContactInDb(
   });
   if (!existing) throwHttp(404, "Contact not found");
 
-  const newStatus = payload.status || payload.disposition;
+  const newStatus = payload.status;
   let folderIdsUpdate = undefined;
 
   // If moving to DNC, ensure we have the folder ID and push it
@@ -624,6 +624,7 @@ export async function updateContactInDb(
       agent: payload.agent,
       dataDialerId: payload.dataDialerId,
       status: newStatus,
+      disposition: payload.disposition,
       folderIds: folderIdsUpdate,
       emails: payload.emails
         ? {

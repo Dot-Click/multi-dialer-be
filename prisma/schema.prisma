@@ -459,6 +459,9 @@ model Contact {
   // are parked off the queue; DO_NOT_CALL is suppressed.
   queueStatus     QueueStatus @default(ACTIVE)
   dialAttempts    Int         @default(0)
+  // The Disposition.value currently applied to this contact (e.g. "WARM"),
+  // separate from `status` — lets the UI highlight the active disposition pill.
+  disposition     String?
 
   calendar        Calendar[]
   callbacks       Callback[]
