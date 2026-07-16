@@ -6,6 +6,8 @@ import {
   getCallbackById,
   updateCallback,
   deleteCallback,
+  snoozeCallback,
+  completeCallback,
 } from "./controller";
 
 const router = Router();
@@ -16,6 +18,8 @@ router.get("/", getCallbacks);
 router.get("/due", getDueCallbacks);
 router.get("/:id", getCallbackById);
 router.put("/:id", updateCallback);
+router.patch("/:id/snooze", snoozeCallback);
+router.patch("/:id/complete", completeCallback);
 router.delete("/:id", deleteCallback);
 
 export default router;

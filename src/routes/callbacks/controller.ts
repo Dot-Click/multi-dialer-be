@@ -187,6 +187,67 @@ export const updateCallback = async (req: Request, res: Response): Promise<void>
   }
 };
 
+// Pushes a due/overdue callback 5 minutes into the future and resets it to
+// PENDING so it drops out of the `/due` polling window until it approaches
+// the new time. (Adding 5 minutes to the OLD scheduledAt would do nothing for
+// an already-overdue callback — it'd still be due on the very next poll.)
+export const snoozeCallback = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { id: agentId, role } = req.user!;
+
+    const callback = await getCallbackByIdInDb(id);
+    if (!callback) {
+      errorResponse(res, "Callback not found", 404);
+      return;
+    }
+    if (!canManageOthers(role) && callback.agentId !== agentId) {
+      errorResponse(res, "You can only modify your own callbacks", 403);
+      return;
+    }
+
+    const newScheduledAt = new Date(Date.now() + 5 * 60 * 1000);
+    const updated = await updateCallbackInDb(id, { scheduledAt: newScheduledAt, status: "PENDING" });
+
+    if (callback.externalEventId) {
+      syncCallbackToGoogle(callback.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
+      syncCallbackToOutlook(callback.agentId, { ...updated, externalEventId: updated.externalEventId }).catch(console.error);
+    }
+
+    successResponse(res, 200, "Callback snoozed for 5 minutes", updated);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
+export const completeCallback = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { id: agentId, role } = req.user!;
+
+    const callback = await getCallbackByIdInDb(id);
+    if (!callback) {
+      errorResponse(res, "Callback not found", 404);
+      return;
+    }
+    if (!canManageOthers(role) && callback.agentId !== agentId) {
+      errorResponse(res, "You can only modify your own callbacks", 403);
+      return;
+    }
+
+    const updated = await updateCallbackInDb(id, { status: "COMPLETED", completedAt: new Date() });
+
+    if (callback.externalEventId) {
+      deleteCallbackFromGoogle(callback.agentId, callback.externalEventId).catch(console.error);
+      deleteCallbackFromOutlook(callback.agentId, callback.externalEventId).catch(console.error);
+    }
+
+    successResponse(res, 200, "Callback marked complete", updated);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
+};
+
 // Soft delete: mark CANCELLED, never hard-delete.
 export const deleteCallback = async (req: Request, res: Response): Promise<void> => {
   try {

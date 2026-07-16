@@ -2,7 +2,13 @@ import prisma from "../../lib/prisma";
 import { Prisma } from "@prisma/client";
 
 export const callbackInclude = {
-  contact: { select: { id: true, fullName: true } },
+  contact: {
+    select: {
+      id: true,
+      fullName: true,
+      phones: { select: { number: true, isPrimary: true, isValid: true, isDnc: true } },
+    },
+  },
   lead: { select: { id: true, fullName: true } },
   agent: { select: { id: true, fullName: true, email: true } },
 };
