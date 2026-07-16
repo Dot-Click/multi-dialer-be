@@ -20,7 +20,7 @@ function throwHttp(statusCode: number, message: string): never {
 }
 
 export async function createUserInDb(payload: any) {
-    const { password, planId, ...rest } = payload;
+    const { password, planId, companyName, ...rest } = payload;
 
     // Normalize the email the same way Better Auth does at sign-in (lowercased +
     // trimmed). Without this, a mixed-case email like "Nate101h@gmail.com" is
@@ -69,6 +69,17 @@ export async function createUserInDb(payload: any) {
                 emailVerified: true, // Administrative creation skips verification
             },
         });
+
+        // 1.5 Create Company record if a company name was provided (mirrors
+        // the public signup flow's checkout.session.completed provisioning)
+        if (companyName) {
+            await tx.company.create({
+                data: {
+                    companyName,
+                    userId: newUser.id,
+                },
+            });
+        }
 
         // 2. Create Account for Better Auth (Mandatory for Login)
         await tx.account.create({

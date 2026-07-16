@@ -411,9 +411,11 @@ export const deletePlan = async (req: Request, res: Response): Promise<void> => 
 
 export const getFailedPayments = async (req: Request, res: Response): Promise<void> => {
   try {
-    // "past_due" is stored as a raw string by the invoice.payment_failed webhook (outside the enum)
+    // The invoice.payment_failed webhook maps Stripe's "past_due"/"unpaid"/
+    // "incomplete" statuses onto our PENDING enum value (there's no dedicated
+    // PAST_DUE member in SubscriptionStatus).
     const records = await prisma.userSubscription.findMany({
-      where: { status: "past_due" as any },
+      where: { status: "PENDING" },
       include: { user: { select: { fullName: true, email: true } } },
       orderBy: { updatedAt: "desc" },
     });
@@ -1081,7 +1083,7 @@ export const updateCardPaymentMethod = async (req: Request, res: Response): Prom
     // Account was failing on the old card — retry the open invoice immediately
     // instead of waiting for Stripe's next automatic retry.
     let retriedInvoiceId: string | null = null;
-    if (String(sub.status) === "past_due" && sub.stripeSubscriptionId) {
+    if (String(sub.status) === "PENDING" && sub.stripeSubscriptionId) {
       const openInvoices = await stripe.invoices.list({
         customer: sub.stripeCustomerId,
         subscription: sub.stripeSubscriptionId,

@@ -9,6 +9,7 @@ export const createUserSchema = z.object({
     status: z.enum(["ACTIVE", "DEACTIVATED", "SUSPENDED", "PENDING", "EXPIRING_SOON"]).default("ACTIVE"),
     image: z.string().optional(),
     createdById: z.string().optional(),
+    companyName: z.string().optional(),
 })
 
 

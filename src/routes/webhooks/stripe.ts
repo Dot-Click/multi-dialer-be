@@ -14,6 +14,32 @@ import { syncBillingFromInvoice } from "../../services/billingLedger.service";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
 import { planKeyFromName } from "../../services/planLimits.service";
 
+// UserSubscription.status is a fixed Postgres enum (ACTIVE | CANCELLED | EXPIRED
+// | PENDING) — it does NOT contain Stripe's own lowercase status strings
+// (active, past_due, unpaid, canceled, incomplete, trialing, paused...).
+// Writing a raw Stripe status directly throws PrismaClientValidationError at
+// runtime ("Invalid value for argument `status`"). Map to the closest existing
+// enum member instead — PENDING stands in for "payment trouble, not yet fully
+// lapsed" (past_due/unpaid/incomplete/paused), since there's no dedicated
+// PAST_DUE value without a schema migration.
+function mapStripeSubscriptionStatus(stripeStatus: string): "ACTIVE" | "CANCELLED" | "EXPIRED" | "PENDING" {
+  switch (stripeStatus) {
+    case "active":
+    case "trialing":
+      return "ACTIVE";
+    case "canceled":
+    case "incomplete_expired":
+      return "CANCELLED";
+    case "past_due":
+    case "unpaid":
+    case "incomplete":
+    case "paused":
+      return "PENDING";
+    default:
+      return "PENDING";
+  }
+}
+
 function getStripeClient() {
   const key = envConfig.STRIPE_SECRET_KEY;
   if (!key) throw new Error("STRIPE_SECRET_KEY is not set in environment variables.");
@@ -626,7 +652,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           where: { id: subRecord.id },
           data: {
             plan: planName,
-            status: status as any,
+            status: mapStripeSubscriptionStatus(status),
             amount: amountStr,
             usersCount: quantity,
             billingCycle: billingCycle as any,
@@ -664,7 +690,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       if (subRecord) {
         await prisma.userSubscription.update({
           where: { id: subRecord.id },
-          data: { status: "canceled" as any },
+          data: { status: "CANCELLED" },
         });
 
         await prisma.user.update({
@@ -726,7 +752,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       if (subRecord) {
         await prisma.userSubscription.update({
           where: { id: subRecord.id },
-          data: { status: "past_due" as any },
+          data: { status: "PENDING" },
         });
 
         await prisma.user.update({
