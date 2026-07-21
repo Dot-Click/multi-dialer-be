@@ -15,6 +15,7 @@ import { handleUnsubscribe } from "@/routes/email/unsubscribe";
 import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
 import { backfillMyPlusLeadsExistingUsers } from "@/workers/myPlusLeadsBackfill";
+import { startLeadStoreReminderWorker } from "@/workers/leadStoreReminder";
 import { dialerService } from "@/routes/calling/services";
 
 connectDB();
@@ -24,6 +25,7 @@ if (process.env.ENABLE_CRON === "true") {
   initJobs();
   startA2PStatusPoller();
   startMyPlusLeadsSyncWorker();
+  startLeadStoreReminderWorker();
 
   // One-time backfill: pulls leads for existing users who signed up before
   // auto-sync was implemented (lastSyncAt = null). Safe to re-deploy — already

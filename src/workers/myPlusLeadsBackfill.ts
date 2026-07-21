@@ -1,58 +1,55 @@
 import prisma from "../lib/prisma";
-import { syncLeadsForUser, repairAndSyncUser } from "../services/myPlusLeads.service";
+import { syncLeadsForConfig } from "../services/myPlusLeads.service";
+import { notifyClients } from "../services/leadStoreNotify.service";
 
 /**
- * One-time backfill: sync leads for every existing user who has a connected
- * MyPlusLeads account but has NEVER had a successful sync (lastSyncAt is null).
+ * One-time backfill: sync leads for every existing MyPlusLeads account that is
+ * CONNECTED but has never had a successful sync (lastSyncAt is null).
  *
  * Runs once at server startup. Safe to re-deploy — the `lastSyncAt` check
- * ensures already-synced users are skipped automatically.
+ * ensures already-synced accounts are skipped automatically.
  *
- * Each user is processed sequentially (not in parallel) to avoid hammering
+ * Accounts in a FAILED state are no longer auto-repaired (credentials are now
+ * entered manually by Client) — instead Client is notified to fix them.
+ *
+ * Each account is processed sequentially (not in parallel) to avoid hammering
  * the MyPlusLeads API with concurrent requests.
  */
 export async function backfillMyPlusLeadsExistingUsers(): Promise<void> {
-  // Case 1: CONNECTED but never synced — try a straight sync first.
-  // Case 2: FAILED or missing credentials — use repair (re-provisions credentials).
-  const allPending = await prisma.myPlusLeadsConfig.findMany({
-    where: {
-      OR: [
-        // Never synced but apparently connected
-        { status: "CONNECTED", lastSyncAt: null },
-        // Failed provisioning — credentials may be missing
-        { status: "FAILED" },
-      ],
-    },
-    select: { userId: true, status: true, subAccountEmail: true, subAccountPassword: true },
+  const neverSynced = await prisma.myPlusLeadsConfig.findMany({
+    where: { status: "CONNECTED", lastSyncAt: null },
+    select: { id: true, userId: true },
   });
 
-  if (allPending.length === 0) {
-    console.log("[MyPlusLeads Backfill] No pending users found. Nothing to do.");
-    return;
-  }
+  console.log(`[MyPlusLeads Backfill] Found ${neverSynced.length} connected-but-never-synced account(s).`);
 
-  console.log(`[MyPlusLeads Backfill] Found ${allPending.length} user(s) needing sync/repair.`);
-
-  for (const cfg of allPending) {
-    const { userId } = cfg;
-    const needsRepair = cfg.status === "FAILED" || !cfg.subAccountEmail || !cfg.subAccountPassword;
-
+  for (const { id, userId } of neverSynced) {
     try {
-      let result;
-      if (needsRepair) {
-        console.log(`[MyPlusLeads Backfill] Repairing credentials for userId=${userId}...`);
-        result = await repairAndSyncUser(userId);
-      } else {
-        result = await syncLeadsForUser(userId);
-      }
-      console.log(`[MyPlusLeads Backfill] ✅ userId=${userId} — imported: ${result.imported}, skipped: ${result.skipped}`);
+      const result = await syncLeadsForConfig(id);
+      console.log(`[MyPlusLeads Backfill] ✅ userId=${userId} config=${id} — imported: ${result.imported}, skipped: ${result.skipped}`);
     } catch (err: any) {
-      console.error(`[MyPlusLeads Backfill] ❌ userId=${userId} — ${err?.message ?? err}`);
+      console.error(`[MyPlusLeads Backfill] ❌ userId=${userId} config=${id} — ${err?.message ?? err}`);
       await prisma.myPlusLeadsConfig.update({
-        where: { userId },
+        where: { id },
         data: { errorMessage: err?.message ?? String(err) },
       }).catch(() => {});
     }
+  }
+
+  const failed = await prisma.myPlusLeadsConfig.findMany({
+    where: { status: "FAILED" },
+    select: { id: true, userId: true, label: true },
+  });
+
+  if (failed.length > 0) {
+    console.log(`[MyPlusLeads Backfill] ${failed.length} account(s) in FAILED state — notifying Client.`);
+    await notifyClients(
+      "MyPlusLeads accounts need attention",
+      `${failed.length} linked MyPlusLeads account(s) are in a FAILED state and need to be fixed or relinked: ${failed
+        .map((f) => f.label || f.id)
+        .join(", ")}.`,
+      "myplusleads_failed",
+    ).catch((err) => console.error("[MyPlusLeads Backfill] Failed to notify Client:", err));
   }
 
   console.log("[MyPlusLeads Backfill] Done.");

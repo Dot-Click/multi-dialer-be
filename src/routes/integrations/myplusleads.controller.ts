@@ -1,93 +1,32 @@
 import { Request, Response } from "express";
 import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
-import { syncLeadsForUser, repairAndSyncUser } from "../../services/myPlusLeads.service";
+import { syncLeadsForUser } from "../../services/myPlusLeads.service";
 
+/**
+ * Read-only status for the current user's linked MyPlusLeads account(s).
+ * Credentials are managed by Client via the Super Admin linking panel —
+ * customers can no longer self-provision or edit them here.
+ */
 export const getMyPlusLeadsConfig = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user.id;
-    const config = await prisma.myPlusLeadsConfig.findUnique({
-      where: { userId }
-    });
-
-    const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-    const webhookUrl = config?.subAccountId
-      ? `${baseUrl}/api/webhooks/myplusleads/${userId}?accountId=${config.subAccountId}`
-      : null;
-
-    successResponse(res, 200, "Config fetched", config ? {
-      ...config,
-      subAccountPassword: config.subAccountPassword ? "[encrypted]" : null,
-      webhookUrl,
-    } : { webhookUrl: null });
-  } catch (error: any) {
-    errorResponse(res, error.message || "Internal server error");
-  }
-};
-
-export const updateMyPlusLeadsConfig = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = (req as any).user.id;
-    const { autoSync } = req.body;
-
-    const config = await prisma.myPlusLeadsConfig.upsert({
+    const configs = await prisma.myPlusLeadsConfig.findMany({
       where: { userId },
-      update: {
-        autoSync: autoSync !== undefined ? autoSync : true,
-      },
-      create: {
-        userId,
-        autoSync: autoSync !== undefined ? autoSync : true,
-      }
+      orderBy: { createdAt: "asc" },
     });
 
-    successResponse(res, 200, "Configuration saved successfully", config);
+    successResponse(
+      res,
+      200,
+      "Config fetched",
+      configs.map((config) => ({
+        ...config,
+        subAccountPassword: config.subAccountPassword ? "[encrypted]" : null,
+      })),
+    );
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error");
-  }
-};
-
-export const deleteMyPlusLeadsConfig = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = (req as any).user.id;
-    await prisma.myPlusLeadsConfig.delete({
-      where: { userId }
-    });
-    successResponse(res, 200, "Integration disconnected");
-  } catch (error: any) {
-    errorResponse(res, error.message || "Internal server error");
-  }
-};
-
-/**
- * POST /integrations/myplusleads/repair
- * Re-provisions broken MyPlusLeads credentials then runs an immediate sync.
- * Use when the sub-account auth fails (401) or when status=FAILED.
- */
-export const repairMyPlusLeads = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = (req as any).user.id;
-    const result = await repairAndSyncUser(userId);
-    const config = await prisma.myPlusLeadsConfig.findUnique({
-      where: { userId },
-      select: { lastSyncAt: true, subAccountId: true },
-    });
-    successResponse(res, 200, "MyPlusLeads account repaired and synced", {
-      ...result,
-      lastSyncAt: config?.lastSyncAt ?? null,
-      subAccountId: config?.subAccountId ?? null,
-    });
-  } catch (error: any) {
-    const message = error.message || "MyPlusLeads repair failed";
-    console.error("[MyPlusLeads] Repair failed:", message);
-    const userId = (req as any).user?.id;
-    if (userId) {
-      await prisma.myPlusLeadsConfig.update({
-        where: { userId },
-        data: { errorMessage: message },
-      }).catch(() => undefined);
-    }
-    errorResponse(res, message, error.statusCode || 500);
   }
 };
 
@@ -97,28 +36,21 @@ export const syncMyPlusLeads = async (req: Request, res: Response): Promise<void
 
     const result = await syncLeadsForUser(userId);
 
-    const config = await prisma.myPlusLeadsConfig.findUnique({
+    const configs = await prisma.myPlusLeadsConfig.findMany({
       where: { userId },
       select: { lastSyncAt: true, errorMessage: true },
+      orderBy: { lastSyncAt: "desc" },
+      take: 1,
     });
 
     successResponse(res, 200, "MyPlusLeads sync complete", {
       ...result,
-      lastSyncAt: config?.lastSyncAt ?? null,
-      errorMessage: config?.errorMessage ?? null,
+      lastSyncAt: configs[0]?.lastSyncAt ?? null,
+      errorMessage: configs[0]?.errorMessage ?? null,
     });
   } catch (error: any) {
     const message = error.message || "MyPlusLeads sync failed";
     console.error("[MyPlusLeads] Manual sync failed:", message);
-
-    const userId = (req as any).user?.id;
-    if (userId) {
-      await prisma.myPlusLeadsConfig.update({
-        where: { userId },
-        data: { errorMessage: message },
-      }).catch(() => undefined);
-    }
-
     errorResponse(res, message, error.statusCode || 500);
   }
 };

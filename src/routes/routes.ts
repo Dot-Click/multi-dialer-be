@@ -38,11 +38,13 @@ import notificationRoutes from "./notification"
 import emailHistoryRoutes from "./email-history"
 import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
 import a2pRoutes from "./a2p";
-import { getMyPlusLeadsConfig, updateMyPlusLeadsConfig, deleteMyPlusLeadsConfig, syncMyPlusLeads, repairMyPlusLeads } from "./integrations/myplusleads.controller";
+import { getMyPlusLeadsConfig, syncMyPlusLeads } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import superAdminCallerIdRoutes from "./super-admin/caller-ids"
 import { checkFeatureLocked } from "../middlewares/featureLock.middleware";
 import { envConfig } from "@/lib/config";
+import leadStoreRoutes from "./leadStore";
+import superAdminLeadStoreRoutes from "./super-admin/leadStore";
 import paymentRoutes from "./payment";
 import calendarSyncRoutes from "./calendarSync";
 import agentSeatsRoutes from "./agentSeats";
@@ -108,9 +110,12 @@ router.use("/a2p", a2pRoutes)
 router.post("/webhooks/myplusleads/:userId", handleMyPlusLeadsWebhook);
 router.get("/integrations/myplusleads", protectRoute, getMyPlusLeadsConfig);
 router.post("/integrations/myplusleads/sync", protectRoute, syncMyPlusLeads);
-router.post("/integrations/myplusleads/repair", protectRoute, repairMyPlusLeads);
-router.post("/integrations/myplusleads", protectRoute, updateMyPlusLeadsConfig);
-router.delete("/integrations/myplusleads", protectRoute, deleteMyPlusLeadsConfig);
+
+// Lead Store (customer-facing billing)
+router.use("/lead-store", leadStoreRoutes);
+
+// Lead Store account linking (Super Admin only)
+router.use("/super-admin/lead-store", protectRoute, checkRole(["OWNER", "SUPER_ADMIN"]), superAdminLeadStoreRoutes);
 
 router.get("/verified", (req, res) => {
   res.send(`<h1 style="text-align: center; flex: 1; justify-content: center; align-items: center; height: 100vh;">Email verified successfully <a href="${envConfig.FRONTEND_URL}/admin/login">Go to app</a></h1>`)

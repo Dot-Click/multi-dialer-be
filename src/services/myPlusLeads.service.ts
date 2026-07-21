@@ -1,5 +1,4 @@
-import crypto from "crypto";
-import { envConfig } from "../lib/config";
+import { getStripeClient } from "../lib/stripe";
 import prisma from "../lib/prisma";
 import { decryptEIN as decrypt, encryptEIN as encrypt } from "../utils/encryption";
 import { chunkArray } from "@/utils/helpers";
@@ -171,43 +170,6 @@ async function parseAuthResponse(res: Response, label: string): Promise<string |
   return null;
 }
 
-function requireConfig(value: string | undefined, name: string): string {
-  if (!value) {
-    throw new Error(`${name} is not configured`);
-  }
-
-  return value;
-}
-
-export async function authenticateEnterprise(): Promise<string> {
-  const url = `${BASE_URL}/authenticate`;
-  const method = "POST";
-  const headers = { "Content-Type": "application/json" };
-  const body = JSON.stringify({
-    email: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_EMAIL, "MYPLUSLEADS_ENTERPRISE_EMAIL"),
-    password: requireConfig(envConfig.MYPLUSLEADS_ENTERPRISE_PASSWORD, "MYPLUSLEADS_ENTERPRISE_PASSWORD"),
-  });
-
-  console.log("[MyPlusLeads] authenticateEnterprise request:");
-  console.log("  URL:", url);
-  console.log("  Method:", method);
-  console.log("  Headers:", headers);
-  console.log("  Body:", body);
-
-  const res = await fetch(url, {
-    method,
-    headers,
-    body,
-  });
-
-  const authToken = await parseAuthResponse(res, "MyPlusLeads auth");
-  if (!authToken) {
-    throw new MyPlusLeadsError("MyPlusLeads auth response did not include an auth token.", 502);
-  }
-
-  return authToken;
-}
-
 export async function authenticateSubAccount(email: string, password: string): Promise<string> {
   const res = await fetch(`${BASE_URL}/authenticate`, {
     method: "POST",
@@ -237,34 +199,21 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
   return data.listings ?? [];
 }
 
-export async function fetchListingsForAccount(subAccountId: string): Promise<MyPlusLead[]> {
-  const authToken = await authenticateEnterprise();
-
-  // MPL requires the token as a query param. Enterprise token returns all listings;
-  // used only as a fallback when sub-account credentials are unavailable.
-  const res = await fetch(`${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}`);
-
-  if (!res.ok) {
-    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
-  }
-
-  const data = await res.json();
-  return data.listings ?? [];
-}
-
-export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncResult> {
-  const config = await prisma.myPlusLeadsConfig.findUnique({ where: { userId } });
+export async function syncLeadsForConfig(configId: string): Promise<MyPlusLeadsSyncResult> {
+  const config = await prisma.myPlusLeadsConfig.findUnique({ where: { id: configId } });
 
   if (!config) {
-    throw new MyPlusLeadsError("MyPlusLeads integration is not configured for this user.", 400);
+    throw new MyPlusLeadsError("MyPlusLeads account not found.", 404);
   }
 
+  const { userId } = config;
+
   if (config.status !== "CONNECTED") {
-    throw new MyPlusLeadsError(`MyPlusLeads integration is not connected. Current status: ${config.status}.`, 400);
+    throw new MyPlusLeadsError(`MyPlusLeads account is not connected. Current status: ${config.status}.`, 400);
   }
 
   if (!config.subAccountEmail || !config.subAccountPassword) {
-    throw new MyPlusLeadsError("MyPlusLeads sub-account credentials are missing for this user.", 400);
+    throw new MyPlusLeadsError("MyPlusLeads sub-account credentials are missing for this account.", 400);
   }
 
   const password = decrypt(config.subAccountPassword);
@@ -397,7 +346,7 @@ export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncR
   }
 
   await prisma.myPlusLeadsConfig.update({
-    where: { userId },
+    where: { id: configId },
     data: { lastSyncAt: new Date(), errorMessage: null },
   });
 
@@ -408,174 +357,93 @@ export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncR
   };
 }
 
-export async function createMyPlusLeadsAccount(params: {
-  email: string;
-  password: string;
-  firstName: string;
-  lastName: string;
-  phone: string;
-  address: string;
-  city: string;
-  state: string;
-  zip: string;
-  baseZip: string;
-}): Promise<{ accountId: string }> {
-  const authToken = await authenticateEnterprise();
-
-  const res = await fetch(`${BASE_URL}/enterprise/account`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      authToken,
-      email: params.email,
-      password: params.password,
-      firstName: params.firstName,
-      lastName: params.lastName,
-      phone: params.phone,
-      address: params.address,
-      city: params.city,
-      state: params.state,
-      zip: params.zip,
-      baseZip: params.baseZip,
-      bundle: requireConfig(envConfig.MYPLUSLEADS_BUNDLE_NAME, "MYPLUSLEADS_BUNDLE_NAME"),
-      subscriptionType: "MONTHLY",
-    }),
+/**
+ * Syncs every CONNECTED MyPlusLeads account linked to this user (there can be
+ * more than one, e.g. a different account per purchased list type).
+ */
+export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncResult> {
+  const configs = await prisma.myPlusLeadsConfig.findMany({
+    where: { userId, status: "CONNECTED" },
   });
 
-  if (!res.ok) {
-    throw new MyPlusLeadsError(`MyPlusLeads account creation failed: ${await responseErrorMessage(res)}`, 502);
+  if (configs.length === 0) {
+    throw new MyPlusLeadsError("No connected MyPlusLeads account is linked for this user.", 400);
   }
 
-  const data = await res.json();
-  console.log('[MyPlusLeads] Create account response status:', res.status);
-  console.log('[MyPlusLeads] Create account response body:', JSON.stringify(data));
-
-  // MPL returns HTTP 200 even when creation fails — check the payload.
-  if (data.created === false) {
-    throw new MyPlusLeadsError(
-      `MyPlusLeads account already exists or creation rejected: ${data.error ?? "unknown"}`,
-      409,
-    );
+  const totals: MyPlusLeadsSyncResult = { fetched: 0, imported: 0, skipped: 0 };
+  for (const config of configs) {
+    const result = await syncLeadsForConfig(config.id);
+    totals.fetched += result.fetched;
+    totals.imported += result.imported;
+    totals.skipped += result.skipped;
   }
-
-  return { accountId: data.accountId };
+  return totals;
 }
 
 /**
- * Repair a broken MyPlusLeads integration for a user.
- *
- * Handles two cases:
- *  1. status=FAILED / missing credentials — account may exist in MPL but
- *     credentials were never saved (e.g. due to the Int→String Prisma bug).
- *  2. status=CONNECTED but auth fails — stored password doesn't match MPL.
- *
- * Strategy: re-create the sub-account using the enterprise API with a fresh
- * password. MPL uses the email as the unique key, so if the account already
- * exists it may return an error — in that case we try updating the password
- * via the enterprise update endpoint. After credentials are saved we run an
- * immediate sync.
+ * Manually links a MyPlusLeads account (created by Client directly on MyPlusLeads'
+ * platform) to a customer's Lead Store purchase. Never calls MyPlusLeads' account
+ * creation API — either reuses an existing MyPlusLeadsConfig or creates one from
+ * client-supplied credentials, validating them against MyPlusLeads first.
  */
-export async function repairAndSyncUser(userId: string): Promise<MyPlusLeadsSyncResult> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, fullName: true },
-  });
-  if (!user) throw new MyPlusLeadsError("User not found.", 404);
-
-  const subEmail = `slingvo.${userId.replace(/-/g, "")}@slingvo.com`;
-  const newPassword = crypto.randomBytes(12).toString("hex");
-  const nameParts = (user.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
-  const firstName = nameParts[0] || "User";
-  const lastName = nameParts.slice(1).join(" ") || "User";
-  const defaultBaseZip = envConfig.MYPLUSLEADS_DEFAULT_BASE_ZIP || "78701";
-
-  let accountId: string;
-  let passwordToSave = newPassword;
-  let passwordChanged = true;
-
-  try {
-    const result = await createMyPlusLeadsAccount({
-      email: subEmail,
-      password: newPassword,
-      firstName,
-      lastName,
-      phone: "0000000000",
-      address: "123 Main St",
-      city: "Austin",
-      state: "TX",
-      zip: defaultBaseZip,
-      baseZip: defaultBaseZip,
-    });
-    accountId = String(result.accountId);
-    console.log(`[MyPlusLeads Repair] Created new sub-account for userId=${userId}, accountId=${accountId}`);
-  } catch (createErr: any) {
-    // Account already exists — retrieve the existing accountId from DB.
-    console.warn(`[MyPlusLeads Repair] Create failed (${createErr.message}), account exists. Attempting password update...`);
-    const existing = await prisma.myPlusLeadsConfig.findUnique({
-      where: { userId },
-      select: { subAccountId: true, subAccountPassword: true },
-    });
-    if (!existing?.subAccountId || existing.subAccountId === "null") {
-      throw new MyPlusLeadsError("Cannot repair: no valid subAccountId on record.", 400);
-    }
-    accountId = existing.subAccountId;
-
-    // Try to update the password on MyPlus.
-    const authToken = await authenticateEnterprise();
-    const updateRes = await fetch(`${BASE_URL}/enterprise/account`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ authToken, accountId, password: newPassword }),
-    });
-
-    if (!updateRes.ok) {
-      // Password update not supported — keep using the existing stored password
-      // so we don't drift the DB out of sync with MyPlus.
-      console.warn(`[MyPlusLeads Repair] Password update failed (${await responseErrorMessage(updateRes)}). Keeping existing credentials.`);
-      passwordToSave = existing.subAccountPassword ? decrypt(existing.subAccountPassword) : newPassword;
-      passwordChanged = false;
-    } else {
-      console.log(`[MyPlusLeads Repair] Password updated for accountId=${accountId}`);
-    }
+export async function linkMyPlusLeadsAccount(params: {
+  leadStoreId: string;
+  adminUserId: string;
+  myPlusLeadsConfigId?: string;
+  subAccountEmail?: string;
+  subAccountPassword?: string;
+  subAccountId?: string;
+  label?: string;
+}): Promise<MyPlusLeadsSyncResult> {
+  const leadStore = await prisma.leadStore.findUnique({ where: { id: params.leadStoreId } });
+  if (!leadStore) {
+    throw new MyPlusLeadsError("Lead Store purchase not found.", 404);
   }
 
-  await prisma.myPlusLeadsConfig.upsert({
-    where: { userId },
-    create: {
-      userId,
-      subAccountEmail: subEmail,
-      subAccountPassword: encrypt(passwordToSave),
-      subAccountId: accountId,
-      status: "CONNECTED",
-      errorMessage: null,
-    },
-    update: {
-      subAccountEmail: subEmail,
-      subAccountPassword: encrypt(passwordToSave),
-      subAccountId: accountId,
-      status: "CONNECTED",
-      errorMessage: null,
-    },
-  });
+  let configId = params.myPlusLeadsConfigId;
 
-  console.log(`[MyPlusLeads Repair] Credentials saved for userId=${userId} (passwordChanged=${passwordChanged}). Starting sync...`);
-  return syncLeadsForUser(userId);
-}
+  if (configId) {
+    const existing = await prisma.myPlusLeadsConfig.findUnique({ where: { id: configId } });
+    if (!existing) {
+      throw new MyPlusLeadsError("MyPlusLeads account not found.", 404);
+    }
+    await prisma.myPlusLeadsConfig.update({
+      where: { id: configId },
+      data: { status: "CONNECTED", errorMessage: null, linkedByUserId: params.adminUserId, linkedAt: new Date() },
+    });
+  } else {
+    if (!params.subAccountEmail || !params.subAccountPassword) {
+      throw new MyPlusLeadsError("subAccountEmail and subAccountPassword are required to link a new account.", 400);
+    }
 
-export async function disableMyPlusLeadsAccount(subAccountId: string): Promise<void> {
-  const authToken = await authenticateEnterprise();
+    // Validate the credentials against MyPlusLeads before saving anything.
+    await authenticateSubAccount(params.subAccountEmail, params.subAccountPassword);
 
-  const res = await fetch(`${BASE_URL}/enterprise/account/status`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      authToken,
-      accountId: subAccountId,
-      status: "DISABLED",
-    }),
-  });
-
-  if (!res.ok) {
-    throw new MyPlusLeadsError(`MyPlusLeads disable failed: ${await responseErrorMessage(res)}`, 502);
+    const created = await prisma.myPlusLeadsConfig.create({
+      data: {
+        userId: leadStore.userId,
+        label: params.label ?? null,
+        subAccountEmail: params.subAccountEmail,
+        subAccountPassword: encrypt(params.subAccountPassword),
+        subAccountId: params.subAccountId ?? null,
+        status: "CONNECTED",
+        linkedByUserId: params.adminUserId,
+        linkedAt: new Date(),
+      },
+    });
+    configId = created.id;
   }
+
+  await prisma.leadStore.update({
+    where: { id: params.leadStoreId },
+    data: { myPlusLeadsConfigId: configId, status: "ACTIVE" },
+  });
+
+  if (leadStore.billingPaused && leadStore.stripeSubscriptionId) {
+    await getStripeClient().subscriptions.update(leadStore.stripeSubscriptionId, { pause_collection: null });
+    await prisma.leadStore.update({ where: { id: params.leadStoreId }, data: { billingPaused: false } });
+  }
+
+  return syncLeadsForConfig(configId);
 }
+

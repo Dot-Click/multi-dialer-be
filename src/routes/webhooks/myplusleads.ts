@@ -20,14 +20,13 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
       return;
     }
 
-    const config = await prisma.myPlusLeadsConfig.findUnique({
-      where: { userId },
+    const config = await prisma.myPlusLeadsConfig.findFirst({
+      where: { userId, subAccountId: String(accountId) },
       include: { user: true }
     });
 
     if (
       !config ||
-      config.subAccountId !== String(accountId) ||
       config.status !== "CONNECTED"
     ) {
       errorResponse(res, "Unauthorized: Invalid userId or accountId", 401);
@@ -103,7 +102,7 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
 
     // 6. Update last sync time
     await prisma.myPlusLeadsConfig.update({
-        where: { userId },
+        where: { id: config.id },
         data: { lastSyncAt: new Date(), status: "CONNECTED" }
     });
 

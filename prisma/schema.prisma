@@ -266,7 +266,7 @@ model User {
   notifications           Notification[]
   emailLogs               EmailLog[]
   smsLogs                 SmsLog[]
-  myPlusLeadsConfig       MyPlusLeadsConfig?
+  myPlusLeadsConfigs      MyPlusLeadsConfig[]
   a2pRegistration         A2P_Registration?
   phoneNumberSubscription PhoneNumberSubscription?
   agentSeatSubscription   AgentSeatSubscription?
@@ -972,6 +972,22 @@ model LeadStore {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   billingId   String   @unique
   billing     Billing  @relation(fields: [billingId], references: [id])
+
+  serviceId String
+  service   LeadStoreService @relation(fields: [serviceId], references: [id])
+
+  status LeadStoreStatus @default(PENDING_SETUP)
+
+  myPlusLeadsConfigId String?
+  myPlusLeadsConfig   MyPlusLeadsConfig? @relation(fields: [myPlusLeadsConfigId], references: [id], onDelete: SetNull)
+
+  stripeSubscriptionId     String?
+  stripeSubscriptionItemId String?
+
+  reminderSentAt DateTime?
+  billingPaused  Boolean   @default(false)
+  cancelledAt    DateTime?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -987,7 +1003,15 @@ model LeadStoreService {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  leadStores LeadStore[]
+
   @@map("lead_store_services")
+}
+
+enum LeadStoreStatus {
+  PENDING_SETUP
+  ACTIVE
+  CANCELLED
 }
 
 enum LeadCallStatus {
@@ -1811,19 +1835,28 @@ model SmsLog {
 
 model MyPlusLeadsConfig {
   id     String @id @default(cuid())
-  userId String @unique
+  userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Sub-account credentials (stored encrypted)
+  // Client's own nickname for this account, shown in the linking picker
+  label String?
+
+  // Sub-account credentials (stored encrypted), entered manually by Client
   subAccountEmail    String?
   subAccountPassword String?
   subAccountId       String?
+
+  // Audit: which admin linked this account, and when
+  linkedByUserId String?
+  linkedAt       DateTime?
 
   // Sync tracking
   lastSyncAt   DateTime?
   autoSync     Boolean           @default(true)
   status       IntegrationStatus @default(NEED_SETUP)
   errorMessage String?
+
+  leadStores LeadStore[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

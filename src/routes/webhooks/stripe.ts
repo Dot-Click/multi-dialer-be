@@ -8,8 +8,7 @@ import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling
 import { sendEmail } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
-// import { createMyPlusLeadsAccount, disableMyPlusLeadsAccount, syncLeadsForUser } from "../../services/myPlusLeads.service";
-import { encryptEIN as encrypt } from "../../utils/encryption";
+import { notifyClients } from "../../services/leadStoreNotify.service";
 import { syncBillingFromInvoice } from "../../services/billingLedger.service";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
 import { planKeyFromName } from "../../services/planLimits.service";
@@ -321,6 +320,62 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       return;
     }
 
+    // Lead Store purchase — see subscribeToLeadStoreService in leadStore/controller.ts.
+    // Creates a PENDING_SETUP LeadStore row and notifies Client to manually link
+    // a MyPlusLeads account; never auto-provisions anything with MyPlusLeads.
+    if (metadata?.purpose === "lead_store" && metadata.userId && metadata.leadStoreServiceId) {
+      try {
+        const userId = metadata.userId as string;
+        const serviceId = metadata.leadStoreServiceId as string;
+        const stripeSubscriptionId = session.subscription as string | null;
+
+        const service = await prisma.leadStoreService.findUnique({ where: { id: serviceId } });
+        if (!service) throw new Error(`LeadStoreService ${serviceId} not found`);
+
+        const invoiceNumber = `LS-${session.id}`;
+        const billing = await prisma.billing.create({
+          data: {
+            userId,
+            invoiceNumber,
+            planName: service.name,
+            amount: service.price,
+            currency: "usd",
+            date: new Date(),
+            status: "PENDING",
+            billingCycle: "MONTHLY",
+          },
+        });
+
+        const leadStore = await prisma.leadStore.create({
+          data: {
+            title: service.name,
+            description: service.description || "",
+            price: service.price,
+            userId,
+            billingId: billing.id,
+            serviceId: service.id,
+            status: "PENDING_SETUP",
+            stripeSubscriptionId,
+          },
+        });
+
+        await notifyClients(
+          "New Lead Store subscription needs setup",
+          `A customer just subscribed to "${service.name}" and needs a MyPlusLeads account assigned. Link one in the Super Admin Lead Store panel.`,
+          "lead_store_needs_setup",
+        );
+
+        console.log(`[Stripe Webhook] Lead Store purchase recorded: leadStoreId=${leadStore.id}, userId=${userId}, service=${service.name}`);
+        await persistEvent("PROCESSED");
+      } catch (error: any) {
+        console.error(`[Stripe Webhook] Lead Store purchase handling failed:`, error.message);
+        await persistEvent("FAILED");
+      }
+
+      res.json({ received: true });
+      return;
+    }
+
     if (metadata && metadata.email) {
       const { fullName, hashedPassword, companyName } = metadata;
       // Normalize to match Better Auth's lowercased sign-in lookup.
@@ -513,61 +568,6 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           },
         });
 
-        // const subEmail = `slingvo.${newUser.id.replace(/-/g, "")}@slingvo.com`;
-        // const subPassword = crypto.randomBytes(12).toString("hex");
-        // const nameParts = (newUser.fullName?.trim().split(/\s+/).filter(Boolean)) ?? ["User"];
-        // const firstName = nameParts[0] || "User";
-        // const lastName = nameParts.slice(1).join(" ") || "User";
-
-        // try {
-        //   const defaultBaseZip = envConfig.MYPLUSLEADS_DEFAULT_BASE_ZIP;
-        //   const { accountId } = await createMyPlusLeadsAccount({
-        //     email: subEmail,
-        //     password: subPassword,
-        //     firstName,
-        //     lastName,
-        //     phone: "0000000000",
-        //     address: "123 Main St",
-        //     city: "Austin",
-        //     state: "TX",
-        //     zip: defaultBaseZip || "78701",
-        //     baseZip: defaultBaseZip || "78701",
-        //   });
-
-        //   await prisma.myPlusLeadsConfig.create({
-        //     data: {
-        //       userId: newUser.id,
-        //       subAccountEmail: subEmail,
-        //       subAccountPassword: encrypt(subPassword),
-        //       subAccountId: accountId != null ? String(accountId) : null,
-        //       status: "CONNECTED",
-        //       errorMessage: null,
-        //     },
-        //   });
-
-        //   syncLeadsForUser(newUser.id)
-        //     .then((result) => {
-        //       console.log(`[MyPlusLeads] Initial sync for ${email}: imported ${result.imported}, skipped ${result.skipped}`);
-        //     })
-        //     .catch(async (err) => {
-        //       const message = err?.message ?? String(err);
-        //       console.error(`[MyPlusLeads] Initial sync failed for ${email}:`, message);
-        //       await prisma.myPlusLeadsConfig.update({
-        //         where: { userId: newUser.id },
-        //         data: { errorMessage: message },
-        //       }).catch(() => undefined);
-        //     });
-        // } catch (err) {
-        //   console.error("[Stripe Webhook] MyPlusLeads account creation failed:", err);
-        //   await prisma.myPlusLeadsConfig.create({
-        //     data: {
-        //       userId: newUser.id,
-        //       status: "FAILED",
-        //       errorMessage: err instanceof Error ? err.message : String(err),
-        //     },
-        //   });
-        // }
-
         console.log(`[Stripe Webhook] Full provisioning successful for ${email}`);
 
         // Fire Zapier Webhook
@@ -620,17 +620,30 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     try {
       const subscription = event.data.object as any;
       const stripeCustomerId = subscription.customer;
+      const stripeSubscriptionId = subscription.id as string;
       const status = subscription.status;
       const item = subscription.items.data[0];
       const priceId = item.price.id;
 
       console.log(`[Stripe Webhook] customer.subscription.updated: customer=${stripeCustomerId}, status=${status}, priceId=${priceId}`);
 
-      const subRecord = await prisma.userSubscription.findFirst({
-        where: { stripeCustomerId },
+      // Lead Store add-on subscriptions are separate Stripe Subscription objects
+      // from the main plan (same customer) — this event doesn't apply to the
+      // main plan record if it belongs to one of those instead.
+      const isLeadStoreSubscription = await prisma.leadStore.findFirst({
+        where: { stripeSubscriptionId },
+        select: { id: true },
       });
 
-      if (subRecord) {
+      const subRecord = isLeadStoreSubscription
+        ? null
+        : await prisma.userSubscription.findFirst({
+            where: { stripeCustomerId },
+          });
+
+      if (isLeadStoreSubscription) {
+        console.log(`[Stripe Webhook] customer.subscription.updated is for a Lead Store subscription (leadStoreId=${isLeadStoreSubscription.id}) — no main-plan action taken.`);
+      } else if (subRecord) {
         // Keep money fields in sync on plan/quantity changes.
         const quantity = item?.quantity ?? subRecord.usersCount ?? 1;
         const billingCycle = item?.price?.recurring?.interval === "year" ? "YEARLY" : "MONTHLY";
@@ -680,55 +693,64 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     try {
       const subscription = event.data.object as any;
       const stripeCustomerId = subscription.customer;
+      const stripeSubscriptionId = subscription.id as string;
 
-      console.log(`[Stripe Webhook] customer.subscription.deleted: customer=${stripeCustomerId}`);
+      console.log(`[Stripe Webhook] customer.subscription.deleted: customer=${stripeCustomerId}, subscription=${stripeSubscriptionId}`);
 
-      const subRecord = await prisma.userSubscription.findFirst({
-        where: { stripeCustomerId },
+      // Lead Store add-on subscriptions are separate Stripe Subscription objects
+      // from the main plan (same customer) — check for that first so cancelling
+      // one doesn't get misread as the customer cancelling their whole plan.
+      const leadStore = await prisma.leadStore.findFirst({
+        where: { stripeSubscriptionId },
+        include: { user: { select: { fullName: true, email: true } }, service: { select: { name: true } } },
       });
 
-      if (subRecord) {
-        await prisma.userSubscription.update({
-          where: { id: subRecord.id },
-          data: { status: "CANCELLED" },
+      if (leadStore) {
+        await prisma.leadStore.update({
+          where: { id: leadStore.id },
+          data: { status: "CANCELLED", cancelledAt: new Date() },
         });
 
-        await prisma.user.update({
-          where: { id: subRecord.userId },
-          data: {
-            isSubscribed: false,
-            trialStatus: "EXPIRED" as any,
-          },
+        await notifyClients(
+          "Lead Store subscription cancelled",
+          `"${leadStore.service.name}" for ${leadStore.user.fullName || leadStore.user.email} was cancelled. Disable it on your MyPlusLeads account when convenient.`,
+          "lead_store_cancelled",
+        ).catch((err) => console.error("[Stripe Webhook] Lead Store cancel notify failed:", err));
+
+        console.log(`[Stripe Webhook] Lead Store subscription cancelled: leadStoreId=${leadStore.id}`);
+        await persistEvent("PROCESSED");
+      } else {
+        const subRecord = await prisma.userSubscription.findFirst({
+          where: { stripeCustomerId },
         });
 
-        // const config = await prisma.myPlusLeadsConfig.findUnique({
-        //   where: { userId: subRecord.userId },
-        // });
+        if (subRecord) {
+          await prisma.userSubscription.update({
+            where: { id: subRecord.id },
+            data: { status: "CANCELLED" },
+          });
 
-        // if (config?.subAccountId && config.status === "CONNECTED") {
-        //   try {
-        //     await disableMyPlusLeadsAccount(config.subAccountId);
-        //     await prisma.myPlusLeadsConfig.update({
-        //       where: { userId: subRecord.userId },
-        //       data: { status: "NEED_SETUP", errorMessage: null },
-        //     });
-        //   } catch (err) {
-        //     console.error("[Stripe Webhook] MyPlusLeads disable failed:", err);
-        //   }
-        // }
+          await prisma.user.update({
+            where: { id: subRecord.userId },
+            data: {
+              isSubscribed: false,
+              trialStatus: "EXPIRED" as any,
+            },
+          });
 
-        try {
-          await releaseAllNumbersForUser(subRecord.userId);
-        } catch (err: any) {
-          console.error(`[Stripe Webhook] Failed to release numbers for canceled user ${subRecord.userId}:`, err.message);
+          try {
+            await releaseAllNumbersForUser(subRecord.userId);
+          } catch (err: any) {
+            console.error(`[Stripe Webhook] Failed to release numbers for canceled user ${subRecord.userId}:`, err.message);
+          }
+
+          console.log(`[Stripe Webhook] customer.subscription.deleted processed successfully.`);
+        } else {
+          console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
         }
 
-        console.log(`[Stripe Webhook] customer.subscription.deleted processed successfully.`);
-      } else {
-        console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
+        await persistEvent("PROCESSED");
       }
-
-      await persistEvent("PROCESSED");
     } catch (error: any) {
       console.error(`[Stripe Webhook] customer.subscription.deleted error:`, error.message);
       await persistEvent("FAILED");

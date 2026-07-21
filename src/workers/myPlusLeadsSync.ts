@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import prisma from "../lib/prisma";
-import { syncLeadsForUser } from "../services/myPlusLeads.service";
+import { syncLeadsForConfig } from "../services/myPlusLeads.service";
 
 export function startMyPlusLeadsSyncWorker() {
   cron.schedule("0 6 * * *", async () => {
@@ -12,12 +12,12 @@ export function startMyPlusLeadsSyncWorker() {
 
     for (const config of configs) {
       try {
-        await syncLeadsForUser(config.userId);
-        console.log(`[MyPlusLeads] Synced leads for user ${config.userId}`);
+        await syncLeadsForConfig(config.id);
+        console.log(`[MyPlusLeads] Synced leads for user ${config.userId} (config ${config.id})`);
       } catch (err) {
-        console.error(`[MyPlusLeads] Sync failed for user ${config.userId}:`, err);
+        console.error(`[MyPlusLeads] Sync failed for user ${config.userId} (config ${config.id}):`, err);
         await prisma.myPlusLeadsConfig.update({
-          where: { userId: config.userId },
+          where: { id: config.id },
           data: { errorMessage: String(err) },
         });
       }
