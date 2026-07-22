@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   listLeadStoreRequests,
   listMyPlusLeadsAccounts,
+  registerAccount,
   linkLeadStoreAccount,
   unlinkLeadStoreAccount,
 } from "./controller";
@@ -10,6 +11,7 @@ const router = Router();
 
 router.get("/requests", listLeadStoreRequests);
 router.get("/accounts", listMyPlusLeadsAccounts);
+router.post("/accounts", registerAccount);
 router.post("/:leadStoreId/link", linkLeadStoreAccount);
 router.post("/:leadStoreId/unlink", unlinkLeadStoreAccount);
 

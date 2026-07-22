@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
-import { linkMyPlusLeadsAccount } from "../../../services/myPlusLeads.service";
+import { linkMyPlusLeadsAccount, registerMyPlusLeadsAccount } from "../../../services/myPlusLeads.service";
 
 /**
  * All Lead Store purchases, newest first, joined with the customer and
@@ -55,24 +55,51 @@ export const listMyPlusLeadsAccounts = async (req: Request, res: Response): Prom
 };
 
 /**
- * Links a MyPlusLeads account (existing or newly entered) to a customer's
- * Lead Store purchase, flips it to ACTIVE, and triggers an immediate sync.
+ * Registers a MyPlusLeads account Client already created on MyPlusLeads' own
+ * platform for a given customer. Standalone from any purchase — appears in
+ * the Accounts tab afterward, ready to be linked to one or more purchases.
  */
-export const linkLeadStoreAccount = async (req: Request, res: Response): Promise<void> => {
+export const registerAccount = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { leadStoreId } = req.params;
-    const { myPlusLeadsConfigId, subAccountEmail, subAccountPassword, subAccountId, label } = req.body;
+    const { userId, subAccountEmail, subAccountPassword, subAccountId, label } = req.body;
     const adminUserId = (req as any).user.id;
 
-    const result = await linkMyPlusLeadsAccount({
-      leadStoreId,
+    if (!userId || !subAccountEmail || !subAccountPassword) {
+      errorResponse(res, "userId, subAccountEmail, and subAccountPassword are required", 400);
+      return;
+    }
+
+    const account = await registerMyPlusLeadsAccount({
+      userId,
       adminUserId,
-      myPlusLeadsConfigId,
       subAccountEmail,
       subAccountPassword,
       subAccountId,
       label,
     });
+
+    successResponse(res, 200, "MyPlusLeads account registered", { ...account, subAccountPassword: "[encrypted]" });
+  } catch (error: any) {
+    errorResponse(res, error.message || "Failed to register MyPlusLeads account", error.statusCode || 500);
+  }
+};
+
+/**
+ * Links an already-registered MyPlusLeads account to a customer's Lead Store
+ * purchase, flips it to ACTIVE, and triggers an immediate sync.
+ */
+export const linkLeadStoreAccount = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { leadStoreId } = req.params;
+    const { myPlusLeadsConfigId } = req.body;
+    const adminUserId = (req as any).user.id;
+
+    if (!myPlusLeadsConfigId) {
+      errorResponse(res, "myPlusLeadsConfigId is required", 400);
+      return;
+    }
+
+    const result = await linkMyPlusLeadsAccount({ leadStoreId, adminUserId, myPlusLeadsConfigId });
 
     successResponse(res, 200, "MyPlusLeads account linked and synced", result);
   } catch (error: any) {

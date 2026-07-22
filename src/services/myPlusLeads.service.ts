@@ -381,62 +381,63 @@ export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncR
 }
 
 /**
- * Manually links a MyPlusLeads account (created by Client directly on MyPlusLeads'
- * platform) to a customer's Lead Store purchase. Never calls MyPlusLeads' account
- * creation API — either reuses an existing MyPlusLeadsConfig or creates one from
- * client-supplied credentials, validating them against MyPlusLeads first.
+ * Registers a MyPlusLeads account Client already created directly on MyPlusLeads'
+ * platform — validates the credentials against MyPlusLeads, then stores them.
+ * This never calls MyPlusLeads' account-creation API; it only records an account
+ * that already exists there. Not tied to any purchase yet — link it to one
+ * afterward via linkMyPlusLeadsAccount.
+ */
+export async function registerMyPlusLeadsAccount(params: {
+  userId: string;
+  adminUserId: string;
+  subAccountEmail: string;
+  subAccountPassword: string;
+  subAccountId?: string;
+  label?: string;
+}) {
+  await authenticateSubAccount(params.subAccountEmail, params.subAccountPassword);
+
+  return prisma.myPlusLeadsConfig.create({
+    data: {
+      userId: params.userId,
+      label: params.label ?? null,
+      subAccountEmail: params.subAccountEmail,
+      subAccountPassword: encrypt(params.subAccountPassword),
+      subAccountId: params.subAccountId ?? null,
+      status: "CONNECTED",
+      linkedByUserId: params.adminUserId,
+      linkedAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Links an already-registered MyPlusLeads account to a customer's Lead Store
+ * purchase, flips it to ACTIVE, un-pauses billing if needed, and syncs.
  */
 export async function linkMyPlusLeadsAccount(params: {
   leadStoreId: string;
   adminUserId: string;
-  myPlusLeadsConfigId?: string;
-  subAccountEmail?: string;
-  subAccountPassword?: string;
-  subAccountId?: string;
-  label?: string;
+  myPlusLeadsConfigId: string;
 }): Promise<MyPlusLeadsSyncResult> {
   const leadStore = await prisma.leadStore.findUnique({ where: { id: params.leadStoreId } });
   if (!leadStore) {
     throw new MyPlusLeadsError("Lead Store purchase not found.", 404);
   }
 
-  let configId = params.myPlusLeadsConfigId;
-
-  if (configId) {
-    const existing = await prisma.myPlusLeadsConfig.findUnique({ where: { id: configId } });
-    if (!existing) {
-      throw new MyPlusLeadsError("MyPlusLeads account not found.", 404);
-    }
-    await prisma.myPlusLeadsConfig.update({
-      where: { id: configId },
-      data: { status: "CONNECTED", errorMessage: null, linkedByUserId: params.adminUserId, linkedAt: new Date() },
-    });
-  } else {
-    if (!params.subAccountEmail || !params.subAccountPassword) {
-      throw new MyPlusLeadsError("subAccountEmail and subAccountPassword are required to link a new account.", 400);
-    }
-
-    // Validate the credentials against MyPlusLeads before saving anything.
-    await authenticateSubAccount(params.subAccountEmail, params.subAccountPassword);
-
-    const created = await prisma.myPlusLeadsConfig.create({
-      data: {
-        userId: leadStore.userId,
-        label: params.label ?? null,
-        subAccountEmail: params.subAccountEmail,
-        subAccountPassword: encrypt(params.subAccountPassword),
-        subAccountId: params.subAccountId ?? null,
-        status: "CONNECTED",
-        linkedByUserId: params.adminUserId,
-        linkedAt: new Date(),
-      },
-    });
-    configId = created.id;
+  const existing = await prisma.myPlusLeadsConfig.findUnique({ where: { id: params.myPlusLeadsConfigId } });
+  if (!existing) {
+    throw new MyPlusLeadsError("MyPlusLeads account not found.", 404);
   }
+
+  await prisma.myPlusLeadsConfig.update({
+    where: { id: params.myPlusLeadsConfigId },
+    data: { status: "CONNECTED", errorMessage: null, linkedByUserId: params.adminUserId, linkedAt: new Date() },
+  });
 
   await prisma.leadStore.update({
     where: { id: params.leadStoreId },
-    data: { myPlusLeadsConfigId: configId, status: "ACTIVE" },
+    data: { myPlusLeadsConfigId: params.myPlusLeadsConfigId, status: "ACTIVE" },
   });
 
   if (leadStore.billingPaused && leadStore.stripeSubscriptionId) {
@@ -444,6 +445,6 @@ export async function linkMyPlusLeadsAccount(params: {
     await prisma.leadStore.update({ where: { id: params.leadStoreId }, data: { billingPaused: false } });
   }
 
-  return syncLeadsForConfig(configId);
+  return syncLeadsForConfig(params.myPlusLeadsConfigId);
 }
 
