@@ -1,4 +1,5 @@
 import { envConfig } from "../lib/config";
+import { fetchWithTimeout } from "../utils/fetchWithTimeout";
 
 const PORTAL_BASE_URL = "https://portal.myplusleads.com";
 
@@ -60,7 +61,7 @@ async function loginToPortal(): Promise<string> {
 
   const body = new URLSearchParams({ email, password, rememberMe: "on" });
 
-  const res = await fetch(`${PORTAL_BASE_URL}/log-in`, {
+  const res = await fetchWithTimeout(`${PORTAL_BASE_URL}/log-in`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -87,7 +88,7 @@ async function getSession(): Promise<string> {
 }
 
 async function fetchAccountList(cookieHeader: string): Promise<any> {
-  const res = await fetch(`${PORTAL_BASE_URL}/api/referral-admin/common/get-account-list`, {
+  const res = await fetchWithTimeout(`${PORTAL_BASE_URL}/api/referral-admin/common/get-account-list`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

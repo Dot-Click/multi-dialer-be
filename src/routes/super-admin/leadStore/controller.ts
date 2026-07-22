@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
-import { linkMyPlusLeadsAccount, registerMyPlusLeadsAccount, discoverAccountPackages } from "../../../services/myPlusLeads.service";
+import { linkMyPlusLeadsAccount, registerMyPlusLeadsAccount, updateMyPlusLeadsAccount, discoverAccountPackages } from "../../../services/myPlusLeads.service";
 import { listPortalAccounts } from "../../../services/myPlusLeadsPortal.service";
 
 /**
@@ -97,6 +97,23 @@ export const registerAccount = async (req: Request, res: Response): Promise<void
     successResponse(res, 200, "MyPlusLeads account registered", { ...account, subAccountPassword: "[encrypted]" });
   } catch (error: any) {
     errorResponse(res, error.message || "Failed to register MyPlusLeads account", error.statusCode || 500);
+  }
+};
+
+/**
+ * Fixes a mis-entered credential on an already-registered account (e.g. the
+ * wrong password was typed in). Re-validates against MyPlusLeads first.
+ */
+export const updateAccount = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { configId } = req.params;
+    const { subAccountEmail, subAccountPassword, subAccountId, label } = req.body;
+
+    const account = await updateMyPlusLeadsAccount(configId, { subAccountEmail, subAccountPassword, subAccountId, label });
+
+    successResponse(res, 200, "MyPlusLeads account updated", { ...account, subAccountPassword: "[encrypted]" });
+  } catch (error: any) {
+    errorResponse(res, error.message || "Failed to update MyPlusLeads account", error.statusCode || 500);
   }
 };
 

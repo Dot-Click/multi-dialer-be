@@ -2,6 +2,7 @@ import { getStripeClient } from "../lib/stripe";
 import prisma from "../lib/prisma";
 import { decryptEIN as decrypt, encryptEIN as encrypt } from "../utils/encryption";
 import { chunkArray } from "@/utils/helpers";
+import { fetchWithTimeout } from "../utils/fetchWithTimeout";
 import { PhoneType } from "@prisma/client";
 
 const BASE_URL = "https://api.myplusleads.com";
@@ -171,7 +172,7 @@ async function parseAuthResponse(res: Response, label: string): Promise<string |
 }
 
 export async function authenticateSubAccount(email: string, password: string): Promise<string> {
-  const res = await fetch(`${BASE_URL}/authenticate`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/authenticate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -189,7 +190,7 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
   const authToken = await authenticateSubAccount(subEmail, subPassword);
 
   // MPL requires the token as a query param — Authorization header returns 401.
-  const res = await fetch(`${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}`);
+  const res = await fetchWithTimeout(`${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}`);
 
   if (!res.ok) {
     throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
@@ -459,6 +460,43 @@ export async function registerMyPlusLeadsAccount(params: {
       status: "CONNECTED",
       linkedByUserId: params.adminUserId,
       linkedAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Fixes a mis-entered credential on an already-registered MyPlusLeads
+ * account (e.g. the wrong password was typed in). Re-validates against
+ * MyPlusLeads before saving whichever fields are provided.
+ */
+export async function updateMyPlusLeadsAccount(
+  configId: string,
+  params: { subAccountEmail?: string; subAccountPassword?: string; subAccountId?: string; label?: string },
+) {
+  const existing = await prisma.myPlusLeadsConfig.findUnique({ where: { id: configId } });
+  if (!existing) {
+    throw new MyPlusLeadsError("MyPlusLeads account not found.", 404);
+  }
+
+  const email = params.subAccountEmail ?? existing.subAccountEmail;
+  const password = params.subAccountPassword ?? (existing.subAccountPassword ? decrypt(existing.subAccountPassword) : undefined);
+
+  if (params.subAccountEmail || params.subAccountPassword) {
+    if (!email || !password) {
+      throw new MyPlusLeadsError("Both email and password are required to update credentials.", 400);
+    }
+    await authenticateSubAccount(email, password);
+  }
+
+  return prisma.myPlusLeadsConfig.update({
+    where: { id: configId },
+    data: {
+      ...(params.subAccountEmail ? { subAccountEmail: params.subAccountEmail } : {}),
+      ...(params.subAccountPassword ? { subAccountPassword: encrypt(params.subAccountPassword) } : {}),
+      ...(params.subAccountId !== undefined ? { subAccountId: params.subAccountId || null } : {}),
+      ...(params.label !== undefined ? { label: params.label || null } : {}),
+      status: "CONNECTED",
+      errorMessage: null,
     },
   });
 }
