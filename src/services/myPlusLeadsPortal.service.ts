@@ -52,10 +52,10 @@ function buildCookieHeader(setCookies: string[]): string {
 }
 
 async function loginToPortal(): Promise<string> {
-  const email = envConfig.MYPLUSLEADS_PORTAL_EMAIL;
-  const password = envConfig.MYPLUSLEADS_PORTAL_PASSWORD;
+  const email = envConfig.MYPLUSLEADS_ENTERPRISE_EMAIL;
+  const password = envConfig.MYPLUSLEADS_ENTERPRISE_PASSWORD;
   if (!email || !password) {
-    throw new MyPlusLeadsPortalError("MYPLUSLEADS_PORTAL_EMAIL/PASSWORD are not configured.", 500);
+    throw new MyPlusLeadsPortalError("MYPLUSLEADS_ENTERPRISE_EMAIL/PASSWORD are not configured.", 500);
   }
 
   const body = new URLSearchParams({ email, password, rememberMe: "on" });
