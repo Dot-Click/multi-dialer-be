@@ -199,14 +199,58 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
   return data.listings ?? [];
 }
 
-export async function syncLeadsForConfig(configId: string): Promise<MyPlusLeadsSyncResult> {
+/**
+ * Groups a MyPlusLeads account's current listings by data package (e.g.
+ * "Expired", "FSBO", "FRBO") so Client can see and assign exactly the package
+ * a customer purchased, since one account can carry several. Fetched live —
+ * not a separate MyPlusLeads endpoint, just grouping the listings response.
+ */
+export async function discoverAccountPackages(configId: string): Promise<{ package: string; count: number }[]> {
   const config = await prisma.myPlusLeadsConfig.findUnique({ where: { id: configId } });
+  if (!config) {
+    throw new MyPlusLeadsError("MyPlusLeads account not found.", 404);
+  }
+  if (!config.subAccountEmail || !config.subAccountPassword) {
+    throw new MyPlusLeadsError("MyPlusLeads sub-account credentials are missing for this account.", 400);
+  }
 
+  const password = decrypt(config.subAccountPassword);
+  const listings = await fetchListings(config.subAccountEmail, password);
+
+  const counts = new Map<string, number>();
+  for (const listing of listings) {
+    const pkg = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
+    counts.set(pkg, (counts.get(pkg) ?? 0) + 1);
+  }
+
+  return Array.from(counts.entries()).map(([pkg, count]) => ({ package: pkg, count }));
+}
+
+/**
+ * Syncs a single Lead Store purchase: pulls its linked account's listings but
+ * only imports the ones matching the package assigned to this purchase — an
+ * account with several active packages only ever feeds each customer the one
+ * they're entitled to.
+ */
+export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlusLeadsSyncResult> {
+  const leadStore = await prisma.leadStore.findUnique({ where: { id: leadStoreId } });
+  if (!leadStore) {
+    throw new MyPlusLeadsError("Lead Store purchase not found.", 404);
+  }
+  if (!leadStore.myPlusLeadsConfigId) {
+    throw new MyPlusLeadsError("No MyPlusLeads account is linked to this purchase.", 400);
+  }
+  if (!leadStore.assignedPackage) {
+    throw new MyPlusLeadsError("No data package has been assigned to this purchase.", 400);
+  }
+
+  const config = await prisma.myPlusLeadsConfig.findUnique({ where: { id: leadStore.myPlusLeadsConfigId } });
   if (!config) {
     throw new MyPlusLeadsError("MyPlusLeads account not found.", 404);
   }
 
-  const { userId } = config;
+  const { userId } = leadStore;
+  const assignedPackage = leadStore.assignedPackage;
 
   if (config.status !== "CONNECTED") {
     throw new MyPlusLeadsError(`MyPlusLeads account is not connected. Current status: ${config.status}.`, 400);
@@ -218,7 +262,10 @@ export async function syncLeadsForConfig(configId: string): Promise<MyPlusLeadsS
 
   const password = decrypt(config.subAccountPassword);
 
-  const listings = await fetchListings(config.subAccountEmail, password);
+  const allListings = await fetchListings(config.subAccountEmail, password);
+  const listings = allListings.filter(
+    (l) => (l.propertyDetails?.normalizedStatus ?? l.propertyDetails?.status ?? "Expired") === assignedPackage,
+  );
   let imported = 0;
   let skipped = 0;
 
@@ -346,8 +393,12 @@ export async function syncLeadsForConfig(configId: string): Promise<MyPlusLeadsS
   }
 
   await prisma.myPlusLeadsConfig.update({
-    where: { id: configId },
+    where: { id: config.id },
     data: { lastSyncAt: new Date(), errorMessage: null },
+  });
+  await prisma.leadStore.update({
+    where: { id: leadStoreId },
+    data: { lastSyncAt: new Date(), syncErrorMessage: null },
   });
 
   return {
@@ -358,21 +409,22 @@ export async function syncLeadsForConfig(configId: string): Promise<MyPlusLeadsS
 }
 
 /**
- * Syncs every CONNECTED MyPlusLeads account linked to this user (there can be
- * more than one, e.g. a different account per purchased list type).
+ * Syncs every ACTIVE, package-assigned Lead Store purchase for this user
+ * (there can be more than one, e.g. a different account/package per
+ * purchased list type).
  */
 export async function syncLeadsForUser(userId: string): Promise<MyPlusLeadsSyncResult> {
-  const configs = await prisma.myPlusLeadsConfig.findMany({
-    where: { userId, status: "CONNECTED" },
+  const leadStores = await prisma.leadStore.findMany({
+    where: { userId, status: "ACTIVE", myPlusLeadsConfigId: { not: null }, assignedPackage: { not: null } },
   });
 
-  if (configs.length === 0) {
-    throw new MyPlusLeadsError("No connected MyPlusLeads account is linked for this user.", 400);
+  if (leadStores.length === 0) {
+    throw new MyPlusLeadsError("No active, package-assigned MyPlusLeads purchase found for this user.", 400);
   }
 
   const totals: MyPlusLeadsSyncResult = { fetched: 0, imported: 0, skipped: 0 };
-  for (const config of configs) {
-    const result = await syncLeadsForConfig(config.id);
+  for (const leadStore of leadStores) {
+    const result = await syncLeadsForLeadStore(leadStore.id);
     totals.fetched += result.fetched;
     totals.imported += result.imported;
     totals.skipped += result.skipped;
@@ -412,13 +464,15 @@ export async function registerMyPlusLeadsAccount(params: {
 }
 
 /**
- * Links an already-registered MyPlusLeads account to a customer's Lead Store
- * purchase, flips it to ACTIVE, un-pauses billing if needed, and syncs.
+ * Links an already-registered MyPlusLeads account — and one specific data
+ * package on it — to a customer's Lead Store purchase, flips it to ACTIVE,
+ * un-pauses billing if needed, and syncs just that package.
  */
 export async function linkMyPlusLeadsAccount(params: {
   leadStoreId: string;
   adminUserId: string;
   myPlusLeadsConfigId: string;
+  assignedPackage: string;
 }): Promise<MyPlusLeadsSyncResult> {
   const leadStore = await prisma.leadStore.findUnique({ where: { id: params.leadStoreId } });
   if (!leadStore) {
@@ -437,7 +491,7 @@ export async function linkMyPlusLeadsAccount(params: {
 
   await prisma.leadStore.update({
     where: { id: params.leadStoreId },
-    data: { myPlusLeadsConfigId: params.myPlusLeadsConfigId, status: "ACTIVE" },
+    data: { myPlusLeadsConfigId: params.myPlusLeadsConfigId, assignedPackage: params.assignedPackage, status: "ACTIVE" },
   });
 
   if (leadStore.billingPaused && leadStore.stripeSubscriptionId) {
@@ -445,6 +499,6 @@ export async function linkMyPlusLeadsAccount(params: {
     await prisma.leadStore.update({ where: { id: params.leadStoreId }, data: { billingPaused: false } });
   }
 
-  return syncLeadsForConfig(params.myPlusLeadsConfigId);
+  return syncLeadsForLeadStore(params.leadStoreId);
 }
 

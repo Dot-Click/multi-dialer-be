@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
-import { linkMyPlusLeadsAccount, registerMyPlusLeadsAccount } from "../../../services/myPlusLeads.service";
+import { linkMyPlusLeadsAccount, registerMyPlusLeadsAccount, discoverAccountPackages } from "../../../services/myPlusLeads.service";
 
 /**
  * All Lead Store purchases, newest first, joined with the customer and
@@ -85,21 +85,35 @@ export const registerAccount = async (req: Request, res: Response): Promise<void
 };
 
 /**
- * Links an already-registered MyPlusLeads account to a customer's Lead Store
- * purchase, flips it to ACTIVE, and triggers an immediate sync.
+ * Live-fetches the data packages (e.g. "Expired", "FSBO") currently on a
+ * MyPlusLeads account, with lead counts, so Client can pick the one to assign.
+ */
+export const getAccountPackages = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { configId } = req.params;
+    const packages = await discoverAccountPackages(configId);
+    successResponse(res, 200, "Packages fetched", packages);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Failed to fetch account packages", error.statusCode || 500);
+  }
+};
+
+/**
+ * Links an already-registered MyPlusLeads account — and one specific data
+ * package on it — to a customer's Lead Store purchase, then syncs it.
  */
 export const linkLeadStoreAccount = async (req: Request, res: Response): Promise<void> => {
   try {
     const { leadStoreId } = req.params;
-    const { myPlusLeadsConfigId } = req.body;
+    const { myPlusLeadsConfigId, assignedPackage } = req.body;
     const adminUserId = (req as any).user.id;
 
-    if (!myPlusLeadsConfigId) {
-      errorResponse(res, "myPlusLeadsConfigId is required", 400);
+    if (!myPlusLeadsConfigId || !assignedPackage) {
+      errorResponse(res, "myPlusLeadsConfigId and assignedPackage are required", 400);
       return;
     }
 
-    const result = await linkMyPlusLeadsAccount({ leadStoreId, adminUserId, myPlusLeadsConfigId });
+    const result = await linkMyPlusLeadsAccount({ leadStoreId, adminUserId, myPlusLeadsConfigId, assignedPackage });
 
     successResponse(res, 200, "MyPlusLeads account linked and synced", result);
   } catch (error: any) {
@@ -116,7 +130,7 @@ export const unlinkLeadStoreAccount = async (req: Request, res: Response): Promi
     const { leadStoreId } = req.params;
     const leadStore = await prisma.leadStore.update({
       where: { id: leadStoreId },
-      data: { myPlusLeadsConfigId: null, status: "PENDING_SETUP" },
+      data: { myPlusLeadsConfigId: null, assignedPackage: null, status: "PENDING_SETUP" },
     });
 
     successResponse(res, 200, "Account unlinked", leadStore);

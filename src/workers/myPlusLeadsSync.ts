@@ -1,24 +1,28 @@
 import cron from "node-cron";
 import prisma from "../lib/prisma";
-import { syncLeadsForConfig } from "../services/myPlusLeads.service";
+import { syncLeadsForLeadStore } from "../services/myPlusLeads.service";
 
 export function startMyPlusLeadsSyncWorker() {
   cron.schedule("0 6 * * *", async () => {
     console.log("[MyPlusLeads] Starting daily lead sync...");
 
-    const configs = await prisma.myPlusLeadsConfig.findMany({
-      where: { status: "CONNECTED", autoSync: true },
+    const leadStores = await prisma.leadStore.findMany({
+      where: {
+        status: "ACTIVE",
+        assignedPackage: { not: null },
+        myPlusLeadsConfig: { status: "CONNECTED", autoSync: true },
+      },
     });
 
-    for (const config of configs) {
+    for (const leadStore of leadStores) {
       try {
-        await syncLeadsForConfig(config.id);
-        console.log(`[MyPlusLeads] Synced leads for user ${config.userId} (config ${config.id})`);
+        await syncLeadsForLeadStore(leadStore.id);
+        console.log(`[MyPlusLeads] Synced leads for user ${leadStore.userId} (leadStore ${leadStore.id})`);
       } catch (err) {
-        console.error(`[MyPlusLeads] Sync failed for user ${config.userId} (config ${config.id}):`, err);
-        await prisma.myPlusLeadsConfig.update({
-          where: { id: config.id },
-          data: { errorMessage: String(err) },
+        console.error(`[MyPlusLeads] Sync failed for user ${leadStore.userId} (leadStore ${leadStore.id}):`, err);
+        await prisma.leadStore.update({
+          where: { id: leadStore.id },
+          data: { syncErrorMessage: String(err) },
         });
       }
     }

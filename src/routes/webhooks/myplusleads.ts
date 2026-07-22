@@ -39,6 +39,20 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
     // 2. Map MyPlusLeads data to our internal format
     // Common fields in MyPlusLeads: FirstName, LastName, Phone1, Email, PropertyAddress, PropertyCity, PropertyState, PropertyZip, LeadType
     const leadType = payload.LeadType || "General";
+
+    // Entitlement gate: this account may carry several data packages, but a
+    // lead only gets imported if some ACTIVE purchase was actually assigned
+    // this exact package by Client — otherwise it's data the customer never
+    // paid for and Client never assigned.
+    const entitlement = await prisma.leadStore.findFirst({
+      where: { myPlusLeadsConfigId: config.id, assignedPackage: leadType, status: "ACTIVE" },
+    });
+    if (!entitlement) {
+      console.log(`[MyPlusLeads Webhook] Skipped: no ACTIVE purchase assigned package "${leadType}" for account ${config.id}.`);
+      successResponse(res, 200, "Lead type not assigned to any active purchase; skipped.", { skipped: true });
+      return;
+    }
+
     const fullName = `${payload.FirstName || ""} ${payload.LastName || ""}`.trim() || "Unknown Lead";
     
     // 3. Ensure Folder exists (e.g., "MyPlusLeads - Expired")
@@ -104,6 +118,10 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
     await prisma.myPlusLeadsConfig.update({
         where: { id: config.id },
         data: { lastSyncAt: new Date(), status: "CONNECTED" }
+    });
+    await prisma.leadStore.update({
+        where: { id: entitlement.id },
+        data: { lastSyncAt: new Date() }
     });
 
     successResponse(res, 200, "Lead processed successfully", { contactId: contact.id });

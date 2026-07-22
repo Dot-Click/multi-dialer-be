@@ -981,6 +981,12 @@ model LeadStore {
   myPlusLeadsConfigId String?
   myPlusLeadsConfig   MyPlusLeadsConfig? @relation(fields: [myPlusLeadsConfigId], references: [id], onDelete: SetNull)
 
+  // Which MyPlusLeads data package (e.g. "Expired", "FSBO") on the linked
+  // account this purchase is entitled to — one account can carry several.
+  assignedPackage   String?
+  lastSyncAt        DateTime?
+  syncErrorMessage  String?
+
   stripeSubscriptionId     String?
   stripeSubscriptionItemId String?
 
