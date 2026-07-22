@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   listLeadStoreRequests,
   listMyPlusLeadsAccounts,
+  getPortalAccounts,
   registerAccount,
   getAccountPackages,
   linkLeadStoreAccount,
@@ -12,6 +13,7 @@ const router = Router();
 
 router.get("/requests", listLeadStoreRequests);
 router.get("/accounts", listMyPlusLeadsAccounts);
+router.get("/portal-accounts", getPortalAccounts);
 router.post("/accounts", registerAccount);
 router.get("/accounts/:configId/packages", getAccountPackages);
 router.post("/:leadStoreId/link", linkLeadStoreAccount);

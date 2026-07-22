@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import prisma from "../../../lib/prisma";
 import { successResponse, errorResponse } from "../../../utils/handler";
 import { linkMyPlusLeadsAccount, registerMyPlusLeadsAccount, discoverAccountPackages } from "../../../services/myPlusLeads.service";
+import { listPortalAccounts } from "../../../services/myPlusLeadsPortal.service";
 
 /**
  * All Lead Store purchases, newest first, joined with the customer and
@@ -51,6 +52,21 @@ export const listMyPlusLeadsAccounts = async (req: Request, res: Response): Prom
     );
   } catch (error: any) {
     errorResponse(res, error.message || "Internal server error");
+  }
+};
+
+/**
+ * Live list of every sub-account on Client's MyPlusLeads enterprise portal —
+ * lets Client pick an account by name/email instead of typing it from memory.
+ * MyPlusLeads never exposes sub-account passwords via any API, so the
+ * password still has to be entered manually when registering.
+ */
+export const getPortalAccounts = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const accounts = await listPortalAccounts();
+    successResponse(res, 200, "Portal accounts fetched", accounts);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Failed to fetch MyPlusLeads portal accounts", error.statusCode || 500);
   }
 };
 
