@@ -13,11 +13,13 @@ export const envConfig = {
   DATABASE_URL: process.env.DATABASE_URL,
   PORT: process.env.PORT,
   NODE_ENV: process.env.NODE_ENV,
-  SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
+  MAILERSEND_API_KEY: process.env.MAILERSEND_API_KEY,
+  MAILERSEND_FROM_EMAIL: process.env.MAILERSEND_FROM_EMAIL,
+  MAILERSEND_FROM_NAME: process.env.MAILERSEND_FROM_NAME,
   GROK_API_KEY: process.env.GROK_API_KEY,
   EMAIL_USER: process.env.EMAIL_USER,
 
-  // AWS SES (email sending)
+  // AWS SES (email sending) — retired in favor of MailerSend, kept for reference.
   AWS_REGION: process.env.AWS_REGION || "us-east-1",
   AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
   AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,

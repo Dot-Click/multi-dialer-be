@@ -1,4 +1,5 @@
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+// import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { MailerSend, EmailParams, Sender, Recipient } from "mailersend";
 import nodemailer from "nodemailer";
 import { envConfig } from "../lib/config";
 import prisma from "../lib/prisma";
@@ -20,11 +21,11 @@ export interface SendEmailOptions {
 
   // When provided, and the company has a verified SmtpConfig, the email is
   // sent through that company's own SMTP connection instead of the shared
-  // SES account.
+  // MailerSend account.
   companyId?: string;
 
   // Explicit Reply-To address (e.g. the individual agent's email). Applied
-  // regardless of which transporter (SMTP or SES) ends up sending the mail.
+  // regardless of which transporter (SMTP or MailerSend) ends up sending the mail.
   // Falls back to `from` if not provided, preserving prior behavior.
   replyToEmail?: string;
 
@@ -35,29 +36,32 @@ export interface SendEmailOptions {
   templateId?: string;
 }
 
-// SES v2 client (singleton). If explicit keys are provided we use them,
+// SES v2 client (singleton) — retired in favor of MailerSend, kept here for
+// reference / easy rollback. If explicit keys are provided we use them,
 // otherwise the SDK falls back to the default credential chain (env / IAM role).
-const ses = new SESv2Client({
-  region: envConfig.AWS_REGION,
-  ...(envConfig.AWS_ACCESS_KEY_ID && envConfig.AWS_SECRET_ACCESS_KEY
-    ? {
-        credentials: {
-          accessKeyId: envConfig.AWS_ACCESS_KEY_ID,
-          secretAccessKey: envConfig.AWS_SECRET_ACCESS_KEY,
-        },
-      }
-    : {}),
-});
+// const ses = new SESv2Client({
+//   region: envConfig.AWS_REGION,
+//   ...(envConfig.AWS_ACCESS_KEY_ID && envConfig.AWS_SECRET_ACCESS_KEY
+//     ? {
+//         credentials: {
+//           accessKeyId: envConfig.AWS_ACCESS_KEY_ID,
+//           secretAccessKey: envConfig.AWS_SECRET_ACCESS_KEY,
+//         },
+//       }
+//     : {}),
+// });
+
+const mailerSend = new MailerSend({ apiKey: envConfig.MAILERSEND_API_KEY || "" });
 
 type EmailTransport =
   | { kind: "smtp"; transporter: nodemailer.Transporter; fromEmail: string; fromName: string }
-  | { kind: "ses" };
+  | { kind: "mailersend" };
 
 /**
  * Resolves which transporter to send a given email through: the company's own
- * verified SMTP config if one exists for `companyId`, otherwise the shared SES
- * account. Callers that don't care about the distinction can just call
- * sendEmail() — this is exposed separately for the SMTP test-send endpoint.
+ * verified SMTP config if one exists for `companyId`, otherwise the shared
+ * MailerSend account. Callers that don't care about the distinction can just
+ * call sendEmail() — this is exposed separately for the SMTP test-send endpoint.
  */
 export async function getEmailTransporter(companyId?: string): Promise<EmailTransport> {
   if (companyId) {
@@ -79,12 +83,12 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
     }
   }
 
-  return { kind: "ses" };
+  return { kind: "mailersend" };
 }
 
 /**
  * Sends an email via the resolved transporter (company SMTP if configured and
- * verified, otherwise AWS SES) and logs it to EmailLog if userId is provided.
+ * verified, otherwise MailerSend) and logs it to EmailLog if userId is provided.
  * `replyToEmail` (falling back to `from`) is applied as the Reply-To header
  * regardless of which transporter is used.
  */
@@ -123,8 +127,8 @@ export async function sendEmail(options: SendEmailOptions) {
 
   const transport = await getEmailTransporter(companyId);
 
-  const fromEmail = transport.kind === "smtp" ? transport.fromEmail : (envConfig.SES_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com");
-  const fromName = transport.kind === "smtp" ? transport.fromName : (options.fromName || envConfig.SES_FROM_NAME || "Dialer System");
+  const fromEmail = transport.kind === "smtp" ? transport.fromEmail : (envConfig.MAILERSEND_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com");
+  const fromName = transport.kind === "smtp" ? transport.fromName : (options.fromName || envConfig.MAILERSEND_FROM_NAME || "Dialer System");
   const fromHeader = `${fromName} <${fromEmail}>`;
 
   // For SMTP, Reply-To is always the configured fromEmail — not the agent's
@@ -145,33 +149,50 @@ export async function sendEmail(options: SendEmailOptions) {
       });
       messageId = info.messageId || null;
     } else {
-      const command = new SendEmailCommand({
-        FromEmailAddress: fromHeader,
-        Destination: { ToAddresses: [to] },
-        ReplyToAddresses: replyTo ? [replyTo] : undefined,
-        ...(envConfig.SES_CONFIGURATION_SET
-          ? { ConfigurationSetName: envConfig.SES_CONFIGURATION_SET }
-          : {}),
-        Content: {
-          Simple: {
-            Subject: { Data: subject, Charset: "UTF-8" },
-            Body: {
-              Html: { Data: htmlBody, Charset: "UTF-8" },
-              Text: { Data: text, Charset: "UTF-8" },
-            },
-          },
-        },
-      });
+      // --- Retired SES send path (kept for reference / easy rollback) ---
+      // const command = new SendEmailCommand({
+      //   FromEmailAddress: fromHeader,
+      //   Destination: { ToAddresses: [to] },
+      //   ReplyToAddresses: replyTo ? [replyTo] : undefined,
+      //   ...(envConfig.SES_CONFIGURATION_SET
+      //     ? { ConfigurationSetName: envConfig.SES_CONFIGURATION_SET }
+      //     : {}),
+      //   Content: {
+      //     Simple: {
+      //       Subject: { Data: subject, Charset: "UTF-8" },
+      //       Body: {
+      //         Html: { Data: htmlBody, Charset: "UTF-8" },
+      //         Text: { Data: text, Charset: "UTF-8" },
+      //       },
+      //     },
+      //   },
+      // });
+      // const response = await ses.send(command);
+      // messageId = response.MessageId || null;
 
-      const response = await ses.send(command);
-      messageId = response.MessageId || null;
+      const sentFrom = new Sender(fromEmail, fromName);
+      const emailParams = new EmailParams()
+        .setFrom(sentFrom)
+        .setTo([new Recipient(to)])
+        .setSubject(subject)
+        .setHtml(htmlBody)
+        .setText(text);
+      if (replyTo) {
+        emailParams.setReplyTo(new Sender(replyTo));
+      }
+
+      const response = await mailerSend.email.send(emailParams);
+      messageId =
+        (response?.headers as any)?.["x-message-id"] ||
+        (response?.body as any)?.message_id ||
+        null;
     }
 
     console.log(`[EmailService] Email sent to ${to} (messageId: ${messageId})`);
     return { success: true };
   } catch (error: any) {
     status = EmailStatus.FAILED;
-    errorMsg = error?.message || `Unknown ${transport.kind === "smtp" ? "SMTP" : "SES"} error`;
+    errorMsg = error?.message || `Unknown ${transport.kind === "smtp" ? "SMTP" : "MailerSend"} error`;
     console.error(`[EmailService] Error sending email via ${transport.kind}:`, error);
     return { success: false, error: errorMsg };
   } finally {
