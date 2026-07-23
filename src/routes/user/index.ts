@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getAllUsers, createUser, updateUser, setUserPassword, deleteUser, deleteAllUsers, uploadProfileImage, updateUserSubscription } from "./controller";
 import { singleUpload } from "../../middlewares/multer.middleware";
+import { checkRole } from "../../middlewares/auth.middleware";
 
 const router = Router();
 
@@ -11,6 +12,6 @@ router.put("/:id", updateUser);
 router.put("/:id/password", setUserPassword);
 router.post("/:id/subscription", updateUserSubscription);
 router.delete("/:id", deleteUser);
-router.delete("/", deleteAllUsers);
+router.delete("/", checkRole(["OWNER"]), deleteAllUsers);
 
 export default router;

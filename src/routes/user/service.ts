@@ -429,7 +429,6 @@ export async function updateUserInDb(
     payload: Partial<{
         fullName: string;
         email: string;
-        password: string;
         role: "AGENT" | "ADMIN" | "OWNER";
         status: "ACTIVE" | "DEACTIVATED" | "SUSPENDED" | "PENDING" | "EXPIRING_SOON";
         emailVerified: boolean;
