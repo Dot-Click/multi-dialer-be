@@ -19,8 +19,6 @@ export const getNumberReputation = async (phoneNumber: string): Promise<Reputati
       fields: "caller_name,line_type_intelligence,phone_number_quality_score",
     }) as any;
 
-    console.log(`[TwilioLookup] Raw result for ${phoneNumber}:`, JSON.stringify(lookup, null, 2));
-
     const quality = lookup.phoneNumberQualityScore;
 
     // SDK may return camelCase or snake_case depending on version — handle both.

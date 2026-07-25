@@ -14,8 +14,6 @@ export const getAgentReport: RequestHandler = async (req, res) => {
         const requesterId = req.user?.id;
         const requesterRole = req.user?.role;
 
-        console.log("req.user", req.user)
-
         if (!requesterId) {
             errorResponse(res, { message: "Unauthorized" }, 401);
             return;
@@ -172,14 +170,12 @@ export const getAgentReport: RequestHandler = async (req, res) => {
 export const getDialerHealth: RequestHandler = async (req, res) => {
     try {
         const { id: userId, role } = req.user!;
-        console.log(`[getDialerHealth] userId: ${userId}, role: ${role}`);
 
         const user = await prisma.user.findUnique({
             where: { id: userId },
             select: { createdById: true }
         });
         const adminId = user?.createdById || userId;
-        console.log(`[getDialerHealth] Resolved adminId: ${adminId}`);
 
         let where: any = {
             twillioSid: { not: null },
@@ -220,7 +216,6 @@ export const getDialerHealth: RequestHandler = async (req, res) => {
                 ...settingNumbersNormalized
             ]));
 
-            console.log(`[getDialerHealth] Relevant IDs for agent:`, allRelevantIds);
 
             where.OR = [
                 { id: { in: allRelevantIds } },
@@ -236,16 +231,10 @@ export const getDialerHealth: RequestHandler = async (req, res) => {
             where.systemSetting = { userId: { in: targetUserIds } };
         }
 
-        console.log(`[getDialerHealth] Query where clause:`, JSON.stringify(where, null, 2));
-
         const callerIds = await prisma.callerId.findMany({
             where,
             orderBy: { createdAt: 'desc' }
         });
-
-        console.log(`[getDialerHealth] Found ${callerIds.length} callerIds`);
-
-        console.log(`[getDialerHealth] Caller IDs:`, JSON.stringify(callerIds, null, 2));
 
         const healthData = callerIds.map(cid => ({
             id: cid.id,
