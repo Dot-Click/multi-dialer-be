@@ -39,7 +39,7 @@ export const getNumberReputation = async (phoneNumber: string): Promise<Reputati
       }
     );
 
-    const data = response.data;
+    const data = response.data as any;
 
     // statusCode 10000 = success; anything else is a non-fatal API error
     if (data.statusCode !== 10000) {
