@@ -2,7 +2,6 @@ import prisma from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/utils/handler";
 import { RequestHandler } from "express";
 import { getNumberReputation } from "@/services/twilio-lookup";
-import { client } from "@/lib/config";
 import { getUserPlanLimits } from "@/services/planLimits.service";
 
 /**
@@ -618,86 +617,38 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
             return;
         }
 
-        let targetUserIds = [userId];
+        const adminId = userId;
+        const agents = (role === 'ADMIN' || role === 'OWNER')
+            ? await prisma.user.findMany({ where: { createdById: userId }, select: { id: true } })
+            : [];
+        const targetUserIds = [adminId, ...agents.map(a => a.id)];
 
-        if (role === 'ADMIN' || role === 'OWNER') {
-            const agents = await prisma.user.findMany({
-                where: { createdById: userId },
-                select: { id: true }
-            });
-            targetUserIds = [userId, ...agents.map(a => a.id)];
-        }
-
-        // 1. Fetch ALL incoming numbers from Twilio account
-        const twilioNumbers = await client.incomingPhoneNumbers.list();
-        
-        // 2. Get or create system settings for the admin
-        let systemSettings = await prisma.system_Setting.findFirst({
-            where: { userId }
+        // Query directly from DB — numbers live on Twilio sub-accounts so
+        // listing from the master account would miss them entirely.
+        const callerIds = await prisma.callerId.findMany({
+            where: {
+                twillioNumber: { not: null },
+                systemSetting: { userId: { in: targetUserIds } },
+            },
         });
 
-        if (!systemSettings) {
-            systemSettings = await prisma.system_Setting.create({
-                data: { userId }
-            });
-        }
-
-        const dbOps: any[] = [];
         let updatedCount = 0;
-        for (const tn of twilioNumbers) {
-            const phoneNumber = tn.phoneNumber;
-            if (!phoneNumber) continue;
-
-            // 3. Perform the deep reputation check
-            const result = await getNumberReputation(phoneNumber);
-            
-            // 4. Update or create in our database. Match by SID first; if the
-            // number was released and re-provisioned, Twilio hands out a NEW
-            // SID for the same digits, so also fall back to matching by
-            // twillioNumber within this tenant before creating — otherwise this
-            // sync creates a second row for a number already on file, the same
-            // duplicate-row bug the buy-number paths guard against.
-            const existing =
-                (await prisma.callerId.findFirst({ where: { twillioSid: tn.sid } })) ||
-                (await prisma.callerId.findFirst({
-                    where: { twillioNumber: phoneNumber, systemSettingId: systemSettings.id },
-                }));
-
-            if (existing) {
-                dbOps.push(prisma.callerId.update({
-                    where: { id: existing.id },
-                    data: {
-                        twillioNumber: phoneNumber,
-                        // Re-attach to the CURRENT Twilio resource. If this row was
-                        // found via the number fallback (stale SID from a released
-                        // + re-provisioned number), this refreshes it to the live SID
-                        // instead of leaving a dangling reference to the old one.
-                        twillioSid: tn.sid,
-                        reputationStatus: result.status,
-                        reputationScore: result.score,
-                        lastReputationCheck: new Date(),
-                        label: tn.friendlyName || phoneNumber,
-                    }
-                }));
-            } else {
-                dbOps.push(prisma.callerId.create({
-                    data: {
-                        twillioSid: tn.sid,
-                        twillioNumber: phoneNumber,
-                        label: tn.friendlyName || phoneNumber,
-                        countryCode: tn.phoneNumber.startsWith('+') ? tn.phoneNumber.substring(1, 2) : '1',
-                        systemSettingId: systemSettings.id,
-                        reputationStatus: result.status,
-                        reputationScore: result.score,
-                        lastReputationCheck: new Date(),
-                    }
-                }));
-            }
+        const dbOps: any[] = [];
+        for (const cid of callerIds) {
+            if (!cid.twillioNumber) continue;
+            const result = await getNumberReputation(cid.twillioNumber);
+            dbOps.push(prisma.callerId.update({
+                where: { id: cid.id },
+                data: {
+                    reputationStatus: result.status,
+                    reputationScore: result.score,
+                    lastReputationCheck: new Date(),
+                },
+            }));
             updatedCount++;
         }
 
         if (dbOps.length > 0) {
-            // FIX: batch the writes so the refresh does not hold the pool open one update at a time.
             await prisma.$transaction(dbOps);
         }
 

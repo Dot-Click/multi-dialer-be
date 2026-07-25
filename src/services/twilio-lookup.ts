@@ -28,6 +28,9 @@ export const getNumberReputation = async (phoneNumber: string): Promise<Reputati
       quality?.qualityCategory ?? quality?.quality_category ?? null;
     const rawScore: number | null =
       quality?.qualityScore ?? quality?.quality_score ?? null;
+    const errorCode: number | null = quality?.errorCode ?? quality?.error_code ?? null;
+
+    console.log(`[TwilioLookup] ${phoneNumber} → category=${qualityCategory} score=${rawScore} error_code=${errorCode}`);
 
     // No usable data: error_code present, unsupported number type, or no history
     if (!qualityCategory && rawScore == null) {
