@@ -42,17 +42,15 @@ export const startDialerHealthJob = () => {
                 }
 
                 const result = await getNumberReputation(cid.twillioNumber);
-                if (result) {
-                    await prisma.callerId.update({
-                        where: { id: cid.id },
-                        data: {
-                            reputationStatus: result.status,
-                            reputationScore: result.score,
-                            lastReputationCheck: new Date()
-                        }
-                    });
-                    updatedCount++;
-                }
+                await prisma.callerId.update({
+                    where: { id: cid.id },
+                    data: {
+                        reputationStatus: result.status,
+                        reputationScore: result.score,
+                        lastReputationCheck: new Date()
+                    }
+                });
+                updatedCount++;
             }
             console.log(`[Job] Dialer Health Check finished. Updated ${updatedCount} numbers, skipped ${skippedCount} (plan doesn't include advanced deliverability).`);
         } catch (error) {

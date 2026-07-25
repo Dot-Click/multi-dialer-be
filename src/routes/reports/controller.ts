@@ -251,9 +251,13 @@ export const getDialerHealth: RequestHandler = async (req, res) => {
             id: cid.id,
             name: cid.label,
             contact: cid.twillioNumber || "No Number",
-            health: cid.reputationStatus === "flagged" ? "unhealthy" : "healthy",
+            health: cid.reputationStatus === "flagged"  ? "unhealthy"
+                  : cid.reputationStatus === "warning"  ? "at-risk"
+                  : cid.reputationStatus === "clean"    ? "healthy"
+                  : "unchecked",
             reputation: cid.reputationStatus,
             score: cid.reputationScore,
+            lastReputationCheck: cid.lastReputationCheck,
             type: "reputation"
         }));
 
@@ -680,8 +684,8 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
                         // + re-provisioned number), this refreshes it to the live SID
                         // instead of leaving a dangling reference to the old one.
                         twillioSid: tn.sid,
-                        reputationStatus: result?.status || "unknown",
-                        reputationScore: result?.score || 100,
+                        reputationStatus: result.status,
+                        reputationScore: result.score,
                         lastReputationCheck: new Date(),
                         label: tn.friendlyName || phoneNumber,
                     }
@@ -692,10 +696,10 @@ export const refreshDialerHealth: RequestHandler = async (req, res) => {
                         twillioSid: tn.sid,
                         twillioNumber: phoneNumber,
                         label: tn.friendlyName || phoneNumber,
-                        countryCode: tn.phoneNumber.startsWith('+') ? tn.phoneNumber.substring(1, 2) : '1', 
+                        countryCode: tn.phoneNumber.startsWith('+') ? tn.phoneNumber.substring(1, 2) : '1',
                         systemSettingId: systemSettings.id,
-                        reputationStatus: result?.status || "unknown",
-                        reputationScore: result?.score || 100,
+                        reputationStatus: result.status,
+                        reputationScore: result.score,
                         lastReputationCheck: new Date(),
                     }
                 }));
