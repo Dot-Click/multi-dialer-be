@@ -1,55 +1,72 @@
-import { client } from "@/lib/config";
+import axios from "axios";
 
 export interface ReputationResult {
   status: "clean" | "warning" | "flagged" | "unchecked";
   score: number | null;
 }
 
+const YOUMAIL_API_SID = process.env.YOUMAIL_API_SID;
+const YOUMAIL_API_KEY = process.env.YOUMAIL_API_KEY;
+
 /**
- * Fetch phone number reputation from Twilio Lookup V2 API using
- * phone_number_quality_score (First Orion / T-Mobile carrier data).
+ * Fetch phone number spam reputation from YouMail's Spam Caller API.
+ * Covers all major US carriers (AT&T, Verizon, T-Mobile).
  *
- * Always returns a result — never throws. On API failure or when the
- * quality-score add-on is unavailable, returns status "unchecked" so
- * callers can distinguish "no data" from "confirmed clean".
+ * spamRisk.level: 0 = clean, 1 = probable spam, 2 = confirmed spam
+ * recordFound: false = YouMail has no data for this number → "unchecked"
+ *
+ * Always returns a result — never throws.
  */
 export const getNumberReputation = async (phoneNumber: string): Promise<ReputationResult> => {
   try {
-    const lookup = await client.lookups.v2.phoneNumbers(phoneNumber).fetch({
-      fields: "caller_name,line_type_intelligence,phone_number_quality_score",
-    }) as any;
-
-    const quality = lookup.phoneNumberQualityScore;
-
-    // SDK may return camelCase or snake_case depending on version — handle both.
-    // quality_category values: "very_high" | "high" | "medium" | "low" | "very_low"
-    // quality_score: 0–1 float, higher = better (less spammy)
-    const qualityCategory: string | null =
-      quality?.qualityCategory ?? quality?.quality_category ?? null;
-    const rawScore: number | null =
-      quality?.qualityScore ?? quality?.quality_score ?? null;
-    const errorCode: number | null = quality?.errorCode ?? quality?.error_code ?? null;
-
-    console.log(`[TwilioLookup] ${phoneNumber} → category=${qualityCategory} score=${rawScore} error_code=${errorCode}`);
-
-    // No usable data: error_code present, unsupported number type, or no history
-    if (!qualityCategory && rawScore == null) {
+    if (!YOUMAIL_API_SID || !YOUMAIL_API_KEY) {
+      console.warn("[YouMailLookup] YOUMAIL_API_SID / YOUMAIL_API_KEY not set");
       return { status: "unchecked", score: null };
     }
 
-    const qualityScore: number | null = rawScore != null
-      ? Math.round(rawScore * 100)
-      : null;
+    // YouMail expects the 10-digit US number without country code or +
+    const normalized = phoneNumber.replace(/^\+1/, "").replace(/\D/g, "");
 
-    let status: ReputationResult["status"];
-    if (qualityCategory === "very_low" || qualityCategory === "low") status = "flagged";
-    else if (qualityCategory === "medium")                            status = "warning";
-    else if (qualityCategory === "high" || qualityCategory === "very_high") status = "clean";
-    else                                                              status = "unchecked";
+    const response = await axios.get(
+      `https://dataapi.youmail.com/api/v2/phone/${normalized}`,
+      {
+        headers: {
+          Accept: "application/json",
+          "X-API-SID": YOUMAIL_API_SID,
+          "X-API-KEY": YOUMAIL_API_KEY,
+        },
+        timeout: 10_000,
+      }
+    );
 
-    return { status, score: qualityScore };
+    const data = response.data;
+
+    // statusCode 10000 = success; anything else is a non-fatal API error
+    if (data.statusCode !== 10000) {
+      console.warn(`[YouMailLookup] ${phoneNumber} → status ${data.statusCode}`);
+      return { status: "unchecked", score: null };
+    }
+
+    // recordFound = false → YouMail has no reputation data for this number
+    if (!data.recordFound) {
+      console.log(`[YouMailLookup] ${phoneNumber} → no record`);
+      return { status: "unchecked", score: null };
+    }
+
+    const level: number = data.spamRisk?.level ?? 0;
+    console.log(`[YouMailLookup] ${phoneNumber} → spamRisk.level=${level}`);
+
+    if (level === 2) return { status: "flagged", score: 10 };
+    if (level === 1) return { status: "warning", score: 45 };
+    return { status: "clean", score: 90 };
+
   } catch (error: any) {
-    console.error(`[TwilioLookup] Failed for ${phoneNumber}:`, error.message);
+    // 404 = number not in YouMail's database
+    if (error.response?.status === 404) {
+      console.log(`[YouMailLookup] ${phoneNumber} → 404 not found`);
+      return { status: "unchecked", score: null };
+    }
+    console.error(`[YouMailLookup] Failed for ${phoneNumber}:`, error.message);
     return { status: "unchecked", score: null };
   }
 };
