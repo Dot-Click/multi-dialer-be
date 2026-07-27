@@ -274,62 +274,48 @@ export async function createContactInDb(payload: {
   });
 }
 
-export async function getAllContactsFromDb(userId: string, role: string) {
+export async function getAllContactsFromDb(userId: string, role: string, page: number, limit: number) {
+  const skip = (page - 1) * limit;
+  const include = {
+    emails: true,
+    phones: true,
+    callRecords: {
+      orderBy: { startTime: "desc" as const },
+      take: 1,
+      select: { startTime: true },
+    },
+  };
+
   // OWNER — sees everything, no filter needed
   if (role === "OWNER") {
-    return prisma.contact.findMany({
-      where: {
-        status: { not: "DO_NOT_CALL" },
-      },
-      include: {
-        emails: true,
-        phones: true,
-        callRecords: {
-          orderBy: { startTime: "desc" },
-          take: 1,
-          select: { startTime: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const where = { status: { not: "DO_NOT_CALL" as const } };
+    const [data, total] = await prisma.$transaction([
+      prisma.contact.findMany({ where, include, orderBy: { createdAt: "desc" }, skip, take: limit }),
+      prisma.contact.count({ where }),
+    ]);
+    return { data, total };
   }
 
   // ADMIN — sees contacts owned by themselves or any of their agents,
   // plus any contacts that appear in lists they own.
   if (role === "ADMIN") {
     const poolUserIds = await getAdminUserPool(userId);
-
     const myLists = await prisma.contactList.findMany({
-      where: {
-        OR: [{ userId: { in: poolUserIds } }, { userId: null }],
-      },
+      where: { OR: [{ userId: { in: poolUserIds } }, { userId: null }] },
       select: { contactIds: true },
     });
     const listContactIds = [...new Set(myLists.flatMap((l) => l.contactIds))];
-
-    return prisma.contact.findMany({
-      where: {
-        AND: [
-          {
-            OR: [
-              { userId: { in: poolUserIds } },
-              { id: { in: listContactIds } },
-            ],
-          },
-          { status: { not: "DO_NOT_CALL" } },
-        ],
-      },
-      include: {
-        emails: true,
-        phones: true,
-        callRecords: {
-          orderBy: { startTime: "desc" },
-          take: 1,
-          select: { startTime: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const where = {
+      AND: [
+        { OR: [{ userId: { in: poolUserIds } }, { id: { in: listContactIds } }] },
+        { status: { not: "DO_NOT_CALL" as const } },
+      ],
+    };
+    const [data, total] = await prisma.$transaction([
+      prisma.contact.findMany({ where, include, orderBy: { createdAt: "desc" }, skip, take: limit }),
+      prisma.contact.count({ where }),
+    ]);
+    return { data, total };
   }
 
   // AGENT — sees:
@@ -340,49 +326,27 @@ export async function getAllContactsFromDb(userId: string, role: string) {
       where: { agentIds: { has: userId } },
       select: { contactIds: true },
     });
-    const assignedContactIds = [
-      ...new Set(assignedLists.flatMap((l) => l.contactIds)),
-    ];
-
-    return prisma.contact.findMany({
-      where: {
-        AND: [
-          {
-            OR: [{ id: { in: assignedContactIds } }, { userId: userId }],
-          },
-          { status: { not: "DO_NOT_CALL" } },
-        ],
-      },
-      include: {
-        emails: true,
-        phones: true,
-        callRecords: {
-          orderBy: { startTime: "desc" },
-          take: 1,
-          select: { startTime: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const assignedContactIds = [...new Set(assignedLists.flatMap((l) => l.contactIds))];
+    const where = {
+      AND: [
+        { OR: [{ id: { in: assignedContactIds } }, { userId }] },
+        { status: { not: "DO_NOT_CALL" as const } },
+      ],
+    };
+    const [data, total] = await prisma.$transaction([
+      prisma.contact.findMany({ where, include, orderBy: { createdAt: "desc" }, skip, take: limit }),
+      prisma.contact.count({ where }),
+    ]);
+    return { data, total };
   }
 
   // Fallback — own contacts only
-  return prisma.contact.findMany({
-    where: {
-      userId,
-      status: { not: "DO_NOT_CALL" },
-    },
-    include: {
-      emails: true,
-      phones: true,
-      callRecords: {
-        orderBy: { startTime: "desc" },
-        take: 1,
-        select: { startTime: true },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const where = { userId, status: { not: "DO_NOT_CALL" as const } };
+  const [data, total] = await prisma.$transaction([
+    prisma.contact.findMany({ where, include, orderBy: { createdAt: "desc" }, skip, take: limit }),
+    prisma.contact.count({ where }),
+  ]);
+  return { data, total };
 }
 
 export async function getContactByIdFromDb(id: string) {

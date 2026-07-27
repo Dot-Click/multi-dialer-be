@@ -103,8 +103,11 @@ export const getAllContacts = async (
   try {
     const userId = (req as any).user.id;
     const role = (req as any).user.role;
-    const contacts = await getAllContactsFromDb(userId, role);
-    successResponse(res, 200, "Contacts fetched", contacts);
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
+    const { data, total } = await getAllContactsFromDb(userId, role, page, limit);
+    const totalPages = Math.ceil(total / limit);
+    successResponse(res, 200, "Contacts fetched", { contacts: data, total, page, totalPages });
   } catch (error: any) {
     errorResponse(
       res,
