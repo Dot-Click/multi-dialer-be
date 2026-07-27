@@ -157,10 +157,7 @@ export const auth = betterAuth({
     <p style="font-size:14px;color:#666;">
       If you didn't request a password reset, you can safely ignore this email — your password will not change.
     </p>
-    <p style="font-size:14px;color:#666;">
-      Or copy and paste this link into your browser:<br/>
-      <a href="${resetUrl}" style="color:#1D85F0;word-break:break-all;">${resetUrl}</a>
-    </p>
+
     <hr style="border:none;border-top:1px solid #eee;margin:24px 0;"/>
     <p style="font-size:12px;color:#999;text-align:center;">© 2026 Slingvo. All rights reserved.</p>
   </div>
