@@ -507,6 +507,271 @@ export const subscriptionChangedTemp = (
 </html>
 `
 
+export const trialStartedTemp = (fullName: string, trialEndDate: string, dashboardUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Free Trial Has Started - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .highlight { background: #fff8e1; border: 2px solid #FFCA06; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your 30-day free trial has started!</h2>
+            <p>Hi ${fullName},</p>
+            <p>Welcome to Slingvo! Your free trial is now active — explore every feature for the next 30 days, no charge.</p>
+        </div>
+        <div class="highlight">
+            <p style="margin:0;font-size:15px;">Trial ends on <strong>${trialEndDate}</strong></p>
+        </div>
+        <p>After your trial, you'll be moved to your selected plan. You can manage or cancel any time from your billing page.</p>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${dashboardUrl}" class="button">Go to Dashboard</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const subscriptionActivatedTemp = (fullName: string, planName: string, dashboardUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Activated - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .highlight { background: #f0fdf4; border: 2px solid #22c55e; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your subscription is now active</h2>
+            <p>Hi ${fullName},</p>
+            <p>Your Slingvo subscription has been activated. You now have full access to all features on your plan.</p>
+        </div>
+        <div class="highlight">
+            <p style="margin:0;font-size:15px;">Active plan: <strong>${planName}</strong></p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${dashboardUrl}" class="button">Go to Dashboard</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const trialEndingSoonTemp = (fullName: string, daysLeft: number, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Trial Ends Soon - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .highlight { background: #fff7ed; border: 2px solid #f97316; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your trial ends in ${daysLeft} day${daysLeft === 1 ? "" : "s"}</h2>
+            <p>Hi ${fullName},</p>
+            <p>Your Slingvo free trial is almost over. After it ends, you'll be charged for your selected plan to keep full access.</p>
+        </div>
+        <div class="highlight">
+            <p style="margin:0;font-size:15px;"><strong>${daysLeft} day${daysLeft === 1 ? "" : "s"} remaining</strong> on your trial</p>
+        </div>
+        <p>Make sure your billing details are up to date to continue without interruption.</p>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">Review Billing</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const subscriptionPausedTemp = (fullName: string, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Paused - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your subscription has been paused</h2>
+            <p>Hi ${fullName},</p>
+            <p>Your Slingvo subscription is currently paused. Your account access is limited while the subscription is on hold.</p>
+            <p>To restore full access, visit your billing page and reactivate your plan.</p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">Reactivate Subscription</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const subscriptionExpiredTemp = (fullName: string, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Expired - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your Slingvo subscription has expired</h2>
+            <p>Hi ${fullName},</p>
+            <p>Your subscription has expired due to an incomplete payment. Access to Slingvo features has been suspended.</p>
+            <p>Resubscribe at any time to restore your account.</p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">Resubscribe Now</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const paymentReceiptTemp = (fullName: string, amount: string, invoiceNumber: string, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Receipt - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .receipt-box { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .receipt-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e9ecef; }
+        .receipt-row:last-child { border-bottom: none; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Payment Receipt</h2>
+            <p>Hi ${fullName},</p>
+            <p>Thank you! Your payment has been received. Here is your receipt.</p>
+        </div>
+        <div class="receipt-box">
+            <div class="receipt-row"><span>Invoice</span><strong>${invoiceNumber}</strong></div>
+            <div class="receipt-row"><span>Amount Paid</span><strong>$${amount}</strong></div>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">View Billing History</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const cardExpiringTemp = (fullName: string, cardBrand: string, cardLast4: string, expMonth: number, expYear: number, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Method Expiring Soon - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .card-box { background: #fff7ed; border: 2px solid #f97316; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your payment method expires soon</h2>
+            <p>Hi ${fullName},</p>
+            <p>The card on file for your Slingvo subscription is expiring. Please update your payment method to avoid service interruption.</p>
+        </div>
+        <div class="card-box">
+            <p style="margin:0;font-size:15px;">${cardBrand} &bull;&bull;&bull;&bull; ${cardLast4} &mdash; expires <strong>${String(expMonth).padStart(2, "0")}/${expYear}</strong></p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">Update Payment Method</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
 import { sendEmail as trackedSendEmail } from "../services/email.service";
 
 export const sendEmail = async (

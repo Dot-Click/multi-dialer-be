@@ -5,7 +5,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling.service";
-import { sendEmail, paymentFailedTemp, paymentSucceededTemp, subscriptionCancelledTemp, subscriptionChangedTemp, workspaceCreatedTemp } from "../../utils/email";
+import { sendEmail, paymentFailedTemp, paymentSucceededTemp, paymentReceiptTemp, subscriptionCancelledTemp, subscriptionChangedTemp, subscriptionActivatedTemp, subscriptionPausedTemp, subscriptionExpiredTemp, workspaceCreatedTemp, trialStartedTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { notifyClients } from "../../services/leadStoreNotify.service";
@@ -582,6 +582,20 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           )))
           .catch(err => console.error("[Stripe Webhook] Failed to query OWNER users for workspace-created email:", err?.message));
 
+        // Send trial started email to the new admin (trial = 30 days from signup)
+        const trialEnd = new Date();
+        trialEnd.setDate(trialEnd.getDate() + 30);
+        sendEmail(
+          newUser.email,
+          "Your 30-day Slingvo trial has started",
+          trialStartedTemp(
+            newUser.fullName || "there",
+            trialEnd.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+            `${envConfig.FRONTEND_URL}/admin/dashboard`,
+          ),
+          { userId: newUser.id },
+        ).catch(err => console.error(`[Stripe Webhook] Failed to send trial-started email to ${newUser.email}:`, err?.message));
+
         // Fire Zapier Webhook
         console.log("[Zapier] About to fire webhook for:", email);
         triggerZapierWebhook({
@@ -716,6 +730,77 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             }
           } catch (emailErr: any) {
             console.error(`[Stripe Webhook] Failed to send subscription-change email:`, emailErr?.message);
+          }
+        }
+
+        // Subscription Activated: trial → active transition
+        const previousStatus = (event.data as any).previous_attributes?.status;
+        if (status === "active" && previousStatus === "trialing") {
+          try {
+            const activatedUser = await prisma.user.findUnique({
+              where: { id: subRecord.userId },
+              select: { email: true, fullName: true },
+            });
+            if (activatedUser) {
+              await sendEmail(
+                activatedUser.email,
+                "Your Slingvo subscription is now active",
+                subscriptionActivatedTemp(
+                  activatedUser.fullName || "there",
+                  planName,
+                  `${envConfig.FRONTEND_URL}/admin/dashboard`,
+                ),
+                { userId: subRecord.userId },
+              );
+            }
+          } catch (emailErr: any) {
+            console.error(`[Stripe Webhook] Failed to send subscription-activated email:`, emailErr?.message);
+          }
+        }
+
+        // Subscription Paused
+        if (status === "paused") {
+          try {
+            const pausedUser = await prisma.user.findUnique({
+              where: { id: subRecord.userId },
+              select: { email: true, fullName: true },
+            });
+            if (pausedUser) {
+              await sendEmail(
+                pausedUser.email,
+                "Your Slingvo subscription has been paused",
+                subscriptionPausedTemp(
+                  pausedUser.fullName || "there",
+                  `${envConfig.FRONTEND_URL}/admin/billing`,
+                ),
+                { userId: subRecord.userId },
+              );
+            }
+          } catch (emailErr: any) {
+            console.error(`[Stripe Webhook] Failed to send subscription-paused email:`, emailErr?.message);
+          }
+        }
+
+        // Subscription Expired (payment window elapsed, subscription never activated)
+        if (status === "incomplete_expired") {
+          try {
+            const expiredUser = await prisma.user.findUnique({
+              where: { id: subRecord.userId },
+              select: { email: true, fullName: true },
+            });
+            if (expiredUser) {
+              await sendEmail(
+                expiredUser.email,
+                "Your Slingvo subscription has expired",
+                subscriptionExpiredTemp(
+                  expiredUser.fullName || "there",
+                  `${envConfig.FRONTEND_URL}/admin/billing`,
+                ),
+                { userId: subRecord.userId },
+              );
+            }
+          } catch (emailErr: any) {
+            console.error(`[Stripe Webhook] Failed to send subscription-expired email:`, emailErr?.message);
           }
         }
 
@@ -922,17 +1007,18 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           if (billedUser) {
             await sendEmail(
               billedUser.email,
-              "Your Slingvo payment was successful",
-              paymentSucceededTemp(
+              "Your Slingvo payment receipt",
+              paymentReceiptTemp(
                 billedUser.fullName || "there",
                 typeof invoice.amount_paid === "number" ? String(invoice.amount_paid / 100) : "0",
+                invoice.number || invoice.id || "N/A",
                 `${envConfig.FRONTEND_URL}/admin/billing`,
               ),
               { userId: subRecord.userId },
             );
           }
         } catch (emailErr: any) {
-          console.error(`[Stripe Webhook] Failed to send payment-succeeded email:`, emailErr?.message);
+          console.error(`[Stripe Webhook] Failed to send payment-receipt email:`, emailErr?.message);
         }
 
         console.log(`[Stripe Webhook] invoice.paid: subscription reactivated for customer ${stripeCustomerId}.`);
