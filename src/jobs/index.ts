@@ -1,6 +1,7 @@
 import { startAppointmentReminderJob } from "./appointmentReminder.job";
 import { startDialerHealthJob } from "./dialerHealth.job";
 import { startCallbackDueJob } from "./callbackDue.job";
+import { startUserLifecycleJob } from "./userLifecycle.job";
 
 /**
  * Initialize all core background jobs.
@@ -10,4 +11,5 @@ export const initJobs = () => {
     startAppointmentReminderJob();
     startDialerHealthJob();
     startCallbackDueJob();
+    startUserLifecycleJob();
 };
