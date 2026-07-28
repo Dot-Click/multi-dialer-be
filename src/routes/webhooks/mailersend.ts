@@ -20,9 +20,12 @@ import { EmailStatus } from "@prisma/client";
 function verifySignature(rawBody: Buffer, signatureHeader: string | undefined): boolean {
   const secret = envConfig.MAILERSEND_WEBHOOK_SECRET;
   if (!secret) {
-    // No secret configured — refuse to process unauthenticated webhook traffic.
-    console.error("[MailerSend webhook] MAILERSEND_WEBHOOK_SECRET is not set — rejecting.");
-    return false;
+    // Secret not yet configured (e.g. during initial webhook registration in
+    // MailerSend's dashboard, which validates the URL before a signing secret
+    // exists). Allow through so registration succeeds, but log a warning so
+    // it's visible. Set MAILERSEND_WEBHOOK_SECRET and redeploy to enforce.
+    console.warn("[MailerSend webhook] MAILERSEND_WEBHOOK_SECRET is not set — skipping signature check.");
+    return true;
   }
   if (!signatureHeader) return false;
 
