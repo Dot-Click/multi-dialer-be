@@ -5,7 +5,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling.service";
-import { sendEmail } from "../../utils/email";
+import { sendEmail, paymentFailedTemp, paymentSucceededTemp, subscriptionCancelledTemp, subscriptionChangedTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { notifyClients } from "../../services/leadStoreNotify.service";
@@ -677,6 +677,36 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           data: { isSubscribed: status === "active" },
         });
 
+        // Notify the customer on a genuine plan/amount change — not on
+        // status-only syncs (e.g. trialing -> active) where nothing billable moved.
+        const oldAmount = Number(subRecord.amount) || 0;
+        const newAmount = Number(amountStr) || 0;
+        if (newAmount !== oldAmount) {
+          try {
+            const billedUser = await prisma.user.findUnique({
+              where: { id: subRecord.userId },
+              select: { email: true, fullName: true },
+            });
+            if (billedUser) {
+              await sendEmail(
+                billedUser.email,
+                `Your Slingvo subscription was ${newAmount > oldAmount ? "upgraded" : "downgraded"}`,
+                subscriptionChangedTemp(
+                  billedUser.fullName || "there",
+                  newAmount > oldAmount ? "upgraded" : "downgraded",
+                  subRecord.plan,
+                  planName,
+                  amountStr || "0",
+                  `${envConfig.FRONTEND_URL}/admin/billing`,
+                ),
+                { userId: subRecord.userId },
+              );
+            }
+          } catch (emailErr: any) {
+            console.error(`[Stripe Webhook] Failed to send subscription-change email:`, emailErr?.message);
+          }
+        }
+
         console.log(`[Stripe Webhook] customer.subscription.updated processed successfully.`);
       } else {
         console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
@@ -744,6 +774,27 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             console.error(`[Stripe Webhook] Failed to release numbers for canceled user ${subRecord.userId}:`, err.message);
           }
 
+          try {
+            const cancelledUser = await prisma.user.findUnique({
+              where: { id: subRecord.userId },
+              select: { email: true, fullName: true },
+            });
+            if (cancelledUser) {
+              await sendEmail(
+                cancelledUser.email,
+                "Your Slingvo subscription has been cancelled",
+                subscriptionCancelledTemp(
+                  cancelledUser.fullName || "there",
+                  subRecord.plan,
+                  `${envConfig.FRONTEND_URL}/admin/billing`,
+                ),
+                { userId: subRecord.userId },
+              );
+            }
+          } catch (emailErr: any) {
+            console.error(`[Stripe Webhook] Failed to send cancellation email:`, emailErr?.message);
+          }
+
           console.log(`[Stripe Webhook] customer.subscription.deleted processed successfully.`);
         } else {
           console.warn(`[Stripe Webhook] No matching userSubscription found for stripeCustomerId: ${stripeCustomerId}`);
@@ -781,6 +832,27 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           where: { id: subRecord.userId },
           data: { isSubscribed: false },
         });
+
+        try {
+          const billedUser = await prisma.user.findUnique({
+            where: { id: subRecord.userId },
+            select: { email: true, fullName: true },
+          });
+          if (billedUser) {
+            await sendEmail(
+              billedUser.email,
+              "Your Slingvo payment failed",
+              paymentFailedTemp(
+                billedUser.fullName || "there",
+                typeof invoice.amount_due === "number" ? String(invoice.amount_due / 100) : "0",
+                `${envConfig.FRONTEND_URL}/admin/billing`,
+              ),
+              { userId: subRecord.userId },
+            );
+          }
+        } catch (emailErr: any) {
+          console.error(`[Stripe Webhook] Failed to send payment-failed email:`, emailErr?.message);
+        }
 
         console.log(`[Stripe Webhook] invoice.payment_failed processed successfully.`);
       } else {
@@ -829,6 +901,27 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           where: { id: subRecord.userId },
           data: { isSubscribed: true },
         });
+
+        try {
+          const billedUser = await prisma.user.findUnique({
+            where: { id: subRecord.userId },
+            select: { email: true, fullName: true },
+          });
+          if (billedUser) {
+            await sendEmail(
+              billedUser.email,
+              "Your Slingvo payment was successful",
+              paymentSucceededTemp(
+                billedUser.fullName || "there",
+                typeof invoice.amount_paid === "number" ? String(invoice.amount_paid / 100) : "0",
+                `${envConfig.FRONTEND_URL}/admin/billing`,
+              ),
+              { userId: subRecord.userId },
+            );
+          }
+        } catch (emailErr: any) {
+          console.error(`[Stripe Webhook] Failed to send payment-succeeded email:`, emailErr?.message);
+        }
 
         console.log(`[Stripe Webhook] invoice.paid: subscription reactivated for customer ${stripeCustomerId}.`);
       } else {
