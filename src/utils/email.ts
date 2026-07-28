@@ -104,7 +104,7 @@ export const welcomeTemp = (email: string, password: string) => `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to CallScout</title>
+    <title>Welcome to Slingvo</title>
     <style>
         body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
         .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -119,9 +119,9 @@ export const welcomeTemp = (email: string, password: string) => `
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">CallScout</div></div>
+        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
-            <h2>Welcome to CallScout!</h2>
+            <h2>Welcome to Slingvo!</h2>
             <p>Your account has been successfully created. Here are your login details:</p>
         </div>
         <div class="details-box">
@@ -131,7 +131,7 @@ export const welcomeTemp = (email: string, password: string) => `
         <div class="message">
             <p>Please login and change your password after your first login.</p>
         </div>
-        <div class="footer"><p>© 2026 CallScout. All rights reserved.</p></div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
 </body>
 </html>
@@ -254,6 +254,161 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
 </html>
 `
 
+export const paymentFailedTemp = (fullName: string, amount: string, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Failed - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .details-box { background: #fff5f5; border: 2px dashed #dc3545; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #dc3545;">Your payment failed</h2>
+            <p>Hi ${fullName},</p>
+            <p>We were unable to process your latest Slingvo subscription payment of <strong>$${amount}</strong>. Please update your payment method to avoid interruption of service.</p>
+        </div>
+        <div class="details-box">
+            <p style="margin:0;">Amount due: <strong>$${amount}</strong></p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">Update Payment Method</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const paymentSucceededTemp = (fullName: string, amount: string, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Received - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .details-box { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #28a745;">Payment received</h2>
+            <p>Hi ${fullName},</p>
+            <p>Thanks — we've received your Slingvo subscription payment.</p>
+        </div>
+        <div class="details-box">
+            <p style="margin:0;">Amount paid: <strong>$${amount}</strong></p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">View Billing Details</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const subscriptionCancelledTemp = (fullName: string, planName: string, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Cancelled - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your subscription has been cancelled</h2>
+            <p>Hi ${fullName},</p>
+            <p>Your <strong>${planName}</strong> subscription has been cancelled and your account access has ended. If this wasn't intentional, you can resubscribe at any time.</p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">Resubscribe</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const subscriptionChangedTemp = (
+    fullName: string,
+    direction: "upgraded" | "downgraded",
+    oldPlan: string,
+    newPlan: string,
+    amount: string,
+    billingUrl: string,
+) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription ${direction === "upgraded" ? "Upgraded" : "Downgraded"} - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .details-box { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your subscription was ${direction}</h2>
+            <p>Hi ${fullName},</p>
+            <p>Your Slingvo subscription changed from <strong>${oldPlan}</strong> to <strong>${newPlan}</strong>.</p>
+        </div>
+        <div class="details-box">
+            <p style="margin:0;">New amount: <strong>$${amount}</strong></p>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">View Billing Details</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
 import { sendEmail as trackedSendEmail } from "../services/email.service";
 
 export const sendEmail = async (
@@ -273,7 +428,7 @@ export const sendEmail = async (
     try {
         return await trackedSendEmail({
             to,
-            from: "noreply@dialersaas.com", // Default from if not specified
+            from: envConfig.MAILERSEND_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com",
             subject,
             text: "Please view this email in an HTML compatible client.",
             html,

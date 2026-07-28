@@ -8,7 +8,7 @@ import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.serv
 import { subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { sendEmail } from "../../utils/email";
+import { sendEmail, welcomeTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
@@ -177,6 +177,16 @@ export async function createUserInDb(payload: any) {
             createdAt: newUser.createdAt,
         },
     });
+
+    // Send welcome email with login credentials — non-blocking
+    sendEmail(
+        newUser.email,
+        "Welcome to Slingvo - Your Account Details",
+        welcomeTemp(newUser.email, password),
+        { userId: newUser.id },
+    ).catch(err =>
+        console.error("[UserService] Failed to send welcome email:", err?.message ?? err)
+    );
 
     // Send payment setup email — non-blocking, passes the admin-selected planId
     sendPaymentSetupEmail(newUser, planId ?? undefined).catch(err =>
