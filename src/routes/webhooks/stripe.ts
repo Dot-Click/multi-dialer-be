@@ -5,7 +5,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling.service";
-import { sendEmail, paymentFailedTemp, paymentSucceededTemp, subscriptionCancelledTemp, subscriptionChangedTemp } from "../../utils/email";
+import { sendEmail, paymentFailedTemp, paymentSucceededTemp, subscriptionCancelledTemp, subscriptionChangedTemp, workspaceCreatedTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { notifyClients } from "../../services/leadStoreNotify.service";
@@ -569,6 +569,18 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         });
 
         console.log(`[Stripe Webhook] Full provisioning successful for ${email}`);
+
+        // Notify all OWNER users that a new workspace was provisioned
+        prisma.user.findMany({ where: { role: "OWNER" }, select: { id: true, email: true, fullName: true } })
+          .then(owners => Promise.all(owners.map(owner =>
+            sendEmail(
+              owner.email,
+              "New workspace created on Slingvo",
+              workspaceCreatedTemp(owner.fullName || "there", email, fullName || email),
+              { userId: owner.id },
+            ).catch(err => console.error(`[Stripe Webhook] Failed to send workspace-created email to ${owner.email}:`, err?.message))
+          )))
+          .catch(err => console.error("[Stripe Webhook] Failed to query OWNER users for workspace-created email:", err?.message));
 
         // Fire Zapier Webhook
         console.log("[Zapier] About to fire webhook for:", email);

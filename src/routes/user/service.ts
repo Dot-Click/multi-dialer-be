@@ -8,7 +8,7 @@ import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.serv
 import { subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { sendEmail, welcomeTemp } from "../../utils/email";
+import { sendEmail, welcomeTemp, memberAddedTemp, memberRemovedTemp, roleChangedTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
@@ -187,6 +187,21 @@ export async function createUserInDb(payload: any) {
     ).catch(err =>
         console.error("[UserService] Failed to send welcome email:", err?.message ?? err)
     );
+
+    // Notify the owning admin when an agent is added to their workspace
+    if (newUser.role === "AGENT" && rest.createdById) {
+        prisma.user.findUnique({ where: { id: rest.createdById }, select: { id: true, email: true, fullName: true } })
+            .then(admin => {
+                if (!admin) return;
+                return sendEmail(
+                    admin.email,
+                    "New team member added to your Slingvo workspace",
+                    memberAddedTemp(admin.fullName || "there", newUser.fullName || newUser.email, newUser.email),
+                    { userId: admin.id },
+                );
+            })
+            .catch(err => console.error("[UserService] Failed to send member-added email:", err?.message ?? err));
+    }
 
     // Send payment setup email — non-blocking, passes the admin-selected planId
     sendPaymentSetupEmail(newUser, planId ?? undefined).catch(err =>
@@ -448,17 +463,30 @@ export async function updateUserInDb(
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throwHttp(404, "User not found");
 
-    return prisma.user.update({
+    const updated = await prisma.user.update({
         where: { id },
         data: payload,
         select: {
             id: true,
             fullName: true,
+            email: true,
             role: true,
             status: true,
             defaultCallerId: true,
         }
     });
+
+    // Notify the user when their role changes
+    if (payload.role && payload.role !== existing.role) {
+        sendEmail(
+            existing.email,
+            "Your Slingvo role has been updated",
+            roleChangedTemp(existing.fullName || "there", existing.role, payload.role),
+            { userId: id },
+        ).catch(err => console.error("[UserService] Failed to send role-changed email:", err?.message ?? err));
+    }
+
+    return updated;
 }
 
 /**
@@ -549,7 +577,10 @@ export async function updateUserSubscriptionInDb(userId: string, planId: string)
 }
 
 export async function deleteUserFromDb(id: string) {
-    const existing = await prisma.user.findUnique({ where: { id } });
+    const existing = await prisma.user.findUnique({
+        where: { id },
+        select: { id: true, email: true, fullName: true, role: true, createdById: true },
+    });
     if (!existing) throwHttp(404, "User not found");
 
     // Only ADMIN accounts own a Twilio sub-account + numbers of their own —
@@ -565,6 +596,22 @@ export async function deleteUserFromDb(id: string) {
     );
 
     await prisma.user.delete({ where: { id } });
+
+    // Notify the owning admin when one of their agents is removed
+    if (existing.role === "AGENT" && existing.createdById) {
+        prisma.user.findUnique({ where: { id: existing.createdById }, select: { id: true, email: true, fullName: true } })
+            .then(admin => {
+                if (!admin) return;
+                return sendEmail(
+                    admin.email,
+                    "A team member has been removed from your Slingvo workspace",
+                    memberRemovedTemp(admin.fullName || "there", existing.fullName || existing.email, existing.email),
+                    { userId: admin.id },
+                );
+            })
+            .catch(err => console.error("[UserService] Failed to send member-removed email:", err?.message ?? err));
+    }
+
     return true;
 }
 

@@ -254,6 +254,104 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
 </html>
 `
 
+// ── Admin / lifecycle notification templates ──────────────────────────────────
+
+export const memberAddedTemp = (adminName: string, agentName: string, agentEmail: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Member Added - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">New team member added</h2>
+<p>Hi ${adminName},</p>
+<p>A new member has been added to your Slingvo workspace.</p>
+<div class="info">
+  <p style="margin:0"><strong>Name:</strong> ${agentName}</p>
+  <p style="margin:8px 0 0"><strong>Email:</strong> ${agentEmail}</p>
+</div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const memberRemovedTemp = (adminName: string, agentName: string, agentEmail: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Member Removed - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#fff5f5;border:2px dashed #dc3545;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">Team member removed</h2>
+<p>Hi ${adminName},</p>
+<p>A member has been removed from your Slingvo workspace.</p>
+<div class="info">
+  <p style="margin:0"><strong>Name:</strong> ${agentName}</p>
+  <p style="margin:8px 0 0"><strong>Email:</strong> ${agentEmail}</p>
+</div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const roleChangedTemp = (userName: string, oldRole: string, newRole: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Role Updated - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#f8f9fa;border:2px dashed #007bff;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">Your role has been updated</h2>
+<p>Hi ${userName},</p>
+<p>Your role in Slingvo has been changed.</p>
+<div class="info">
+  <p style="margin:0"><strong>Previous role:</strong> ${oldRole}</p>
+  <p style="margin:8px 0 0"><strong>New role:</strong> ${newRole}</p>
+</div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const workspaceCreatedTemp = (ownerName: string, adminEmail: string, adminName: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>New Workspace - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">New workspace created</h2>
+<p>Hi ${ownerName},</p>
+<p>A new customer workspace has been provisioned on Slingvo.</p>
+<div class="info">
+  <p style="margin:0"><strong>Name:</strong> ${adminName}</p>
+  <p style="margin:8px 0 0"><strong>Email:</strong> ${adminEmail}</p>
+</div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const inactivityNudgeTemp = (fullName: string, loginUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>We miss you - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">We haven't seen you in a while</h2>
+<p>Hi ${fullName},</p>
+<p>It's been a few days since you last logged in to Slingvo. Your leads and team are waiting — jump back in whenever you're ready.</p>
+<div style="text-align:center;margin:30px 0"><a href="${loginUrl}" class="button">Log back in</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const subscribeReminderTemp = (fullName: string, subscribeUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Complete your setup - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">Your account is ready — activate it now</h2>
+<p>Hi ${fullName},</p>
+<p>Your Slingvo account is set up, but you haven't started your subscription yet. Activate your plan to unlock your dialer, contacts, and team tools.</p>
+<div style="text-align:center;margin:30px 0"><a href="${subscribeUrl}" class="button">Activate my plan</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const reactivationTemp = (fullName: string, resubscribeUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Come back to Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">Your Slingvo access has ended — come back anytime</h2>
+<p>Hi ${fullName},</p>
+<p>Your Slingvo subscription is no longer active. Resubscribe to regain access to your dialer, contacts, and all your team's data.</p>
+<div style="text-align:center;margin:30px 0"><a href="${resubscribeUrl}" class="button">Resubscribe now</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
 export const paymentFailedTemp = (fullName: string, amount: string, billingUrl: string) => `
 <!DOCTYPE html>
 <html lang="en">
