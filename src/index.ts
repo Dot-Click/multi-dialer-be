@@ -10,7 +10,7 @@ import { envConfig, sessionMiddleware } from "@/lib/config";
 import { startRetentionJobs } from "@/services/retention.service";
 import { initJobs } from "@/jobs";
 import { handleStripeWebhook } from "@/routes/webhooks/stripe";
-import { handleSesNotification } from "@/routes/webhooks/ses";
+import { handleMailerSendWebhook } from "@/routes/webhooks/mailersend";
 import { handleUnsubscribe } from "@/routes/email/unsubscribe";
 import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
@@ -65,8 +65,9 @@ app.use(morgan("dev"));
 // Stripe webhook must be parsed as raw buffer before express.json()
 app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), handleStripeWebhook);
 
-// SES bounce/complaint notifications arrive from SNS as text/plain JSON.
-app.post("/api/webhooks/ses", express.text({ type: "*/*" }), handleSesNotification);
+// MailerSend activity webhooks (Sent/Delivered/Opened/Clicked/bounces/complaints/
+// unsubscribes) — raw buffer required for HMAC signature verification.
+app.post("/api/webhooks/mailersend", express.raw({ type: "application/json" }), handleMailerSendWebhook);
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
