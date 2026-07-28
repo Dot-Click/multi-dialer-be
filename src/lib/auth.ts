@@ -10,7 +10,7 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { newUserSignupTemp, loginAlertTemp, sendEmail } from "../utils/email";
+import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, sendEmail } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { ensureDncFolder } from "../routes/contact/service";
 import { initializeUserAccount } from "../routes/user/service";
@@ -37,7 +37,7 @@ interface AuthUser {
 const pendingPasswords = new Map<string, string>();
 
 export const auth = betterAuth({
-  appName: "Boilerplate",
+  appName: "Slingvo",
   database: prismaAdapter(prisma, { provider: "postgresql" }),
   user: {
     modelName: "User",
@@ -69,55 +69,21 @@ export const auth = betterAuth({
   emailVerification: {
     sendVerificationEmail: async ({
       user,
-      url,
     }: {
       user: AuthUser;
       url: string;
       token: string;
     }) => {
-      const data = await sendEmail(
+      const password = pendingPasswords.get(user.email.toLowerCase()) || "";
+      await sendEmail(
         user.email,
-        "Welcome to CallScout – Your Account Details",
-        `
-  <div style="font-family: Arial, sans-serif; background-color: #f4f6f8; padding: 20px;">
-    <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-      
-      <div style="text-align: center; margin-bottom: 20px;">
-        <h1 style="color: #2c3e50; margin: 0;">CallScout</h1>
-      </div>
-
-      <p style="font-size: 16px; color: #333;">
-        Hello <strong>${user.fullName ?? "User"}</strong>,
-      </p>
-
-      <h2 style="color: #28a745; margin-top: 20px;">
-        Welcome to CallScout!
-      </h2>
-
-      <p style="font-size: 15px; color: #555;">
-        Your account has been successfully created. Below are your login details:
-      </p>
-
-      <div style="background: #f8f9fa; border: 2px dashed #28a745; padding: 15px; border-radius: 8px; margin: 20px 0;">
-        <p style="margin: 5px 0; font-size: 15px;">
-          <strong>Email:</strong> ${user.email}
-        </p>
-        <p style="margin: 5px 0; font-size: 15px;">
-          <strong>Password:</strong> ${pendingPasswords.get(user.email.toLowerCase()) || "Undefined (Wait for console log)"}
-        </p>
-      </div>
-
-      <p style="font-size: 14px; color: #666;">
-        Please login and change your password after your first login.
-      </p>
-
-      <p style="font-size: 12px; color: #999; text-align: center; margin-top: 30px;">
-        © 2026 CallScout. All rights reserved.
-      </p>
-
-    </div>
-  </div>
-  `,
+        "Welcome to Slingvo – Your Account Details",
+        emailVerificationTemp(
+          user.fullName ?? "there",
+          user.email,
+          password,
+          `${envConfig.FRONTEND_URL}/admin/login`,
+        ),
       );
     },
   },
@@ -379,7 +345,7 @@ export const auth = betterAuth({
             // Send emails asynchronously (fire and forget)
             companiesToNotify.forEach((company) => {
               if (company.email && user) {
-                sendEmail(company.email, "New User Signed Up on CallScout", emailHtml)
+                sendEmail(company.email, "New User Signed Up on Slingvo", emailHtml)
                   .catch(err => console.error("Failed to send signup notification:", err));
               }
             });
@@ -442,7 +408,7 @@ export const auth = betterAuth({
             // Send emails asynchronously (fire and forget)
             companiesToNotify.forEach((company) => {
               if (company.email) {
-                sendEmail(company.email, "User Logged into CallScout", emailHtml)
+                sendEmail(company.email, "User Logged into Slingvo", emailHtml)
                   .catch(err => console.error("Failed to send login alert:", err));
               }
             });

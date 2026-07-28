@@ -190,30 +190,26 @@ export const newUserSignupTemp = (userEmail: string, signupTime: string) => `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>New User Signup on CallScout</title>
+    <title>New User Signup on Slingvo</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f6f8; }
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
         .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .header { text-align: center; border-bottom: 2px solid #28a745; margin-bottom: 20px; padding-bottom: 10px; }
+        .header { text-align: center; margin-bottom: 30px; }
         .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
-        .content { margin: 20px 0; font-size: 16px; }
-        .highlight { font-weight: bold; color: #28a745; }
-        .footer { text-align: center; margin-top: 30px; color: #999; font-size: 12px; }
+        .info { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">CallScout</div></div>
-        <div class="content">
-            <h2 style="color: #2c3e50;">New User Signup Notification</h2>
-            <p>Hello,</p>
-            <p>A new user has signed up on <span class="highlight">CallScout</span>.</p>
-            <p><strong>User Email:</strong> ${userEmail}</p>
-            <p><strong>Signup Time:</strong> ${signupTime}</p>
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <h2 style="color: #2c3e50;">New User Signup Notification</h2>
+        <p>A new user has signed up on Slingvo.</p>
+        <div class="info">
+            <p style="margin:5px 0;"><strong>Email:</strong> ${userEmail}</p>
+            <p style="margin:5px 0;"><strong>Signup Time:</strong> ${signupTime}</p>
         </div>
-        <div class="footer">
-            <p>© 2026 CallScout. All rights reserved.</p>
-        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
 </body>
 </html>
@@ -225,30 +221,67 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>User Login Alert - CallScout</title>
+    <title>User Login Alert - Slingvo</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f6f8; }
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
         .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .header { text-align: center; border-bottom: 20px solid #007bff; margin-bottom: 20px; padding-bottom: 10px; border-width: 2px; }
+        .header { text-align: center; margin-bottom: 30px; }
         .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
-        .content { margin: 20px 0; font-size: 16px; }
-        .highlight { font-weight: bold; color: #007bff; }
-        .footer { text-align: center; margin-top: 30px; color: #999; font-size: 12px; }
+        .info { background: #f8f9fa; border: 2px dashed #FFCA06; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">CallScout</div></div>
-        <div class="content">
-            <h2 style="color: #2c3e50;">User Login Alert</h2>
-            <p>Hello,</p>
-            <p>A user has logged in to <span class="highlight">CallScout</span>.</p>
-            <p><strong>Account:</strong> ${userEmail}</p>
-            <p><strong>Login Time:</strong> ${loginTime}</p>
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <h2 style="color: #2c3e50;">User Login Alert</h2>
+        <p>A user has logged in to Slingvo.</p>
+        <div class="info">
+            <p style="margin:5px 0;"><strong>Account:</strong> ${userEmail}</p>
+            <p style="margin:5px 0;"><strong>Login Time:</strong> ${loginTime}</p>
         </div>
-        <div class="footer">
-            <p>© 2026 CallScout. All rights reserved.</p>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const emailVerificationTemp = (fullName: string, email: string, password: string, loginUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Slingvo Account Details</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .credentials { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .cred-row { margin: 6px 0; font-size: 15px; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Welcome to Slingvo!</h2>
+            <p>Hi ${fullName || "there"},</p>
+            <p>Your account has been successfully created. Here are your login details:</p>
         </div>
+        <div class="credentials">
+            <div class="cred-row"><strong>Email:</strong> ${email}</div>
+            <div class="cred-row"><strong>Password:</strong> ${password}</div>
+        </div>
+        <p style="font-size:14px;color:#666;">Please log in and change your password after your first sign-in.</p>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${loginUrl}" class="button">Log In Now</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
 </body>
 </html>
