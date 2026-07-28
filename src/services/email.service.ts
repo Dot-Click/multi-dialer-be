@@ -86,36 +86,30 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
   return { kind: "mailersend" };
 }
 
+export interface DispatchResult {
+  success: boolean;
+  messageId?: string | null;
+  error?: string;
+}
+
 /**
- * Sends an email via the resolved transporter (company SMTP if configured and
- * verified, otherwise MailerSend) and logs it to EmailLog if userId is provided.
- * `replyToEmail` (falling back to `from`) is applied as the Reply-To header
- * regardless of which transporter is used.
+ * Raw send — resolves transporter, applies unsubscribe footer, and delivers.
+ * Does NOT touch EmailLog or EmailQueue. Called by sendEmail() on the hot path
+ * and by the EmailQueue retry job on the cold path.
+ *
+ * Returns suppression errors without throwing so callers can handle them
+ * without retry (suppressed addresses should go straight to DEAD).
  */
-export async function sendEmail(options: SendEmailOptions) {
-  const { to, from, subject, text, html, userId, contactId, leadId, templateId, companyId, replyToEmail } = options;
+export async function dispatchEmail(options: SendEmailOptions): Promise<DispatchResult & { suppressed?: true }> {
+  const { to, from, subject, text, html, companyId, replyToEmail } = options;
 
-  let status: EmailStatus = EmailStatus.SENT;
-  let errorMsg: string | null = null;
-  let messageId: string | null = null;
-
-  // Suppression gate. BOUNCE/COMPLAINT block ALL mail to the address.
-  // UNSUBSCRIBE blocks only marketing mail (transactional, e.g. OTP, still sends).
+  // Suppression gate — re-checked on every attempt so a bounce registered
+  // after the initial enqueue is respected on retry.
   const suppression = await getSuppression(to);
   if (suppression && (suppression !== "UNSUBSCRIBE" || options.includeUnsubscribe)) {
-    status = EmailStatus.FAILED;
-    errorMsg = `Recipient suppressed (${suppression})`;
-    console.warn(`[EmailService] Skipped send to ${to} — ${errorMsg}`);
-    if (userId) {
-      try {
-        await prisma.emailLog.create({
-          data: { to, from, subject, content: html || text, status, error: errorMsg, messageId: null, userId, contactId, leadId, templateId },
-        });
-      } catch (dbError) {
-        console.error("[EmailService] Failed to log suppressed email:", dbError);
-      }
-    }
-    return { success: false, error: errorMsg };
+    const reason = `Recipient suppressed (${suppression})`;
+    console.warn(`[EmailService] Skipped send to ${to} — ${reason}`);
+    return { success: false, error: reason, suppressed: true };
   }
 
   // Marketing emails get an unsubscribe footer (CAN-SPAM).
@@ -126,47 +120,22 @@ export async function sendEmail(options: SendEmailOptions) {
   }
 
   const transport = await getEmailTransporter(companyId);
-
   const fromEmail = transport.kind === "smtp" ? transport.fromEmail : (envConfig.MAILERSEND_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com");
-  const fromName = transport.kind === "smtp" ? transport.fromName : (options.fromName || envConfig.MAILERSEND_FROM_NAME || "Dialer System");
+  const fromName  = transport.kind === "smtp" ? transport.fromName  : (options.fromName || envConfig.MAILERSEND_FROM_NAME || "Dialer System");
   const fromHeader = `${fromName} <${fromEmail}>`;
-
-  // For SMTP, Reply-To is always the configured fromEmail — not the agent's
-  // personal address — so replies land in the company inbox, not a personal one.
   const replyTo = transport.kind === "smtp" ? fromEmail : (replyToEmail || from || undefined);
 
-  console.log(`[EmailService] Sending email to ${to} from ${fromHeader} via ${transport.kind} (replyTo: ${replyTo})`);
+  console.log(`[EmailService] Sending to ${to} via ${transport.kind}`);
 
   try {
+    let messageId: string | null = null;
+
     if (transport.kind === "smtp") {
-      const info = await transport.transporter.sendMail({
-        from: fromHeader,
-        to,
-        replyTo,
-        subject,
-        text,
-        html: htmlBody,
-      });
+      const info = await transport.transporter.sendMail({ from: fromHeader, to, replyTo, subject, text, html: htmlBody });
       messageId = info.messageId || null;
     } else {
       // --- Retired SES send path (kept for reference / easy rollback) ---
-      // const command = new SendEmailCommand({
-      //   FromEmailAddress: fromHeader,
-      //   Destination: { ToAddresses: [to] },
-      //   ReplyToAddresses: replyTo ? [replyTo] : undefined,
-      //   ...(envConfig.SES_CONFIGURATION_SET
-      //     ? { ConfigurationSetName: envConfig.SES_CONFIGURATION_SET }
-      //     : {}),
-      //   Content: {
-      //     Simple: {
-      //       Subject: { Data: subject, Charset: "UTF-8" },
-      //       Body: {
-      //         Html: { Data: htmlBody, Charset: "UTF-8" },
-      //         Text: { Data: text, Charset: "UTF-8" },
-      //       },
-      //     },
-      //   },
-      // });
+      // const command = new SendEmailCommand({ ... });
       // const response = await ses.send(command);
       // messageId = response.MessageId || null;
 
@@ -177,9 +146,7 @@ export async function sendEmail(options: SendEmailOptions) {
         .setSubject(subject)
         .setHtml(htmlBody)
         .setText(text);
-      if (replyTo) {
-        emailParams.setReplyTo(new Sender(replyTo));
-      }
+      if (replyTo) emailParams.setReplyTo(new Sender(replyTo));
 
       const response = await mailerSend.email.send(emailParams);
       messageId =
@@ -188,37 +155,80 @@ export async function sendEmail(options: SendEmailOptions) {
         null;
     }
 
-    console.log(`[EmailService] Email sent to ${to} (messageId: ${messageId})`);
-    return { success: true };
+    console.log(`[EmailService] Delivered to ${to} (messageId: ${messageId})`);
+    return { success: true, messageId };
   } catch (error: any) {
-    status = EmailStatus.FAILED;
-    errorMsg = error?.message || `Unknown ${transport.kind === "smtp" ? "SMTP" : "MailerSend"} error`;
-    console.error(`[EmailService] Error sending email via ${transport.kind}:`, error);
-    return { success: false, error: errorMsg };
-  } finally {
-    // Log to DB only if userId is provided
-    if (userId) {
-      try {
-        await prisma.emailLog.create({
-          data: {
-            to,
-            from,
-            subject,
-            content: html || text,
-            status,
-            error: errorMsg,
-            messageId,
-            userId,
-            contactId,
-            leadId,
-            templateId
-          }
-        });
-      } catch (dbError) {
-        console.error("[EmailService] Failed to log email history to DB:", dbError);
-      }
+    const msg = error?.message || `Unknown ${transport.kind === "smtp" ? "SMTP" : "MailerSend"} error`;
+    console.error(`[EmailService] Dispatch failed for ${to}:`, msg);
+    return { success: false, error: msg };
+  }
+}
+
+// Exponential-backoff delays (minutes) for each retry attempt index (0-based).
+const RETRY_BACKOFF_MINUTES = [2, 10, 30];
+
+/**
+ * Sends an email via the resolved transporter and logs it to EmailLog.
+ * On transient failure the email is automatically enqueued for up to
+ * 3 retries with exponential back-off (2 → 10 → 30 minutes).
+ *
+ * Suppressed addresses are logged as FAILED immediately — they are never
+ * retried since suppression is a permanent/intentional state.
+ */
+export async function sendEmail(options: SendEmailOptions) {
+  const { to, from, subject, text, html, userId, contactId, leadId, templateId } = options;
+
+  const result = await dispatchEmail(options);
+
+  // ── Log outcome to EmailLog ───────────────────────────────────────────────
+  if (userId) {
+    try {
+      await prisma.emailLog.create({
+        data: {
+          to, from, subject,
+          content: html || text,
+          status:    result.success ? EmailStatus.SENT : EmailStatus.FAILED,
+          error:     result.success ? null : (result.error ?? null),
+          messageId: result.success ? (result.messageId ?? null) : null,
+          userId, contactId, leadId, templateId,
+        },
+      });
+    } catch (dbErr) {
+      console.error("[EmailService] Failed to write EmailLog:", dbErr);
     }
   }
+
+  // ── On failure, enqueue for retry (unless suppressed — those are permanent) ─
+  if (!result.success && !result.suppressed) {
+    try {
+      const nextRetryAt = new Date(Date.now() + RETRY_BACKOFF_MINUTES[0] * 60 * 1000);
+      await prisma.emailQueue.create({
+        data: {
+          to, from,
+          fromName:           options.fromName           ?? null,
+          subject,
+          text,
+          html:               html                       ?? null,
+          replyToEmail:       options.replyToEmail       ?? null,
+          includeUnsubscribe: options.includeUnsubscribe ?? false,
+          companyId:          options.companyId          ?? null,
+          userId:             userId                     ?? null,
+          contactId:          contactId                  ?? null,
+          leadId:             leadId                     ?? null,
+          templateId:         templateId                 ?? null,
+          attempts:   1,
+          maxAttempts: 3,
+          nextRetryAt,
+          lastError: result.error ?? null,
+        },
+      });
+      console.log(`[EmailService] Queued retry for ${to} (next attempt in ${RETRY_BACKOFF_MINUTES[0]}m)`);
+    } catch (queueErr) {
+      console.error("[EmailService] Failed to enqueue retry:", queueErr);
+    }
+  }
+
+  return { success: result.success, error: result.error };
 }
 
 /**

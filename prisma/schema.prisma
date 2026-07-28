@@ -1784,6 +1784,48 @@ enum EmailStatus {
   FAILED
 }
 
+enum EmailQueueStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD
+}
+
+model EmailQueue {
+  id                 String           @id @default(uuid())
+
+  // Email payload — everything needed to resend without the original caller
+  to                 String
+  from               String
+  fromName           String?
+  subject            String
+  text               String           @db.Text
+  html               String?          @db.Text
+  replyToEmail       String?
+  includeUnsubscribe Boolean          @default(false)
+  companyId          String?
+
+  // Tracking context (carried through so successful retries land in EmailLog)
+  userId             String?
+  contactId          String?
+  leadId             String?
+  templateId         String?
+
+  // Queue state
+  status             EmailQueueStatus @default(PENDING)
+  attempts           Int              @default(0)
+  maxAttempts        Int              @default(3)
+  nextRetryAt        DateTime         @default(now())
+  lastError          String?          @db.Text
+  messageId          String?
+
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([status, nextRetryAt])
+  @@map("email_queue")
+}
+
 model EmailLog {
   id        String      @id @default(uuid())
   to        String
