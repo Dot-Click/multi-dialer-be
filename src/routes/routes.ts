@@ -50,6 +50,7 @@ import calendarSyncRoutes from "./calendarSync";
 import agentSeatsRoutes from "./agentSeats";
 import smtpSettingsRoutes from "./settings/smtp";
 import emailAnalyticsRoutes from "./email-analytics";
+import emailPreferencesRoutes from "./email-preferences";
 
 const router = Router()
 
@@ -103,7 +104,8 @@ router.use("/agent-seats", agentSeatsRoutes)
 router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
 router.use("/email-history",   protectRoute, emailHistoryRoutes)
-router.use("/email-analytics", protectRoute, checkRole(["OWNER"]), emailAnalyticsRoutes)
+router.use("/email-analytics",   protectRoute, checkRole(["OWNER"]), emailAnalyticsRoutes)
+router.use("/email-preferences", protectRoute, checkRole(["ADMIN", "OWNER"]), emailPreferencesRoutes)
 router.use("/payment", paymentRoutes)
 router.use("/calendar-sync", calendarSyncRoutes)
 router.use("/a2p", a2pRoutes)

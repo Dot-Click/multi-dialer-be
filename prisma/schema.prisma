@@ -285,7 +285,8 @@ model User {
   tasks                  Task[]
   externalCalendarTokens ExternalCalendarToken[]
 
-  planChanges SubscriptionPlanChange[]
+  planChanges      SubscriptionPlanChange[]
+  emailPreferences UserEmailPreferences?
 
   @@map("users")
 }
@@ -1983,4 +1984,22 @@ model SubscriptionPlanChange {
   changedAt  DateTime @default(now())
 
   @@map("subscription_plan_changes")
+}
+
+model UserEmailPreferences {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Optional — admin can opt out of non-critical lifecycle emails.
+  // Billing and security emails (payment failed, card expiring,
+  // subscription paused/expired/cancelled) are always sent regardless.
+  trialReminders   Boolean @default(true) // trial ending soon (7 days before)
+  inactivityNudges Boolean @default(true) // inactive for 3–4 days
+  marketingEmails  Boolean @default(true) // reactivation + subscribe reminder
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_email_preferences")
 }
