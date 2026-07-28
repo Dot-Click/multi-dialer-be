@@ -49,6 +49,7 @@ import paymentRoutes from "./payment";
 import calendarSyncRoutes from "./calendarSync";
 import agentSeatsRoutes from "./agentSeats";
 import smtpSettingsRoutes from "./settings/smtp";
+import emailAnalyticsRoutes from "./email-analytics";
 
 const router = Router()
 
@@ -101,7 +102,8 @@ router.use("/plan-limits", planLimitsRoutes)
 router.use("/agent-seats", agentSeatsRoutes)
 router.use("/push", protectRoute, pushRoutes)
 router.use("/notification", protectRoute, notificationRoutes)
-router.use("/email-history", protectRoute, emailHistoryRoutes)
+router.use("/email-history",   protectRoute, emailHistoryRoutes)
+router.use("/email-analytics", protectRoute, checkRole(["OWNER"]), emailAnalyticsRoutes)
 router.use("/payment", paymentRoutes)
 router.use("/calendar-sync", calendarSyncRoutes)
 router.use("/a2p", a2pRoutes)
