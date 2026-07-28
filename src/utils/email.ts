@@ -540,6 +540,74 @@ export const subscriptionChangedTemp = (
 </html>
 `
 
+export const gettingStartedTemp = (fullName: string, dashboardUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Get Started with Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .step { display: flex; align-items: flex-start; margin: 18px 0; }
+        .step-number { background: #FFCA06; color: #1a1a1a; font-weight: bold; font-size: 15px; min-width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-right: 14px; flex-shrink: 0; }
+        .step-body h3 { margin: 0 0 4px; font-size: 15px; color: #2c3e50; }
+        .step-body p { margin: 0; font-size: 14px; color: #555; }
+        .divider { border: none; border-top: 1px solid #eee; margin: 24px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <h2 style="color: #2c3e50; margin-top: 0;">Here's how to get started</h2>
+        <p>Hi ${fullName},</p>
+        <p>Your Slingvo workspace is ready. Follow these steps to get up and running quickly:</p>
+
+        <div class="step">
+            <span class="step-number">1</span>
+            <div class="step-body">
+                <h3>Set up your caller IDs</h3>
+                <p>Add the phone numbers your agents will dial from. Go to <strong>Settings → Phone Numbers</strong> to configure your lines.</p>
+            </div>
+        </div>
+        <div class="step">
+            <span class="step-number">2</span>
+            <div class="step-body">
+                <h3>Invite your agents</h3>
+                <p>Add your team under <strong>Team Management</strong>. Each agent gets their own login and call queue.</p>
+            </div>
+        </div>
+        <div class="step">
+            <span class="step-number">3</span>
+            <div class="step-body">
+                <h3>Import your contacts</h3>
+                <p>Upload a CSV of leads or add contacts manually from <strong>Contacts</strong>. This is what your agents will dial through.</p>
+            </div>
+        </div>
+        <div class="step">
+            <span class="step-number">4</span>
+            <div class="step-body">
+                <h3>Launch a campaign</h3>
+                <p>Create a campaign, assign contacts and agents, and start dialing. Monitor progress in real time from your <strong>Dashboard</strong>.</p>
+            </div>
+        </div>
+
+        <hr class="divider" />
+        <p style="font-size:14px;color:#555;">Need help? Reach out to our support team anytime — we're here to make sure you succeed.</p>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${dashboardUrl}" class="button">Go to Dashboard</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
 export const trialStartedTemp = (fullName: string, trialEndDate: string, dashboardUrl: string) => `
 <!DOCTYPE html>
 <html lang="en">

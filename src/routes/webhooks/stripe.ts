@@ -5,7 +5,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling.service";
-import { sendEmail, paymentFailedTemp, paymentSucceededTemp, paymentReceiptTemp, subscriptionCancelledTemp, subscriptionChangedTemp, subscriptionActivatedTemp, subscriptionPausedTemp, subscriptionExpiredTemp, workspaceCreatedTemp, trialStartedTemp } from "../../utils/email";
+import { sendEmail, paymentFailedTemp, paymentSucceededTemp, paymentReceiptTemp, subscriptionCancelledTemp, subscriptionChangedTemp, subscriptionActivatedTemp, subscriptionPausedTemp, subscriptionExpiredTemp, workspaceCreatedTemp, trialStartedTemp, gettingStartedTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { notifyClients } from "../../services/leadStoreNotify.service";
@@ -595,6 +595,17 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           ),
           { userId: newUser.id },
         ).catch(err => console.error(`[Stripe Webhook] Failed to send trial-started email to ${newUser.email}:`, err?.message));
+
+        // Send getting-started guide to help the new admin onboard
+        sendEmail(
+          newUser.email,
+          "Get started with Slingvo",
+          gettingStartedTemp(
+            newUser.fullName || "there",
+            `${envConfig.FRONTEND_URL}/admin/dashboard`,
+          ),
+          { userId: newUser.id },
+        ).catch(err => console.error(`[Stripe Webhook] Failed to send getting-started email to ${newUser.email}:`, err?.message));
 
         // Fire Zapier Webhook
         console.log("[Zapier] About to fire webhook for:", email);
