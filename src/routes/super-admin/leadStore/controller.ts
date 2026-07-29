@@ -38,7 +38,7 @@ export const listMyPlusLeadsAccounts = async (req: Request, res: Response): Prom
       include: {
         user: { select: { id: true, fullName: true, email: true } },
         leadStores: {
-          select: { id: true, title: true, status: true, userId: true },
+          select: { id: true, title: true, status: true, userId: true, assignedPackage: true },
         },
       },
       orderBy: { createdAt: "desc" },
