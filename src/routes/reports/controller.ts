@@ -28,19 +28,27 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             userId = queryUserId as string;
         }
 
+        const startDateObj = startDate ? new Date(startDate as string) : null;
+        // Extend endDate to end of day so records created on that date are included
+        const endDateObj = endDate ? (() => {
+            const d = new Date(endDate as string);
+            d.setHours(23, 59, 59, 999);
+            return d;
+        })() : null;
+
         const dateFilter: any = {};
-        if (startDate || endDate) {
+        if (startDateObj || endDateObj) {
             dateFilter.createdAt = {};
-            if (startDate) dateFilter.createdAt.gte = new Date(startDate as string);
-            if (endDate) dateFilter.createdAt.lte = new Date(endDate as string);
+            if (startDateObj) dateFilter.createdAt.gte = startDateObj;
+            if (endDateObj) dateFilter.createdAt.lte = endDateObj;
         }
 
         // 1. Dialing Time (Total duration of calls in the period)
         const calls = await prisma.callRecord.aggregate({
             where: {
                 userId,
-                ...(startDate ? { startTime: { gte: new Date(startDate as string) } } : {}),
-                ...(endDate ? { startTime: { lte: new Date(endDate as string) } } : {}),
+                ...(startDateObj ? { startTime: { gte: startDateObj } } : {}),
+                ...(endDateObj ? { startTime: { lte: endDateObj } } : {}),
             },
             _sum: { duration: true }
         });
@@ -54,19 +62,22 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             }
         });
 
-        // 3. Leads (total assigned to agent)
+        // 3. Leads (total assigned to agent, filtered by date range when provided)
         const totalLeads = await prisma.lead.count({
-            where: { userId }
+            where: {
+                userId,
+                ...dateFilter
+            }
         });
 
         // 4. Contacts (Calls that resulted in analysis - implying a conversation happened)
         // Since CallAnalysis doesn't have a direct relation in schema, we'll use a subquery approach
         // but for better performance we filter CallAnalysis by date if provided
         const analysisWhere: any = {};
-        if (startDate || endDate) {
+        if (startDateObj || endDateObj) {
             analysisWhere.createdAt = {};
-            if (startDate) analysisWhere.createdAt.gte = new Date(startDate as string);
-            if (endDate) analysisWhere.createdAt.lte = new Date(endDate as string);
+            if (startDateObj) analysisWhere.createdAt.gte = startDateObj;
+            if (endDateObj) analysisWhere.createdAt.lte = endDateObj;
         }
 
         const analyzedCalls = await prisma.callAnalysis.findMany({
@@ -87,10 +98,10 @@ export const getAgentReport: RequestHandler = async (req, res) => {
         const appointmentsSet = await prisma.calendar.count({
             where: {
                 assignToId: userId,
-                ...(startDate || endDate ? {
+                ...(startDateObj || endDateObj ? {
                     startDate: {
-                        ...(startDate ? { gte: new Date(startDate as string) } : {}),
-                        ...(endDate ? { lte: new Date(endDate as string) } : {})
+                        ...(startDateObj ? { gte: startDateObj } : {}),
+                        ...(endDateObj ? { lte: endDateObj } : {})
                     }
                 } : {})
             }
@@ -101,10 +112,10 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             where: {
                 assignToId: userId,
                 status: "MET",
-                ...(startDate || endDate ? {
+                ...(startDateObj || endDateObj ? {
                     startDate: {
-                        ...(startDate ? { gte: new Date(startDate as string) } : {}),
-                        ...(endDate ? { lte: new Date(endDate as string) } : {})
+                        ...(startDateObj ? { gte: startDateObj } : {}),
+                        ...(endDateObj ? { lte: endDateObj } : {})
                     }
                 } : {})
             }
