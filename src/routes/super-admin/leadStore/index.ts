@@ -8,6 +8,7 @@ import {
   getAccountPackages,
   linkLeadStoreAccount,
   unlinkLeadStoreAccount,
+  grantLeadStoreServices,
 } from "./controller";
 
 const router = Router();
@@ -18,6 +19,7 @@ router.get("/portal-accounts", getPortalAccounts);
 router.post("/accounts", registerAccount);
 router.patch("/accounts/:configId", updateAccount);
 router.get("/accounts/:configId/packages", getAccountPackages);
+router.post("/grant", grantLeadStoreServices);
 router.post("/:leadStoreId/link", linkLeadStoreAccount);
 router.post("/:leadStoreId/unlink", unlinkLeadStoreAccount);
 

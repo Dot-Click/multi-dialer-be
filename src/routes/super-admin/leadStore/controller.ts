@@ -155,6 +155,75 @@ export const linkLeadStoreAccount = async (req: Request, res: Response): Promise
 };
 
 /**
+ * Grants a customer one or more Lead Store products directly — no Stripe
+ * checkout, no charge (a $0 invoice marked PAID for ledger consistency).
+ * Creates each as PENDING_SETUP, same as a real purchase, so the existing
+ * link-account/assign-package flow is what actually activates it — a
+ * granted product only counts as "subscribed" once Client assigns it a
+ * MyPlusLeads package, exactly like a paid purchase.
+ */
+export const grantLeadStoreServices = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId, serviceIds } = req.body;
+
+    if (!userId || !Array.isArray(serviceIds) || serviceIds.length === 0) {
+      errorResponse(res, "userId and a non-empty serviceIds array are required", 400);
+      return;
+    }
+
+    const services = await prisma.leadStoreService.findMany({ where: { id: { in: serviceIds } } });
+    if (services.length === 0) {
+      errorResponse(res, "No matching Lead Store services found", 404);
+      return;
+    }
+
+    // Skip services this customer already has an active/pending purchase for.
+    const existing = await prisma.leadStore.findMany({
+      where: { userId, serviceId: { in: serviceIds }, status: { in: ["PENDING_SETUP", "ACTIVE"] } },
+      select: { serviceId: true },
+    });
+    const alreadyHas = new Set(existing.map((e) => e.serviceId));
+    const toGrant = services.filter((s) => !alreadyHas.has(s.id));
+
+    const created = await Promise.all(
+      toGrant.map(async (service) => {
+        const billing = await prisma.billing.create({
+          data: {
+            userId,
+            invoiceNumber: `GRANT-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            planName: service.name,
+            amount: 0,
+            currency: "usd",
+            date: new Date(),
+            status: "PAID",
+            billingCycle: "MONTHLY",
+          },
+        });
+
+        return prisma.leadStore.create({
+          data: {
+            title: service.name,
+            description: service.description || "",
+            price: 0,
+            userId,
+            billingId: billing.id,
+            serviceId: service.id,
+            status: "PENDING_SETUP",
+          },
+        });
+      }),
+    );
+
+    successResponse(res, 200, `Granted ${created.length} of ${serviceIds.length} requested service(s)`, {
+      granted: created,
+      skipped: services.length - toGrant.length,
+    });
+  } catch (error: any) {
+    errorResponse(res, error.message || "Failed to grant Lead Store services", error.statusCode || 500);
+  }
+};
+
+/**
  * Clears the linked account from a purchase (e.g. to reassign a different
  * one), putting it back into PENDING_SETUP.
  */
