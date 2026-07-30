@@ -164,6 +164,7 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
         startDate: populatedEvent.startDate,
         endDate: populatedEvent.endDate,
         category: populatedEvent.category,
+        eventType: populatedEvent.eventType,
       };
       Promise.allSettled([
         syncCalendarEventToGoogle(assignToId, eventPayload),
@@ -244,6 +245,7 @@ export const updateCalendarEvent = async (req: Request, res: Response): Promise<
         startDate: updatedEvent.startDate,
         endDate: updatedEvent.endDate,
         category: updatedEvent.category,
+        eventType: updatedEvent.eventType,
         externalEventId: event.externalEventId,
       };
       syncCalendarEventToGoogle(event.assignToId, updatedPayload).catch(console.error);

@@ -20,6 +20,20 @@ function toLocalDateTimeString(utcDate: Date, timeZone: string): string {
     .replace(" ", "T");
 }
 
+// "YYYY-MM-DD" in the given timezone — the date-only format both Google and
+// Outlook require for all-day events (a dateTime with a time component always
+// renders as a timed 1-hour block, never as "All day", regardless of span).
+function toLocalDateOnlyString(utcDate: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(utcDate);
+}
+
+function addDaysToDateOnlyString(dateOnly: string, days: number): string {
+  const [y, m, d] = dateOnly.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
 function getOAuth2Client() {
   return new google.auth.OAuth2(
     process.env.GOOGLE_CALENDAR_CLIENT_ID,
@@ -319,6 +333,7 @@ export async function syncCalendarEventToGoogle(
     startDate: Date;
     endDate?: Date | null;
     category?: string;
+    eventType?: string;
     externalEventId?: string | null;
   },
 ): Promise<string | null> {
@@ -334,12 +349,23 @@ export async function syncCalendarEventToGoogle(
   const eventBody: any = {
     summary: event.title,
     description: event.description || undefined,
-    start: { dateTime: toLocalDateTimeString(start, timeZone), timeZone },
-    end: { dateTime: toLocalDateTimeString(end, timeZone), timeZone },
     extendedProperties: {
       private: { slingvoId: event.id, slingvoType: event.category?.toLowerCase() || "event" },
     },
   };
+
+  if (event.eventType === "ALL_DAY") {
+    // Google requires date-only (no time) for a true "All day" event, and its
+    // end date is EXCLUSIVE — a single-day event needs end = start + 1 day,
+    // or the day after the last calendar day for a multi-day span.
+    const startDateOnly = toLocalDateOnlyString(start, timeZone);
+    const endDateOnly = toLocalDateOnlyString(end, timeZone);
+    eventBody.start = { date: startDateOnly };
+    eventBody.end = { date: addDaysToDateOnlyString(endDateOnly, 1) };
+  } else {
+    eventBody.start = { dateTime: toLocalDateTimeString(start, timeZone), timeZone };
+    eventBody.end = { dateTime: toLocalDateTimeString(end, timeZone), timeZone };
+  }
 
   if (event.externalEventId) {
     try {
@@ -659,6 +685,7 @@ export async function syncCalendarEventToOutlook(
     description?: string | null;
     startDate: Date;
     endDate?: Date | null;
+    eventType?: string;
     externalEventId?: string | null;
   },
 ): Promise<string | null> {
@@ -668,12 +695,25 @@ export async function syncCalendarEventToOutlook(
   const start = event.startDate;
   const end = event.endDate ?? new Date(start.getTime() + 60 * 60 * 1000);
 
-  const eventBody = {
+  const eventBody: any = {
     subject: event.title,
     body: { contentType: "text", content: event.description || "" },
-    start: { dateTime: start.toISOString().replace("Z", ""), timeZone: "UTC" },
-    end: { dateTime: end.toISOString().replace("Z", ""), timeZone: "UTC" },
   };
+
+  if (event.eventType === "ALL_DAY") {
+    // Outlook requires isAllDay:true PLUS midnight-to-midnight start/end —
+    // a dateTime with a time-of-day (even 00:00 without isAllDay) renders as
+    // a normal timed block, never as "All day". End is exclusive, same as
+    // Google: a single-day event needs end = start-day + 1.
+    const startDateOnly = start.toISOString().slice(0, 10);
+    const endDateOnly = end.toISOString().slice(0, 10);
+    eventBody.isAllDay = true;
+    eventBody.start = { dateTime: `${startDateOnly}T00:00:00`, timeZone: "UTC" };
+    eventBody.end = { dateTime: `${addDaysToDateOnlyString(endDateOnly, 1)}T00:00:00`, timeZone: "UTC" };
+  } else {
+    eventBody.start = { dateTime: start.toISOString().replace("Z", ""), timeZone: "UTC" };
+    eventBody.end = { dateTime: end.toISOString().replace("Z", ""), timeZone: "UTC" };
+  }
 
   if (event.externalEventId) {
     try {
