@@ -1,6 +1,18 @@
 import prisma from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/utils/handler";
 import { RequestHandler } from "express";
+import { Prisma } from "@prisma/client";
+
+// "HH:mm" -> minutes since midnight; returns null on anything unparseable
+function parseTimeToMinutes(value: unknown): number | null {
+    if (typeof value !== "string") return null;
+    const match = value.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+    return hours * 60 + minutes;
+}
 
 /**
  * Get call details report
@@ -16,7 +28,10 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
             return;
         }
 
-        const { startDate, endDate, userId: queryUserId, page = 1, limit = 50 } = req.query;
+        const {
+            startDate, endDate, userId: queryUserId, page = 1, limit = 50,
+            callerId, dayOfWeek, timeFrameStart, timeFrameEnd
+        } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
         // Determine target userId
@@ -29,7 +44,43 @@ export const getCallDetailsReport: RequestHandler = async (req, res) => {
         if (startDate || endDate) {
             where.createdAt = {};
             if (startDate) where.createdAt.gte = new Date(startDate as string);
-            if (endDate) where.createdAt.lte = new Date(endDate as string);
+            if (endDate) {
+                // Extend to end of day so records created on that date are included
+                const end = new Date(endDate as string);
+                end.setHours(23, 59, 59, 999);
+                where.createdAt.lte = end;
+            }
+        }
+
+        if (callerId && callerId !== "all") {
+            where.callerIdId = callerId as string;
+        }
+
+        // Day-of-week (0=Sun..6=Sat) and time-of-day filters need EXTRACT(), which
+        // Prisma's query builder can't express — resolve matching ids via raw SQL
+        // first, then constrain the main query with an `id IN (...)`.
+        const days = dayOfWeek
+            ? (dayOfWeek as string).split(",").map(Number).filter((n) => !isNaN(n) && n >= 0 && n <= 6)
+            : [];
+        const startMinutes = parseTimeToMinutes(timeFrameStart);
+        const endMinutes = parseTimeToMinutes(timeFrameEnd);
+
+        if (days.length > 0 || startMinutes !== null || endMinutes !== null) {
+            const conditions: Prisma.Sql[] = [Prisma.sql`"userId" = ${userId}`];
+            if (days.length > 0) {
+                conditions.push(Prisma.sql`EXTRACT(DOW FROM "startTime") IN (${Prisma.join(days)})`);
+            }
+            if (startMinutes !== null) {
+                conditions.push(Prisma.sql`(EXTRACT(HOUR FROM "startTime") * 60 + EXTRACT(MINUTE FROM "startTime")) >= ${startMinutes}`);
+            }
+            if (endMinutes !== null) {
+                conditions.push(Prisma.sql`(EXTRACT(HOUR FROM "startTime") * 60 + EXTRACT(MINUTE FROM "startTime")) <= ${endMinutes}`);
+            }
+
+            const matchingIds = await prisma.$queryRaw<{ id: string }[]>(
+                Prisma.sql`SELECT id FROM call_records WHERE ${Prisma.join(conditions, " AND ")}`
+            );
+            where.id = { in: matchingIds.map((r) => r.id) };
         }
 
         // Fetch call records with leads, contacts, and sessions

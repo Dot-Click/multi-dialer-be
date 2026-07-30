@@ -8,7 +8,7 @@ import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.serv
 import { subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { sendEmail, welcomeTemp, memberAddedTemp, memberRemovedTemp, roleChangedTemp } from "../../utils/email";
+import { sendEmail, welcomeTemp, agentInviteTemp, memberAddedTemp, memberRemovedTemp, roleChangedTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
@@ -178,35 +178,50 @@ export async function createUserInDb(payload: any) {
         },
     });
 
-    // Send welcome email with login credentials — non-blocking
-    sendEmail(
-        newUser.email,
-        "Welcome to Slingvo - Your Account Details",
-        welcomeTemp(newUser.email, password),
-        { userId: newUser.id },
-    ).catch(err =>
-        console.error("[UserService] Failed to send welcome email:", err?.message ?? err)
-    );
-
-    // Notify the owning admin when an agent is added to their workspace
+    // Send invite/welcome email with login credentials — non-blocking
     if (newUser.role === "AGENT" && rest.createdById) {
+        // Fetch admin name for the invite email and the member-added notification in one shot
         prisma.user.findUnique({ where: { id: rest.createdById }, select: { id: true, email: true, fullName: true } })
             .then(admin => {
-                if (!admin) return;
-                return sendEmail(
-                    admin.email,
-                    "New team member added to your Slingvo workspace",
-                    memberAddedTemp(admin.fullName || "there", newUser.fullName || newUser.email, newUser.email),
-                    { userId: admin.id },
-                );
-            })
-            .catch(err => console.error("[UserService] Failed to send member-added email:", err?.message ?? err));
-    }
+                // Agent invite email to the new agent
+                sendEmail(
+                    newUser.email,
+                    `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
+                    agentInviteTemp(
+                        newUser.fullName || "there",
+                        admin?.fullName || "your admin",
+                        newUser.email,
+                        password,
+                        `${envConfig.FRONTEND_URL}/admin/login`,
+                    ),
+                    { userId: newUser.id },
+                ).catch(err => console.error("[UserService] Failed to send agent invite email:", err?.message ?? err));
 
-    // Send payment setup email — non-blocking, passes the admin-selected planId
-    sendPaymentSetupEmail(newUser, planId ?? undefined).catch(err =>
-        console.error("[UserService] Failed to send payment setup email:", err?.message ?? err)
-    );
+                // Member-added notification to the admin
+                if (admin) {
+                    sendEmail(
+                        admin.email,
+                        "New team member added to your Slingvo workspace",
+                        memberAddedTemp(admin.fullName || "there", newUser.fullName || newUser.email, newUser.email),
+                        { userId: admin.id },
+                    ).catch(err => console.error("[UserService] Failed to send member-added email:", err?.message ?? err));
+                }
+            })
+            .catch(err => console.error("[UserService] Failed to fetch admin for invite emails:", err?.message ?? err));
+    } else {
+        // Non-agent (ADMIN/OWNER created manually) gets the generic welcome email
+        sendEmail(
+            newUser.email,
+            "Welcome to Slingvo - Your Account Details",
+            welcomeTemp(newUser.email, password),
+            { userId: newUser.id },
+        ).catch(err => console.error("[UserService] Failed to send welcome email:", err?.message ?? err));
+
+        // Payment setup email only applies to ADMIN accounts, not agents
+        sendPaymentSetupEmail(newUser, planId ?? undefined).catch(err =>
+            console.error("[UserService] Failed to send payment setup email:", err?.message ?? err)
+        );
+    }
 
     return newUser;
 }

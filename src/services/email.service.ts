@@ -158,8 +158,22 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
     console.log(`[EmailService] Delivered to ${to} (messageId: ${messageId})`);
     return { success: true, messageId };
   } catch (error: any) {
-    const msg = error?.message || `Unknown ${transport.kind === "smtp" ? "SMTP" : "MailerSend"} error`;
+    // MailerSend SDK errors arrive as { statusCode, body: { message, errors } }
+    // rather than a standard Error, so error.message is often undefined.
+    const bodyMsg =
+      error?.body?.message ||
+      (typeof error?.body === "string" ? error.body : null);
+    const msg =
+      error?.message ||
+      (bodyMsg ? `MailerSend API ${error?.statusCode ?? "error"}: ${bodyMsg}` : null) ||
+      (error?.statusCode ? `MailerSend HTTP ${error.statusCode}` : null) ||
+      `Unknown ${transport.kind === "smtp" ? "SMTP" : "MailerSend"} error`;
     console.error(`[EmailService] Dispatch failed for ${to}:`, msg);
+    // Log the raw error body when we had to fall back to a generic message,
+    // so the actual MailerSend reason is visible in the logs.
+    if (!error?.message) {
+      console.error(`[EmailService] Raw error detail:`, JSON.stringify(error ?? null));
+    }
     return { success: false, error: msg };
   }
 }

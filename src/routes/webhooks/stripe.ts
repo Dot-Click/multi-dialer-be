@@ -5,7 +5,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling.service";
-import { sendEmail, paymentFailedTemp, paymentSucceededTemp, paymentReceiptTemp, subscriptionCancelledTemp, subscriptionChangedTemp, subscriptionActivatedTemp, subscriptionPausedTemp, subscriptionExpiredTemp, workspaceCreatedTemp, trialStartedTemp, gettingStartedTemp } from "../../utils/email";
+import { sendEmail, paymentFailedTemp, paymentSucceededTemp, paymentReceiptTemp, subscriptionCancelledTemp, subscriptionChangedTemp, subscriptionActivatedTemp, subscriptionPausedTemp, subscriptionExpiredTemp, workspaceCreatedTemp, trialStartedTemp, gettingStartedTemp, refundConfirmationTemp, invoiceUncollectibleTemp, paymentMethodAddedTemp, upcomingInvoiceTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { notifyClients } from "../../services/leadStoreNotify.service";
@@ -1057,18 +1057,70 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       await releaseAddonNumbersForUncollectibleInvoice(invoice);
       await deactivateAgentSeatsForUncollectibleInvoice(invoice);
 
+      try {
+        const subRecord = await prisma.userSubscription.findFirst({ where: { stripeCustomerId: invoice.customer } });
+        if (subRecord) {
+          const billedUser = await prisma.user.findUnique({
+            where: { id: subRecord.userId },
+            select: { email: true, fullName: true },
+          });
+          if (billedUser) {
+            await sendEmail(
+              billedUser.email,
+              "Your Slingvo invoice could not be collected",
+              invoiceUncollectibleTemp(
+                billedUser.fullName || "there",
+                typeof invoice.amount_due === "number" ? String(invoice.amount_due / 100) : "0",
+                `${envConfig.FRONTEND_URL}/admin/billing`,
+              ),
+              { userId: subRecord.userId },
+            );
+          }
+        }
+      } catch (emailErr: any) {
+        console.error(`[Stripe Webhook] Failed to send invoice-uncollectible email:`, emailErr?.message);
+      }
+
       await persistEvent("PROCESSED");
     } catch (error: any) {
       console.error(`[Stripe Webhook] invoice.marked_uncollectible error:`, error.message);
       await persistEvent("FAILED");
     }
 
-  // ─── invoice.created (log only) ───────────────────────────────────────────
+  // ─── invoice.created ──────────────────────────────────────────────────────
   } else if (event.type === "invoice.created") {
     const invoice = event.data.object as any;
     console.log(`[Stripe Webhook] invoice.created: id=${invoice.id}, customer=${invoice.customer}, amount_due=${invoice.amount_due}`);
     // Record the open invoice in the Billing ledger as PENDING.
     await mirrorInvoiceToBilling(stripe, invoice, "PENDING");
+
+    // Notify the customer about their upcoming charge (only for non-zero invoices).
+    if (invoice.amount_due > 0) {
+      try {
+        const subRecord = await prisma.userSubscription.findFirst({ where: { stripeCustomerId: invoice.customer } });
+        if (subRecord) {
+          const billedUser = await prisma.user.findUnique({
+            where: { id: subRecord.userId },
+            select: { email: true, fullName: true },
+          });
+          if (billedUser) {
+            await sendEmail(
+              billedUser.email,
+              "Your upcoming Slingvo invoice",
+              upcomingInvoiceTemp(
+                billedUser.fullName || "there",
+                String(invoice.amount_due / 100),
+                `${envConfig.FRONTEND_URL}/admin/billing`,
+              ),
+              { userId: subRecord.userId },
+            );
+          }
+        }
+      } catch (emailErr: any) {
+        console.error(`[Stripe Webhook] Failed to send upcoming-invoice email:`, emailErr?.message);
+      }
+    }
+
     await persistEvent("PROCESSED");
 
   // ─── payment_intent.succeeded (log only) ──────────────────────────────────
@@ -1099,6 +1151,35 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     } catch (err: any) {
       console.error(`[Stripe Webhook] Billing refund sync failed for charge ${charge?.id}:`, err.message);
     }
+
+    // Send refund confirmation email to the customer.
+    try {
+      const stripeCustomerId = typeof charge.customer === "string" ? charge.customer : charge.customer?.id;
+      if (stripeCustomerId && typeof charge.amount_refunded === "number" && charge.amount_refunded > 0) {
+        const subRecord = await prisma.userSubscription.findFirst({ where: { stripeCustomerId } });
+        if (subRecord) {
+          const billedUser = await prisma.user.findUnique({
+            where: { id: subRecord.userId },
+            select: { email: true, fullName: true },
+          });
+          if (billedUser) {
+            await sendEmail(
+              billedUser.email,
+              "Your Slingvo refund has been processed",
+              refundConfirmationTemp(
+                billedUser.fullName || "there",
+                String(charge.amount_refunded / 100),
+                `${envConfig.FRONTEND_URL}/admin/billing`,
+              ),
+              { userId: subRecord.userId },
+            );
+          }
+        }
+      }
+    } catch (emailErr: any) {
+      console.error(`[Stripe Webhook] Failed to send refund-confirmation email:`, emailErr?.message);
+    }
+
     await persistEvent("PROCESSED");
 
   // ─── payment_method.attached (log + best-effort card sync) ───────────────
@@ -1110,6 +1191,34 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       const pm = event.data.object as any;
       const stripeCustomerId = typeof pm.customer === "string" ? pm.customer : pm.customer?.id;
       console.log(`[Stripe Webhook] payment_method.attached: pm=${pm.id}, customer=${stripeCustomerId}`);
+
+      if (stripeCustomerId && pm.card?.brand && pm.card?.last4) {
+        try {
+          const subRecord = await prisma.userSubscription.findFirst({ where: { stripeCustomerId } });
+          if (subRecord) {
+            const user = await prisma.user.findUnique({
+              where: { id: subRecord.userId },
+              select: { email: true, fullName: true },
+            });
+            if (user) {
+              await sendEmail(
+                user.email,
+                "A new payment method was added to your Slingvo account",
+                paymentMethodAddedTemp(
+                  user.fullName || "there",
+                  pm.card.brand,
+                  pm.card.last4,
+                  `${envConfig.FRONTEND_URL}/admin/billing`,
+                ),
+                { userId: subRecord.userId },
+              );
+            }
+          }
+        } catch (emailErr: any) {
+          console.error(`[Stripe Webhook] Failed to send payment-method-added email:`, emailErr?.message);
+        }
+      }
+
       await persistEvent("PROCESSED");
     } catch (error: any) {
       console.error(`[Stripe Webhook] payment_method.attached error:`, error.message);

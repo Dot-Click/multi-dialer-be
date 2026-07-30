@@ -1310,6 +1310,26 @@ Return ONLY valid JSON in this exact structure (no extra keys, no markdown):
 
         const updateData: any = { status: isMachineRecord ? "machine-detected" : twilioStatus };
 
+        // Dial Time = time from dial start to the CONTACT actually answering.
+        // Which leg represents "the contact answered" differs by call flow:
+        //  - Manual browser call: the contact is the <Dial><Number> CHILD leg
+        //    (metadata.isBrowserCall === true), reported here via isChildLeg=true.
+        //  - Power-dialer call: the contact IS the root/standalone call
+        //    (metadata.isBrowserCall === false), reported here via isChildLeg=false.
+        //    The later child leg bridging the agent's browser also fires
+        //    isChildLeg=true, but that's the agent answering, not the contact —
+        //    must not be mistaken for contact-answered.
+        // Skip entirely if metadata is missing; guessing the wrong leg would
+        // record a bogus timestamp that's worse than having none.
+        const isAnsweredEvent = twilioStatus === "answered" || twilioStatus === "in-progress";
+        const isContactLegAnswered = isAnsweredEvent && metadata && (
+          (isChildLeg && metadata.isBrowserCall === true) ||
+          (!isChildLeg && metadata.isBrowserCall === false)
+        );
+        if (isContactLegAnswered && !callRecord.answeredAt) {
+          updateData.answeredAt = new Date();
+        }
+
         if (isTerminal) {
           const endTime = new Date();
           const duration = callRecord.startTime

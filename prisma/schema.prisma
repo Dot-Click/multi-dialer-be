@@ -1560,6 +1560,7 @@ model CallRecord {
   session   AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   startTime   DateTime  @default(now())
+  answeredAt  DateTime? // When the contact leg actually answered (for Dial/ring time); null if never answered
   endTime     DateTime?
   duration    Int? // In seconds
   status      String // Twilio status: completed, failed, etc.

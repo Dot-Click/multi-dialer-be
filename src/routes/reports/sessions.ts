@@ -102,6 +102,15 @@ export const getSessionReport: RequestHandler = async (req, res) => {
                 }
                 resultBreakdown[result].totalCalls += 1;
                 resultBreakdown[result].talkTime += (call.duration || 0);
+                // Dial Time = ring/setup time before the contact answered. Only
+                // meaningful for calls that were actually answered — unanswered
+                // calls (no-answer/busy/failed) have no "answeredAt" and contribute 0.
+                if (call.answeredAt && call.startTime) {
+                    const seconds = Math.floor(
+                        (new Date(call.answeredAt).getTime() - new Date(call.startTime).getTime()) / 1000
+                    );
+                    resultBreakdown[result].dialTime += Math.max(0, seconds);
+                }
             });
 
             // Convert breakdown to array
@@ -109,8 +118,10 @@ export const getSessionReport: RequestHandler = async (req, res) => {
                 result,
                 totalCalls: stats.totalCalls,
                 talkTime: formatHHMMSS(stats.talkTime),
-                dialTime: formatHHMMSS(0) // Assuming talk time is all we have accurately
+                dialTime: formatHHMMSS(stats.dialTime)
             }));
+
+            const totalDialTimeSeconds = Object.values(resultBreakdown).reduce((sum, s) => sum + s.dialTime, 0);
 
             // List names
             const listNames = Array.from(vsession.listIds)
@@ -147,7 +158,7 @@ export const getSessionReport: RequestHandler = async (req, res) => {
                     total: {
                         calls: vsession.calls.length,
                         talkTime: formatHHMMSS(vsession.duration),
-                        dialTime: formatHHMMSS(vsession.duration) // Same as talk right now
+                        dialTime: formatHHMMSS(totalDialTimeSeconds)
                     }
                 }
             };

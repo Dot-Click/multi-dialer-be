@@ -835,6 +835,91 @@ export const paymentReceiptTemp = (fullName: string, amount: string, invoiceNumb
 </html>
 `
 
+export const agentInviteTemp = (fullName: string, adminName: string, email: string, password: string, loginUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>You've Been Invited to Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.credentials{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.cred-row{margin:6px 0;font-size:15px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">You've been invited to Slingvo</h2>
+<p>Hi ${fullName || "there"},</p>
+<p><strong>${adminName}</strong> has added you as an agent on their Slingvo workspace. Use the credentials below to log in and get started.</p>
+<div class="credentials">
+  <div class="cred-row"><strong>Email:</strong> ${email}</div>
+  <div class="cred-row"><strong>Password:</strong> ${password}</div>
+</div>
+<p style="font-size:14px;color:#666;">Please log in and change your password after your first sign-in.</p>
+<div style="text-align:center;margin:30px 0"><a href="${loginUrl}" class="button">Log In Now</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const refundConfirmationTemp = (fullName: string, amount: string, billingUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Refund Processed - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.receipt-box{background:#f0fdf4;border:2px dashed #22c55e;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">Your refund has been processed</h2>
+<p>Hi ${fullName},</p>
+<p>We have successfully issued a refund to your payment method on file. Please allow 5–10 business days for the amount to appear on your statement.</p>
+<div class="receipt-box">
+  <p style="margin:0;font-size:15px;">Refund amount: <strong>$${amount}</strong></p>
+</div>
+<div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">View Billing History</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const invoiceUncollectibleTemp = (fullName: string, amount: string, billingUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice Uncollectible - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.alert-box{background:#fff5f5;border:2px dashed #dc3545;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#dc3545">We were unable to collect your payment</h2>
+<p>Hi ${fullName},</p>
+<p>After several attempts, we were unable to collect payment on your Slingvo invoice. As a result, some services associated with this invoice have been paused or removed.</p>
+<div class="alert-box">
+  <p style="margin:0;font-size:15px;">Outstanding amount: <strong>$${amount}</strong></p>
+</div>
+<p>To restore full access, please update your payment method and contact support to reinstate any removed services.</p>
+<div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">Update Payment Method</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const paymentMethodAddedTemp = (fullName: string, cardBrand: string, cardLast4: string, billingUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Payment Method Added - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info-box{background:#f8f9fa;border:2px dashed #007bff;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">New payment method added</h2>
+<p>Hi ${fullName},</p>
+<p>A new payment method was added to your Slingvo account. If you made this change, no action is needed.</p>
+<div class="info-box">
+  <p style="margin:0;font-size:15px;">${cardBrand} &bull;&bull;&bull;&bull; ${cardLast4}</p>
+</div>
+<p style="font-size:14px;color:#666;">If you did not add this card, please update your payment method immediately and contact support.</p>
+<div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">Manage Payment Methods</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
+export const upcomingInvoiceTemp = (fullName: string, amount: string, billingUrl: string) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Upcoming Invoice - Slingvo</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.invoice-box{background:#f8f9fa;border:2px dashed #6c757d;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+</head><body><div class="container">
+<div class="logo">Slingvo</div>
+<h2 style="color:#2c3e50">Your upcoming Slingvo invoice</h2>
+<p>Hi ${fullName},</p>
+<p>Your next Slingvo invoice has been generated and will be charged to your payment method on file shortly.</p>
+<div class="invoice-box">
+  <p style="margin:0;font-size:15px;">Amount due: <strong>$${amount}</strong></p>
+</div>
+<p style="font-size:14px;color:#666;">Make sure your payment method is up to date to avoid any interruption in service.</p>
+<div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">View Billing Details</a></div>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div></body></html>`
+
 export const cardExpiringTemp = (fullName: string, cardBrand: string, cardLast4: string, expMonth: number, expYear: number, billingUrl: string) => `
 <!DOCTYPE html>
 <html lang="en">

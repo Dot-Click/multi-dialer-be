@@ -292,6 +292,21 @@ export class DispositionService {
             }
         });
 
+        // 4b. Mirror into ContactActivityLog too, so the disposition change shows
+        // up in the contact detail page's History tab (which only reads activity
+        // logs, not ContactDispositionLog).
+        const folderName = resolvedFolderId
+            ? (await prisma.contactFolder.findUnique({ where: { id: resolvedFolderId }, select: { name: true } }))?.name
+            : null;
+        await prisma.contactActivityLog.create({
+            data: {
+                contactId,
+                userId: appliedById,
+                action: `Applied disposition: ${disposition.label}`,
+                note: folderName ? `Moved to folder: ${folderName}` : undefined,
+            }
+        });
+
         // 5. If CALL — update CallRecord with dispositionId + overrideFolderId
         if (source === 'CALL' && callRecordId) {
             await prisma.callRecord.update({
