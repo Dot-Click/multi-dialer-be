@@ -1195,11 +1195,12 @@ export const voiceCall: RequestHandler = async (req, res) => {
 
 export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
   try {
-    const { countryCode, cityName, state, userId: targetUserId } = req.body;
+    const { countryCode, cityName, state, areaCode, userId: targetUserId } = req.body;
 
     console.log("countryCode", countryCode);
     console.log("cityName", cityName);
     console.log("state", state);
+    console.log("areaCode", areaCode);
 
     const userId = req.user?.id || "";
     let userClient = await getTwilioClient(userId);
@@ -1221,10 +1222,22 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
       userClient = masterClient;
     }
 
+    // areaCode arrives as a string from the request body; Twilio's SDK expects
+    // a number. Omit the filter entirely on anything that doesn't parse cleanly
+    // rather than silently searching nationwide.
+    const parsedAreaCode = areaCode !== undefined && areaCode !== null && String(areaCode).trim() !== ""
+      ? Number(areaCode)
+      : undefined;
+    if (areaCode !== undefined && areaCode !== null && String(areaCode).trim() !== "" && Number.isNaN(parsedAreaCode)) {
+      errorResponse(res, { message: "areaCode must be a valid number" }, 400);
+      return;
+    }
+
     const numbers = await userClient.availablePhoneNumbers(countryCode || "US").local.list({
       limit: 10,
       inLocality: cityName,
       inRegion: state,
+      ...(parsedAreaCode !== undefined ? { areaCode: parsedAreaCode } : {}),
     });
 
     const pricing = await userClient.pricing.v1
@@ -1236,6 +1249,20 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
       errorResponse(res, { message: "No numbers found" });
       return;
     }
+
+    // Twilio's result objects don't include a standalone area code field — only
+    // the full E.164 number — so the UI has no way to display/group by area
+    // code without this. For NANP (+1) numbers the area code is digits 2-4.
+    const enrichedNumbers = numbers.map((n: any) => {
+      // Use toJSON() when available so we mirror the SDK's own public shape
+      // instead of leaking internal (_solution, _version, ...) instance fields.
+      const plain = typeof n.toJSON === "function" ? n.toJSON() : n;
+      const digits = String(plain.phoneNumber || "").replace(/\D/g, "");
+      const areaCodeOfNumber = digits.length === 11 && digits.startsWith("1")
+        ? digits.slice(1, 4)
+        : null;
+      return { ...plain, areaCode: areaCodeOfNumber };
+    });
 
     // The actual price a purchase will be charged — mirrors the logic in
     // buyNumber/buySelfServiceAddonNumber/buyNumberOnBehalfOfUser so what's
@@ -1269,7 +1296,7 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     }
 
     const data = {
-      numbers,
+      numbers: enrichedNumbers,
       pricing,
       billing: { isWithinIncludedCount, effectivePriceCents, effectiveCurrency },
     }

@@ -1350,6 +1350,16 @@ export async function moveToDncInDb(
   // phoneIds are now ignored as we mark the whole contact
   _phoneIds?: string[],
 ) {
+  // Resolve to the tenant's admin id (not the acting user's) so an agent
+  // marking a contact DNC lands it in the ONE shared tenant-level DNC folder
+  // the admin can see — not a folder scoped to the agent's own userId.
+  // Resolved BEFORE the transaction starts: it uses the top-level `prisma`
+  // client (a separate DB connection), and calling that from inside an
+  // interactive transaction fights the transaction for a pool connection —
+  // easily blowing past Prisma's default 5s transaction timeout and throwing
+  // "Transaction already closed" on whatever runs next inside `tx`.
+  const tenantRootId = await resolveTenantRootId(userId);
+
   return prisma.$transaction(async (tx) => {
     const contact = await tx.contact.findUnique({
       where: { id: contactId },
@@ -1360,7 +1370,7 @@ export async function moveToDncInDb(
 
     // 1. Mark contact as DO_NOT_CALL, remove it from every list (out of the
     //    session/dial queue), and place it in the system DNC folder.
-    const dncFolder = await ensureDncFolder(userId, tx);
+    const dncFolder = await ensureDncFolder(tenantRootId, tx);
 
     const lists = await tx.contactList.findMany({
       where: { contactIds: { has: contactId } },
@@ -1397,9 +1407,16 @@ export async function moveToDncInDb(
       },
     });
 
-    // 4. Send Compliance Alert to Admin/Owner
+    return { success: true, folderId: dncFolder?.id ?? null, fullName: contact.fullName, phoneNumbers };
+  }).then(async (result) => {
+    // 4. Send Compliance Alert to Admin/Owner — best-effort, run AFTER the
+    // transaction commits. createInternalNotification writes via the
+    // top-level `prisma` client and makes a push-notification network call;
+    // doing that from inside the transaction fought it for a pool connection
+    // and could blow past Prisma's 5s transaction timeout ("Transaction
+    // already closed"). None of this is required for the DNC mark itself.
     try {
-      const performer = await tx.user.findUnique({
+      const performer = await prisma.user.findUnique({
         where: { id: userId },
         select: { id: true, role: true, createdById: true, fullName: true }
       });
@@ -1408,7 +1425,7 @@ export async function moveToDncInDb(
         const adminId = performer.role === 'AGENT' ? performer.createdById : performer.id;
 
         if (adminId) {
-          const adminSettings = await tx.system_Setting.findFirst({
+          const adminSettings = await prisma.system_Setting.findFirst({
             where: { userId: adminId },
             include: { notificationSetting: true }
           });
@@ -1417,7 +1434,7 @@ export async function moveToDncInDb(
             await createInternalNotification(
               adminId,
               `🚫 Compliance Alert: DNC Marked`,
-              `${performer.fullName || 'User'} marked ${contact.fullName} (${phoneNumbers}) as Do Not Call.`,
+              `${performer.fullName || 'User'} marked ${result.fullName} (${result.phoneNumbers}) as Do Not Call.`,
               'error'
             );
           }
@@ -1427,7 +1444,7 @@ export async function moveToDncInDb(
       console.error("Failed to send DNC compliance alert:", notifErr);
     }
 
-    return { success: true };
+    return { success: result.success, folderId: result.folderId };
   });
 }
 

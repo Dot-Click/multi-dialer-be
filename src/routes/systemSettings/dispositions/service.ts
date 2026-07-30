@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { ensureTrashFolder } from "../../contact/service";
+import { ensureTrashFolder, ensureDncFolder, moveToDncInDb } from "../../contact/service";
 
 // Protected default dispositions: seeded for every account, shown in the user's
 // Dispositions list (NOT as system "Call Outcomes"), and cannot be edited or
@@ -99,6 +99,26 @@ export class DispositionService {
                     where: { id: existingTrash.id },
                     data: { targetFolderId: trashFolder.id },
                 });
+            }
+        }
+
+        // 2c. Link the two DNC call outcomes ("DNC - Contact", "DNC - Number") to the
+        //     system "Do Not Call" folder — same pattern as Trash above. This makes
+        //     the folder link visible/self-documenting; the actual move + status flip
+        //     + phone flagging is performed by moveToDncInDb in applyDisposition below
+        //     (a plain folder move isn't enough for a DNC outcome).
+        const dncFolder = await ensureDncFolder(targetUserId);
+        if (dncFolder) {
+            for (const value of ["DNC_CONTACT", "DNC_NUMBER"]) {
+                const dncDisp = await prisma.disposition.findFirst({
+                    where: { systemSettingId: systemSetting.id, value }
+                });
+                if (dncDisp && !dncDisp.targetFolderId) {
+                    await prisma.disposition.update({
+                        where: { id: dncDisp.id },
+                        data: { targetFolderId: dncFolder.id },
+                    });
+                }
             }
         }
 
@@ -251,34 +271,48 @@ export class DispositionService {
         });
 
         // 2. Resolve which folder to drop contact into
-        const resolvedFolderId = overrideFolderId ?? disposition.targetFolderId ?? null;
+        let resolvedFolderId: string | null;
 
-        console.log(`[applyDisposition] contact=${contactId} disposition=${disposition.label} resolvedFolderId=${resolvedFolderId ?? 'none'}`);
+        // DNC outcomes ("DNC - Contact" / "DNC - Number") need the full compliance
+        // treatment — status flipped to DO_NOT_CALL, every phone flagged, removal
+        // from all lists, an audit log entry, and a compliance alert to the admin —
+        // not just a folder move. Delegate to the same routine the dedicated
+        // "Move to DNC" contact action uses, so both paths stay in sync and land
+        // in the one shared tenant-level DNC folder.
+        if (disposition.value === "DNC_CONTACT" || disposition.value === "DNC_NUMBER") {
+            const dncResult = await moveToDncInDb(contactId, appliedById);
+            resolvedFolderId = overrideFolderId ?? dncResult.folderId ?? null;
+            console.log(`[applyDisposition] contact=${contactId} disposition=${disposition.label} → full DNC treatment applied, folder=${resolvedFolderId ?? 'none'}`);
+        } else {
+            resolvedFolderId = overrideFolderId ?? disposition.targetFolderId ?? null;
 
-        // 3. Move contact: set folderIds to only the resolved folder, and remove from all lists
-        if (resolvedFolderId) {
-            // 3a. Remove contact from every list it currently belongs to
-            const listsContainingContact = await prisma.contactList.findMany({
-                where: { contactIds: { has: contactId } },
-                select: { id: true, contactIds: true }
-            });
-            if (listsContainingContact.length > 0) {
-                console.log(`[applyDisposition] Removing contact from ${listsContainingContact.length} list(s)`);
-                await Promise.all(listsContainingContact.map(list =>
-                    prisma.contactList.update({
-                        where: { id: list.id },
-                        data: { contactIds: list.contactIds.filter(id => id !== contactId) }
-                    })
-                ));
+            console.log(`[applyDisposition] contact=${contactId} disposition=${disposition.label} resolvedFolderId=${resolvedFolderId ?? 'none'}`);
+
+            // 3. Move contact: set folderIds to only the resolved folder, and remove from all lists
+            if (resolvedFolderId) {
+                // 3a. Remove contact from every list it currently belongs to
+                const listsContainingContact = await prisma.contactList.findMany({
+                    where: { contactIds: { has: contactId } },
+                    select: { id: true, contactIds: true }
+                });
+                if (listsContainingContact.length > 0) {
+                    console.log(`[applyDisposition] Removing contact from ${listsContainingContact.length} list(s)`);
+                    await Promise.all(listsContainingContact.map(list =>
+                        prisma.contactList.update({
+                            where: { id: list.id },
+                            data: { contactIds: list.contactIds.filter(id => id !== contactId) }
+                        })
+                    ));
+                }
+
+                // 3b. Set contact's folderIds to only the disposition folder
+                await prisma.contact.update({
+                    where: { id: contactId },
+                    data: { folderIds: [resolvedFolderId] }
+                });
+
+                console.log(`[applyDisposition] Contact moved to folder ${resolvedFolderId}, removed from all lists`);
             }
-
-            // 3b. Set contact's folderIds to only the disposition folder
-            await prisma.contact.update({
-                where: { id: contactId },
-                data: { folderIds: [resolvedFolderId] }
-            });
-
-            console.log(`[applyDisposition] Contact moved to folder ${resolvedFolderId}, removed from all lists`);
         }
 
         // 4. Always log the disposition application (reporting needs CALL-sourced
