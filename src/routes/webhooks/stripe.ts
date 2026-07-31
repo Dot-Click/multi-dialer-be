@@ -5,7 +5,7 @@ import prisma from "../../lib/prisma";
 import { createTwilioSubAccount, purchaseUSPhoneNumber, getTwilioClient, releaseNumber } from "../../services/twilio-account.service";
 import { cancelAddonSubscriptionForUser } from "../../services/phoneNumberBilling.service";
 import { removeAgentSeatSubscriptionItem } from "../../services/agentSeatBilling.service";
-import { sendEmail, paymentFailedTemp, paymentSucceededTemp, paymentReceiptTemp, subscriptionCancelledTemp, subscriptionChangedTemp, subscriptionActivatedTemp, subscriptionPausedTemp, subscriptionExpiredTemp, workspaceCreatedTemp, trialStartedTemp, gettingStartedTemp, refundConfirmationTemp, invoiceUncollectibleTemp, paymentMethodAddedTemp, upcomingInvoiceTemp } from "../../utils/email";
+import { sendEmail, paymentFailedTemp, paymentSucceededTemp, paymentReceiptTemp, subscriptionRenewedTemp, subscriptionCancelledTemp, subscriptionChangedTemp, subscriptionActivatedTemp, subscriptionPausedTemp, subscriptionExpiredTemp, workspaceCreatedTemp, trialStartedTemp, gettingStartedTemp, refundConfirmationTemp, invoiceUncollectibleTemp, paymentMethodAddedTemp, upcomingInvoiceTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { notifyClients } from "../../services/leadStoreNotify.service";
@@ -364,6 +364,20 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           `A customer just subscribed to "${service.name}" and needs a MyPlusLeads account assigned. Link one in the Super Admin Lead Store panel.`,
           "lead_store_needs_setup",
         );
+
+        // Confirm the charge to the customer — this purchase never goes through
+        // invoice.paid (it's a separate Checkout Session, not the main-plan
+        // subscription), so without this the customer gets no payment
+        // confirmation at all for a real charge.
+        const purchaser = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } });
+        if (purchaser) {
+          sendEmail(
+            purchaser.email,
+            "Your Slingvo Lead Store payment was received",
+            paymentSucceededTemp(purchaser.fullName || "there", (service.price / 100).toFixed(2), `${envConfig.FRONTEND_URL}/admin/billing`),
+            { userId },
+          ).catch(err => console.error(`[Stripe Webhook] Failed to send Lead Store payment confirmation:`, err?.message));
+        }
 
         console.log(`[Stripe Webhook] Lead Store purchase recorded: leadStoreId=${leadStore.id}, userId=${userId}, service=${service.name}`);
         await persistEvent("PROCESSED");
@@ -1016,17 +1030,30 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             select: { email: true, fullName: true },
           });
           if (billedUser) {
-            await sendEmail(
-              billedUser.email,
-              "Your Slingvo payment receipt",
-              paymentReceiptTemp(
-                billedUser.fullName || "there",
-                typeof invoice.amount_paid === "number" ? String(invoice.amount_paid / 100) : "0",
-                invoice.number || invoice.id || "N/A",
-                `${envConfig.FRONTEND_URL}/admin/billing`,
-              ),
-              { userId: subRecord.userId },
-            );
+            const amountStr = typeof invoice.amount_paid === "number" ? String(invoice.amount_paid / 100) : "0";
+            const invoiceNumber = invoice.number || invoice.id || "N/A";
+            const billingUrl = `${envConfig.FRONTEND_URL}/admin/billing`;
+
+            // A recurring-cycle renewal gets its own "renewed" email instead of
+            // the generic receipt — sending both would double-email the customer
+            // for the same charge. Every other billing_reason (first payment,
+            // proration from an upgrade/downgrade, manual invoice, etc.) keeps
+            // the plain receipt.
+            if (invoice.billing_reason === "subscription_cycle") {
+              await sendEmail(
+                billedUser.email,
+                "Your Slingvo subscription has renewed",
+                subscriptionRenewedTemp(billedUser.fullName || "there", subRecord.plan, amountStr, invoiceNumber, billingUrl),
+                { userId: subRecord.userId },
+              );
+            } else {
+              await sendEmail(
+                billedUser.email,
+                "Your Slingvo payment receipt",
+                paymentReceiptTemp(billedUser.fullName || "there", amountStr, invoiceNumber, billingUrl),
+                { userId: subRecord.userId },
+              );
+            }
           }
         } catch (emailErr: any) {
           console.error(`[Stripe Webhook] Failed to send payment-receipt email:`, emailErr?.message);

@@ -3,6 +3,7 @@ import { startDialerHealthJob } from "./dialerHealth.job";
 import { startCallbackDueJob } from "./callbackDue.job";
 import { startUserLifecycleJob } from "./userLifecycle.job";
 import { startEmailQueueJob } from "./emailQueue.job";
+import { startActionPlanStepJob } from "./actionPlanStep.job";
 
 /**
  * Initialize all core background jobs.
@@ -14,4 +15,5 @@ export const initJobs = () => {
     startCallbackDueJob();
     startUserLifecycleJob();
     startEmailQueueJob();
+    startActionPlanStepJob();
 };

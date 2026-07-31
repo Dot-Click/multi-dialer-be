@@ -246,6 +246,47 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
 </html>
 `
 
+export const emailChangeConfirmationTemp = (fullName: string, oldEmail: string, newEmail: string, confirmUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirm Your New Email - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .details-box { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .details-row { margin: 6px 0; font-size: 15px; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Confirm your email change</h2>
+            <p>Hi ${fullName},</p>
+            <p>You requested to change the email address on your Slingvo account. Click below to confirm — until you do, your account keeps using the current address.</p>
+        </div>
+        <div class="details-box">
+            <div class="details-row"><strong>Current:</strong> ${oldEmail}</div>
+            <div class="details-row"><strong>New:</strong> ${newEmail}</div>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${confirmUrl}" class="button">Confirm Email Change</a>
+        </div>
+        <p style="font-size:14px;color:#666;">If you didn't request this, you can safely ignore this email — no change will be made.</p>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
 export const emailVerificationTemp = (fullName: string, email: string, password: string, loginUrl: string) => `
 <!DOCTYPE html>
 <html lang="en">
@@ -825,6 +866,47 @@ export const paymentReceiptTemp = (fullName: string, amount: string, invoiceNumb
         <div class="receipt-box">
             <div class="receipt-row"><span>Invoice</span><strong>${invoiceNumber}</strong></div>
             <div class="receipt-row"><span>Amount Paid</span><strong>$${amount}</strong></div>
+        </div>
+        <div style="text-align:center; margin: 30px 0;">
+            <a href="${billingUrl}" class="button">View Billing History</a>
+        </div>
+        <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+    </div>
+</body>
+</html>
+`
+
+export const subscriptionRenewedTemp = (fullName: string, planName: string, amount: string, invoiceNumber: string, billingUrl: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription Renewed - Slingvo</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .receipt-box { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .receipt-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e9ecef; }
+        .receipt-row:last-child { border-bottom: none; }
+        .message { margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><div class="logo">Slingvo</div></div>
+        <div class="message">
+            <h2 style="color: #2c3e50;">Your subscription has renewed</h2>
+            <p>Hi ${fullName},</p>
+            <p>Your <strong>${planName}</strong> subscription renewed successfully — here's your receipt for this billing cycle.</p>
+        </div>
+        <div class="receipt-box">
+            <div class="receipt-row"><span>Invoice</span><strong>${invoiceNumber}</strong></div>
+            <div class="receipt-row"><span>Amount Charged</span><strong>$${amount}</strong></div>
         </div>
         <div style="text-align:center; margin: 30px 0;">
             <a href="${billingUrl}" class="button">View Billing History</a>

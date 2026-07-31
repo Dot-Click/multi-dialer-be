@@ -272,6 +272,8 @@ model User {
   agentSeatSubscription   AgentSeatSubscription?
   dispositionLogs         ContactDispositionLog[]
   dialListSessions        DialListSession[]
+  contactActionPlansAssignedTo ContactActionPlan[] @relation("ContactActionPlanAssignedTo")
+  contactActionPlansAssignedBy ContactActionPlan[] @relation("ContactActionPlanAssignedBy")
 
   // Paid overage agent-seat billing (self-service "buy extra seat" flow).
   // Non-null stripeAgentSeatItemId marks this agent as a PAID_ADDON seat —
@@ -472,6 +474,7 @@ model Contact {
   smsLogs         SmsLog[]
   dispositionLogs ContactDispositionLog[]
   activityLogs    ContactActivityLog[]
+  actionPlanAssignments ContactActionPlan[]
 
   folderIds String[] @default([])
 
@@ -1604,11 +1607,49 @@ model ActionPlan {
   assignGroupEnabled Boolean        @default(false)
   assignGroupId      String?
 
-  steps     ActionStep[]
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  steps       ActionStep[]
+  assignments ContactActionPlan[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   @@map("action_plans")
+}
+
+enum ContactActionPlanStatus {
+  ACTIVE
+  COMPLETED
+  REMOVED
+}
+
+// Tracks which contact is currently enrolled in which Action Plan, so the
+// contact detail page can show real assignment status instead of just the
+// side-effect Calendar rows assignToContact() creates for each step.
+model ContactActionPlan {
+  id String @id @default(uuid())
+
+  contactId String
+  contact   Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  planId String
+  plan   ActionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  assignedToId String
+  assignedTo   User   @relation("ContactActionPlanAssignedTo", fields: [assignedToId], references: [id], onDelete: Cascade)
+
+  assignedById String
+  assignedBy   User   @relation("ContactActionPlanAssignedBy", fields: [assignedById], references: [id], onDelete: Cascade)
+
+  startDate DateTime
+  status    ContactActionPlanStatus @default(ACTIVE)
+  removedAt DateTime?
+
+  stepExecutions ActionPlanStepExecution[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([contactId, status])
+  @@map("contact_action_plans")
 }
 
 model ActionStep {
@@ -1621,10 +1662,46 @@ model ActionStep {
   planId String
   plan   ActionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
+  executions ActionPlanStepExecution[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("action_steps")
+}
+
+enum ActionPlanStepExecutionStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+// One row per EMAIL-type step per enrollment — the actual dispatch queue for
+// automated Action Plan emails. Other step types (PHONE_CALL/TASK/LETTER/
+// MAILING_LABEL) require a human to act, so they stay Calendar-only; only
+// EMAIL steps get autonomously executed by actionPlanStep.job.ts.
+model ActionPlanStepExecution {
+  id String @id @default(uuid())
+
+  assignmentId String
+  assignment   ContactActionPlan @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  stepId String
+  step   ActionStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  dueAt      DateTime
+  status     ActionPlanStepExecutionStatus @default(PENDING)
+  error      String?                       @db.Text
+  executedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([assignmentId, stepId])
+  @@index([status, dueAt])
+  @@map("action_plan_step_executions")
 }
 
 model Company {
@@ -1786,6 +1863,11 @@ enum EmailStatus {
   FAILED
 }
 
+enum BounceType {
+  SOFT
+  HARD
+}
+
 enum EmailQueueStatus {
   PENDING
   PROCESSING
@@ -1837,6 +1919,16 @@ model EmailLog {
   status    EmailStatus
   error     String?     @db.Text
   messageId String? // SendGrid Message ID
+
+  // Engagement/delivery tracking, populated by MailerSend activity webhooks
+  // (mailersend.ts). `status` above only reflects whether the initial send
+  // attempt succeeded — these track what happened to the message afterward.
+  deliveredAt DateTime?
+  openedAt    DateTime? // first open
+  openCount   Int        @default(0)
+  clickedAt   DateTime? // first click
+  clickCount  Int        @default(0)
+  bounceType  BounceType?
 
   // Relations
   userId String

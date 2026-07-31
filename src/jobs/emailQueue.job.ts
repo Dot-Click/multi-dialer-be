@@ -2,6 +2,7 @@ import cron from "node-cron";
 import prisma from "../lib/prisma";
 import { dispatchEmail } from "../services/email.service";
 import { EmailStatus } from "@prisma/client";
+import { maskEmail } from "../utils/maskEmail";
 
 // Back-off delay (minutes) for attempt index 0, 1, 2 …
 // Attempt 1 failed → wait 2 min before attempt 2
@@ -91,7 +92,7 @@ export const startEmailQueueJob = () => {
             }).catch(err => console.error(`[EmailQueue] Failed to write success EmailLog for item ${item.id}:`, err?.message));
           }
 
-          console.log(`[EmailQueue] ✓ Delivered to ${item.to} (item=${item.id}, attempt=${item.attempts + 1})`);
+          console.log(`[EmailQueue] ✓ Delivered to ${maskEmail(item.to)} (item=${item.id}, attempt=${item.attempts + 1})`);
         } else {
           const newAttempts = item.attempts + 1;
 
@@ -106,7 +107,7 @@ export const startEmailQueueJob = () => {
                 updatedAt: new Date(),
               },
             });
-            console.warn(`[EmailQueue] ✗ DEAD: ${item.to} (item=${item.id}, reason=${result.error})`);
+            console.warn(`[EmailQueue] ✗ DEAD: ${maskEmail(item.to)} (item=${item.id}, reason=${result.error})`);
           } else {
             // Transient failure — back off and try again later.
             const delayMinutes = BACKOFF_MINUTES[newAttempts - 1] ?? 30;
@@ -122,7 +123,7 @@ export const startEmailQueueJob = () => {
                 updatedAt:  new Date(),
               },
             });
-            console.warn(`[EmailQueue] ↻ Retry ${newAttempts}/${item.maxAttempts} for ${item.to} in ${delayMinutes}m (item=${item.id})`);
+            console.warn(`[EmailQueue] ↻ Retry ${newAttempts}/${item.maxAttempts} for ${maskEmail(item.to)} in ${delayMinutes}m (item=${item.id})`);
           }
         }
       } catch (err: any) {

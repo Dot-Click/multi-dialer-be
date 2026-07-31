@@ -6,6 +6,7 @@ import prisma from "../lib/prisma";
 import { EmailStatus } from "@prisma/client";
 import { getSuppression, buildUnsubscribeUrl } from "../utils/emailSuppression";
 import { decryptSmtpPassword } from "../utils/encryption";
+import { maskEmail } from "../utils/maskEmail";
 
 export interface SendEmailOptions {
   to: string;
@@ -108,7 +109,7 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
   const suppression = await getSuppression(to);
   if (suppression && (suppression !== "UNSUBSCRIBE" || options.includeUnsubscribe)) {
     const reason = `Recipient suppressed (${suppression})`;
-    console.warn(`[EmailService] Skipped send to ${to} — ${reason}`);
+    console.warn(`[EmailService] Skipped send to ${maskEmail(to)} — ${reason}`);
     return { success: false, error: reason, suppressed: true };
   }
 
@@ -125,7 +126,7 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
   const fromHeader = `${fromName} <${fromEmail}>`;
   const replyTo = transport.kind === "smtp" ? fromEmail : (replyToEmail || from || undefined);
 
-  console.log(`[EmailService] Sending to ${to} via ${transport.kind}`);
+  console.log(`[EmailService] Sending to ${maskEmail(to)} via ${transport.kind}`);
 
   try {
     let messageId: string | null = null;
@@ -155,7 +156,7 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
         null;
     }
 
-    console.log(`[EmailService] Delivered to ${to} (messageId: ${messageId})`);
+    console.log(`[EmailService] Delivered to ${maskEmail(to)} (messageId: ${messageId})`);
     return { success: true, messageId };
   } catch (error: any) {
     // MailerSend SDK errors arrive as { statusCode, body: { message, errors } }
@@ -168,7 +169,7 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
       (bodyMsg ? `MailerSend API ${error?.statusCode ?? "error"}: ${bodyMsg}` : null) ||
       (error?.statusCode ? `MailerSend HTTP ${error.statusCode}` : null) ||
       `Unknown ${transport.kind === "smtp" ? "SMTP" : "MailerSend"} error`;
-    console.error(`[EmailService] Dispatch failed for ${to}:`, msg);
+    console.error(`[EmailService] Dispatch failed for ${maskEmail(to)}:`, msg);
     // Log the raw error body when we had to fall back to a generic message,
     // so the actual MailerSend reason is visible in the logs.
     if (!error?.message) {
@@ -236,7 +237,7 @@ export async function sendEmail(options: SendEmailOptions) {
           lastError: result.error ?? null,
         },
       });
-      console.log(`[EmailService] Queued retry for ${to} (next attempt in ${RETRY_BACKOFF_MINUTES[0]}m)`);
+      console.log(`[EmailService] Queued retry for ${maskEmail(to)} (next attempt in ${RETRY_BACKOFF_MINUTES[0]}m)`);
     } catch (queueErr) {
       console.error("[EmailService] Failed to enqueue retry:", queueErr);
     }

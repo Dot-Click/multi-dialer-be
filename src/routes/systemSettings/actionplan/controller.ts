@@ -80,5 +80,23 @@ export const ActionPlanController = {
       console.log("Assign Plan Error:", error);
       res.status(400).json({ success: false, message: error.message });
     }
+  },
+
+  getForContact: async (req: Request, res: Response) => {
+    try {
+      const result = await ActionPlanService.getActiveForContact(req.params.contactId);
+      res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  },
+
+  unassign: async (req: Request, res: Response) => {
+    try {
+      const result = await ActionPlanService.unassign(req.params.id);
+      res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+      res.status(400).json({ success: false, message: error.message });
+    }
   }
 };

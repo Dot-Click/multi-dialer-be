@@ -10,7 +10,7 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, sendEmail } from "../utils/email";
+import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, emailChangeConfirmationTemp, sendEmail } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { ensureDncFolder } from "../routes/contact/service";
 import { initializeUserAccount } from "../routes/user/service";
@@ -54,6 +54,29 @@ export const auth = betterAuth({
       defaultCallerId: { type: "string", required: false },
       stripeAgentSeatItemId: { type: "string", required: false },
       agentSeatMonthlyPriceCents: { type: "number", required: false },
+    },
+    changeEmail: {
+      enabled: true,
+      sendChangeEmailVerification: async ({
+        user,
+        newEmail,
+        url,
+      }: {
+        user: AuthUser;
+        newEmail: string;
+        url: string;
+        token: string;
+      }) => {
+        // better-auth's own verify-email endpoint completes the swap once
+        // clicked — nothing else needs to touch the DB here. Confirmation
+        // goes to the NEW address (proves ownership); the current address
+        // is shown in the copy so the account owner can tell what's changing.
+        await sendEmail(
+          newEmail,
+          "Confirm your new Slingvo email address",
+          emailChangeConfirmationTemp(user.fullName ?? "there", user.email, newEmail, url),
+        );
+      },
     },
   },
   trustedOrigins: [

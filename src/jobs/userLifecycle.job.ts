@@ -2,6 +2,7 @@ import cron from "node-cron";
 import prisma from "../lib/prisma";
 import { envConfig } from "../lib/config";
 import { sendEmail } from "../services/email.service";
+import { maskEmail } from "../utils/maskEmail";
 import {
   inactivityNudgeTemp,
   subscribeReminderTemp,
@@ -46,7 +47,7 @@ export const startUserLifecycleJob = () => {
           text: `Hi ${user.fullName || "there"}, it's been a few days since you logged in to Slingvo.`,
           html: inactivityNudgeTemp(user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/login`),
           userId: user.id,
-        }).catch(err => console.error(`[UserLifecycle] Inactivity email failed for ${user.email}:`, err?.message));
+        }).catch(err => console.error(`[UserLifecycle] Inactivity email failed for ${maskEmail(user.email)}:`, err?.message));
         sent++;
       }
 
@@ -84,7 +85,7 @@ export const startUserLifecycleJob = () => {
           text: `Hi ${user.fullName || "there"}, your Slingvo account is set up but you haven't subscribed yet.`,
           html: subscribeReminderTemp(user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/billing`),
           userId: user.id,
-        }).catch(err => console.error(`[UserLifecycle] Subscribe reminder failed for ${user.email}:`, err?.message));
+        }).catch(err => console.error(`[UserLifecycle] Subscribe reminder failed for ${maskEmail(user.email)}:`, err?.message));
         sent++;
       }
 
@@ -127,7 +128,7 @@ export const startUserLifecycleJob = () => {
           text: `Hi ${sub.user.fullName || "there"}, your Slingvo subscription has ended. Resubscribe to regain access.`,
           html: reactivationTemp(sub.user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/billing`),
           userId: sub.user.id,
-        }).catch(err => console.error(`[UserLifecycle] Reactivation email failed for ${sub.user.email}:`, err?.message));
+        }).catch(err => console.error(`[UserLifecycle] Reactivation email failed for ${maskEmail(sub.user.email)}:`, err?.message));
         sent++;
       }
 
@@ -168,7 +169,7 @@ export const startUserLifecycleJob = () => {
           text: `Hi ${user.fullName || "there"}, your Slingvo trial is ending soon.`,
           html: trialEndingSoonTemp(user.fullName || "there", daysLeft, `${envConfig.FRONTEND_URL}/admin/billing`),
           userId: user.id,
-        }).catch(err => console.error(`[UserLifecycle] Trial-ending-soon email failed for ${user.email}:`, err?.message));
+        }).catch(err => console.error(`[UserLifecycle] Trial-ending-soon email failed for ${maskEmail(user.email)}:`, err?.message));
         sent++;
       }
 
@@ -211,7 +212,7 @@ export const startUserLifecycleJob = () => {
             `${envConfig.FRONTEND_URL}/admin/billing`,
           ),
           userId: sub.user.id,
-        }).catch(err => console.error(`[UserLifecycle] Card-expiring email failed for ${sub.user.email}:`, err?.message));
+        }).catch(err => console.error(`[UserLifecycle] Card-expiring email failed for ${maskEmail(sub.user.email)}:`, err?.message));
         sent++;
       }
 

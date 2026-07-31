@@ -3,7 +3,8 @@ import crypto from "crypto";
 import prisma from "../../lib/prisma";
 import { envConfig } from "../../lib/config";
 import { addSuppression } from "../../utils/emailSuppression";
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus, BounceType } from "@prisma/client";
+import { maskEmail } from "../../utils/maskEmail";
 
 /**
  * Handles MailerSend activity webhooks (Sent/Delivered/Opened/Clicked/
@@ -20,11 +21,18 @@ import { EmailStatus } from "@prisma/client";
 function verifySignature(rawBody: Buffer, signatureHeader: string | undefined): boolean {
   const secret = envConfig.MAILERSEND_WEBHOOK_SECRET;
   if (!secret) {
-    // Secret not yet configured (e.g. during initial webhook registration in
-    // MailerSend's dashboard, which validates the URL before a signing secret
-    // exists). Allow through so registration succeeds, but log a warning so
-    // it's visible. Set MAILERSEND_WEBHOOK_SECRET and redeploy to enforce.
-    console.warn("[MailerSend webhook] MAILERSEND_WEBHOOK_SECRET is not set — skipping signature check.");
+    if (process.env.NODE_ENV === "production") {
+      // Never accept unsigned webhook traffic in production — fail closed.
+      // Anyone could otherwise POST fake bounce/complaint/unsubscribe events
+      // and force real recipients onto the suppression list.
+      console.error("[MailerSend webhook] MAILERSEND_WEBHOOK_SECRET is not set in production — rejecting request.");
+      return false;
+    }
+    // Non-production only: secret not yet configured (e.g. during initial
+    // webhook registration in MailerSend's dashboard, which validates the
+    // URL before a signing secret exists). Allow through so registration
+    // succeeds, but log a warning so it's visible.
+    console.warn("[MailerSend webhook] MAILERSEND_WEBHOOK_SECRET is not set — skipping signature check (non-production only).");
     return true;
   }
   if (!signatureHeader) return false;
@@ -66,7 +74,7 @@ export const handleMailerSendWebhook = async (req: Request, res: Response): Prom
       return;
     }
 
-    console.log(`[MailerSend webhook] ${activityType}: ${email} (message_id=${messageId})`);
+    console.log(`[MailerSend webhook] ${activityType}: ${maskEmail(email)} (message_id=${messageId})`);
 
     switch (activityType) {
       case "hard_bounced":
@@ -74,7 +82,20 @@ export const handleMailerSendWebhook = async (req: Request, res: Response): Prom
         if (messageId) {
           await prisma.emailLog.updateMany({
             where: { messageId },
-            data: { status: EmailStatus.FAILED, error: "Hard bounce (MailerSend)" },
+            data: { status: EmailStatus.FAILED, error: "Hard bounce (MailerSend)", bounceType: BounceType.HARD },
+          });
+        }
+        break;
+
+      // Soft bounces are transient (mailbox full, temporary DNS issue, etc.) —
+      // matches the prior SES handler's behavior of only suppressing permanent
+      // bounces. No suppression/status change, but now recorded on the log
+      // row so bounce rate can distinguish soft from hard.
+      case "soft_bounced":
+        if (messageId) {
+          await prisma.emailLog.updateMany({
+            where: { messageId },
+            data: { bounceType: BounceType.SOFT },
           });
         }
         break;
@@ -87,14 +108,45 @@ export const handleMailerSendWebhook = async (req: Request, res: Response): Prom
         await addSuppression(email, "UNSUBSCRIBE", "Unsubscribed via MailerSend link/header");
         break;
 
-      // Soft bounces are transient (mailbox full, temporary DNS issue, etc.) —
-      // matches the prior SES handler's behavior of only suppressing permanent
-      // bounces. Logged for visibility, no suppression or status change.
-      case "soft_bounced":
-      case "sent":
       case "delivered":
+        if (messageId) {
+          await prisma.emailLog.updateMany({
+            where: { messageId },
+            data: { deliveredAt: new Date() },
+          });
+        }
+        break;
+
       case "opened":
+        if (messageId) {
+          // Only stamp openedAt the first time — later opens just bump the count.
+          await prisma.emailLog.updateMany({
+            where: { messageId, openedAt: null },
+            data: { openedAt: new Date() },
+          });
+          await prisma.emailLog.updateMany({
+            where: { messageId },
+            data: { openCount: { increment: 1 } },
+          });
+        }
+        break;
+
       case "clicked":
+        if (messageId) {
+          await prisma.emailLog.updateMany({
+            where: { messageId, clickedAt: null },
+            data: { clickedAt: new Date() },
+          });
+          await prisma.emailLog.updateMany({
+            where: { messageId },
+            data: { clickCount: { increment: 1 } },
+          });
+        }
+        break;
+
+      case "sent":
+        // Send-time state is already recorded by email.service.ts when the
+        // message was dispatched — nothing further to do here.
         break;
 
       default:
