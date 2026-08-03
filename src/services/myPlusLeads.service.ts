@@ -205,35 +205,37 @@ export async function authenticateSubAccount(email: string, password: string): P
 }
 
 export async function fetchListings(subEmail: string, subPassword: string): Promise<MyPlusLead[]> {
-  const authToken = await authenticateSubAccount(subEmail, subPassword);
-  const encodedToken = encodeURIComponent(authToken);
+  // Fetch a single page using a freshly-obtained token. MPL's paging tokens
+  // seem to be single-use in some sessions, so we re-auth per page to avoid 401.
+  const fetchPage = async (url: string): Promise<any> => {
+    const token = await authenticateSubAccount(subEmail, subPassword);
+    // The paging.next URL ends with "authToken=" (empty) — append our token.
+    const fullUrl = url.endsWith("authToken=") ? url + encodeURIComponent(token) : url;
+    const res = await fetchWithTimeout(fullUrl);
+    if (!res.ok) {
+      throw new MyPlusLeadsError(`MyPlusLeads page fetch failed: ${await responseErrorMessage(res)}`, 502);
+    }
+    return res.json();
+  };
 
-  // MPL requires the token as a query param — Authorization header returns 401.
-  const res = await fetchWithTimeout(`${BASE_URL}/listings?authToken=${encodedToken}`);
-
-  if (!res.ok) {
-    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
+  const token = await authenticateSubAccount(subEmail, subPassword);
+  const firstUrl = `${BASE_URL}/listings?authToken=${encodeURIComponent(token)}`;
+  const firstRes = await fetchWithTimeout(firstUrl);
+  if (!firstRes.ok) {
+    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(firstRes)}`, 502);
   }
+  const firstData = await firstRes.json();
+  const listings: MyPlusLead[] = firstData.listings ?? [];
+  console.log(`[MyPlusLeads] Page 1: fetched ${listings.length} listings`);
 
-  const data = await res.json();
-  const listings: MyPlusLead[] = data.listings ?? [];
-
-  // MPL caps each page at 500 (oldest first). Follow paging.next to get
-  // every listing the account has, up to a safety cap of 20 pages.
+  // Follow paging.next, re-authenticating for each subsequent page.
   const MAX_PAGES = 20;
-  let nextUrl: string | undefined = data.paging?.next;
+  let nextUrl: string | undefined = firstData.paging?.next;
   let page = 1;
 
   while (nextUrl && page < MAX_PAGES) {
     try {
-      // paging.next ends with "authToken=" (empty) — append the token
-      const fullUrl = nextUrl + encodedToken;
-      const pageRes = await fetchWithTimeout(fullUrl);
-      if (!pageRes.ok) {
-        console.warn(`[MyPlusLeads] Page ${page + 1} returned ${pageRes.status}, stopping pagination.`);
-        break;
-      }
-      const pageData = await pageRes.json();
+      const pageData = await fetchPage(nextUrl);
       const pageListings: MyPlusLead[] = pageData.listings ?? [];
       if (pageListings.length === 0) break;
 
@@ -247,8 +249,8 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
 
       nextUrl = pageData.paging?.next;
       page++;
-    } catch (e) {
-      console.warn(`[MyPlusLeads] Page ${page + 1} fetch failed, continuing with ${listings.length} listings:`, e);
+    } catch (e: any) {
+      console.warn(`[MyPlusLeads] Page ${page + 1} fetch failed, continuing with ${listings.length} listings:`, e?.message ?? e);
       break;
     }
   }
