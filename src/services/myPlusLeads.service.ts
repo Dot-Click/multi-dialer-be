@@ -206,9 +206,10 @@ export async function authenticateSubAccount(email: string, password: string): P
 
 export async function fetchListings(subEmail: string, subPassword: string): Promise<MyPlusLead[]> {
   const authToken = await authenticateSubAccount(subEmail, subPassword);
+  const encodedToken = encodeURIComponent(authToken);
 
   // MPL requires the token as a query param — Authorization header returns 401.
-  const res = await fetchWithTimeout(`${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}`);
+  const res = await fetchWithTimeout(`${BASE_URL}/listings?authToken=${encodedToken}`);
 
   if (!res.ok) {
     throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(res)}`, 502);
@@ -217,29 +218,39 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
   const data = await res.json();
   const listings: MyPlusLead[] = data.listings ?? [];
 
-  // MPL's default endpoint caps at 500 (oldest first). Recent listings
-  // are only available via dateFrom + isForUser=true. Fetch the last 30
-  // days as a second page and merge so we never miss new leads.
-  try {
-    const since = new Date();
-    since.setDate(since.getDate() - 30);
-    const dateFrom = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, "0")}-${String(since.getDate()).padStart(2, "0")} 00:00:00`;
-    const recentUrl = `${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}&dateFrom=${encodeURIComponent(dateFrom)}&isForUser=true`;
-    const recentRes = await fetchWithTimeout(recentUrl);
-    if (recentRes.ok) {
-      const recentData = await recentRes.json();
-      const recentListings: MyPlusLead[] = recentData.listings ?? [];
-      if (recentListings.length > 0) {
-        const existingIds = new Set(listings.map((l) => l.listingId));
-        for (const rl of recentListings) {
-          if (!existingIds.has(rl.listingId)) {
-            listings.push(rl);
-          }
+  // MPL caps each page at 500 (oldest first). Follow paging.next to get
+  // every listing the account has, up to a safety cap of 20 pages.
+  const MAX_PAGES = 20;
+  let nextUrl: string | undefined = data.paging?.next;
+  let page = 1;
+
+  while (nextUrl && page < MAX_PAGES) {
+    try {
+      // paging.next ends with "authToken=" (empty) — append the token
+      const fullUrl = nextUrl + encodedToken;
+      const pageRes = await fetchWithTimeout(fullUrl);
+      if (!pageRes.ok) {
+        console.warn(`[MyPlusLeads] Page ${page + 1} returned ${pageRes.status}, stopping pagination.`);
+        break;
+      }
+      const pageData = await pageRes.json();
+      const pageListings: MyPlusLead[] = pageData.listings ?? [];
+      if (pageListings.length === 0) break;
+
+      const existingIds = new Set(listings.map((l) => l.listingId));
+      for (const pl of pageListings) {
+        if (!existingIds.has(pl.listingId)) {
+          listings.push(pl);
         }
       }
+      console.log(`[MyPlusLeads] Page ${page + 1}: fetched ${pageListings.length} listings (total: ${listings.length})`);
+
+      nextUrl = pageData.paging?.next;
+      page++;
+    } catch (e) {
+      console.warn(`[MyPlusLeads] Page ${page + 1} fetch failed, continuing with ${listings.length} listings:`, e);
+      break;
     }
-  } catch (e) {
-    console.warn("[MyPlusLeads] Recent-listings fetch failed, continuing with default batch:", e);
   }
 
   return listings;
