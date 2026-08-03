@@ -87,6 +87,24 @@ export type MyPlusLeadsSyncResult = {
   skipped: number;
 };
 
+// MyPlusLeads' raw per-listing status is finer-grained than the products we
+// sell — e.g. "Expired Data" is sold as one product but MPL tags listings
+// that fell out of the market as "Expired", "Withdrawn", or "Canceled"
+// separately. Group those under one canonical package so an assignment of
+// "Expired" pulls all three, instead of only literally-"Expired" listings.
+const PACKAGE_GROUPS: Record<string, string[]> = {
+  Expired: ["Expired", "Withdrawn", "Canceled"],
+};
+
+const RAW_STATUS_TO_PACKAGE = new Map<string, string>();
+for (const [pkg, rawStatuses] of Object.entries(PACKAGE_GROUPS)) {
+  for (const raw of rawStatuses) RAW_STATUS_TO_PACKAGE.set(raw, pkg);
+}
+
+export function resolveCanonicalPackage(rawStatus: string): string {
+  return RAW_STATUS_TO_PACKAGE.get(rawStatus) ?? rawStatus;
+}
+
 class MyPlusLeadsError extends Error {
   statusCode: number;
 
@@ -220,7 +238,8 @@ export async function discoverAccountPackages(configId: string): Promise<{ packa
 
   const counts = new Map<string, number>();
   for (const listing of listings) {
-    const pkg = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
+    const rawStatus = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
+    const pkg = resolveCanonicalPackage(rawStatus);
     counts.set(pkg, (counts.get(pkg) ?? 0) + 1);
   }
 
@@ -264,9 +283,10 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
   const password = decrypt(config.subAccountPassword);
 
   const allListings = await fetchListings(config.subAccountEmail, password);
-  const listings = allListings.filter(
-    (l) => (l.propertyDetails?.normalizedStatus ?? l.propertyDetails?.status ?? "Expired") === assignedPackage,
-  );
+  const listings = allListings.filter((l) => {
+    const rawStatus = l.propertyDetails?.normalizedStatus ?? l.propertyDetails?.status ?? "Expired";
+    return resolveCanonicalPackage(rawStatus) === assignedPackage;
+  });
   let imported = 0;
   let skipped = 0;
 

@@ -3,6 +3,7 @@ import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
 import { createContactInDb, createContactFolderInDb } from "../contact/service";
 import { createInternalNotification } from "../notification/controller";
+import { resolveCanonicalPackage } from "../../services/myPlusLeads.service";
 
 /**
  * Webhook for MyPlusLeads to push data into the platform.
@@ -45,7 +46,7 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
     // this exact package by Client — otherwise it's data the customer never
     // paid for and Client never assigned.
     const entitlement = await prisma.leadStore.findFirst({
-      where: { myPlusLeadsConfigId: config.id, assignedPackage: leadType, status: "ACTIVE" },
+      where: { myPlusLeadsConfigId: config.id, assignedPackage: resolveCanonicalPackage(leadType), status: "ACTIVE" },
     });
     if (!entitlement) {
       console.log(`[MyPlusLeads Webhook] Skipped: no ACTIVE purchase assigned package "${leadType}" for account ${config.id}.`);
