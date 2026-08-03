@@ -215,7 +215,34 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
   }
 
   const data = await res.json();
-  return data.listings ?? [];
+  const listings: MyPlusLead[] = data.listings ?? [];
+
+  // MPL's default endpoint caps at 500 (oldest first). Recent listings
+  // are only available via dateFrom + isForUser=true. Fetch the last 30
+  // days as a second page and merge so we never miss new leads.
+  try {
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+    const dateFrom = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, "0")}-${String(since.getDate()).padStart(2, "0")} 00:00:00`;
+    const recentUrl = `${BASE_URL}/listings?authToken=${encodeURIComponent(authToken)}&dateFrom=${encodeURIComponent(dateFrom)}&isForUser=true`;
+    const recentRes = await fetchWithTimeout(recentUrl);
+    if (recentRes.ok) {
+      const recentData = await recentRes.json();
+      const recentListings: MyPlusLead[] = recentData.listings ?? [];
+      if (recentListings.length > 0) {
+        const existingIds = new Set(listings.map((l) => l.listingId));
+        for (const rl of recentListings) {
+          if (!existingIds.has(rl.listingId)) {
+            listings.push(rl);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[MyPlusLeads] Recent-listings fetch failed, continuing with default batch:", e);
+  }
+
+  return listings;
 }
 
 /**
