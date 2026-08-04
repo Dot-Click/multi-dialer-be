@@ -3,6 +3,7 @@ import prisma from "../lib/prisma";
 import { decryptEIN as decrypt, encryptEIN as encrypt } from "../utils/encryption";
 import { chunkArray } from "@/utils/helpers";
 import { fetchWithTimeout } from "../utils/fetchWithTimeout";
+import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { PhoneType } from "@prisma/client";
 
 const BASE_URL = "https://api.myplusleads.com";
@@ -347,6 +348,43 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
     return list;
   };
 
+  // Ensure the user's MiscField catalog has the property-detail fields we
+  // populate below, then build a name → id map used to key miscValues.
+  let systemSetting = await prisma.system_Setting.findFirst({ where: { userId } });
+  if (!systemSetting) {
+    systemSetting = await prisma.system_Setting.create({ data: { userId } });
+  }
+  await ensureDefaultMiscFields(systemSetting.id);
+  const miscFields = await prisma.miscField.findMany({
+    where: { systemSettingId: systemSetting.id },
+    select: { id: true, fieldName: true },
+  });
+  const miscFieldIdByName = new Map<string, string>();
+  for (const f of miscFields) {
+    miscFieldIdByName.set(f.fieldName.trim().toLowerCase(), f.id);
+  }
+  const buildMiscValues = (l: MyPlusLead): Record<string, string> => {
+    const values: Record<string, string> = {};
+    const set = (name: string, value?: string | null) => {
+      if (!value) return;
+      const id = miscFieldIdByName.get(name.trim().toLowerCase());
+      if (id) values[id] = String(value);
+    };
+    const pd = l.propertyDetails;
+    const pa = l.propertyAddress;
+    set("MLS ID", pd?.mlsNumber);
+    set("Price", pd?.price);
+    set("List Price", pd?.price);
+    set("Bedrooms", pd?.bedrooms);
+    set("Bathrooms", pd?.bathrooms);
+    set("Square Footage", pd?.square_footage);
+    set("Property Type", pd?.propertyType);
+    set("Listing Status", pd?.normalizedStatus ?? pd?.status);
+    set("County", pa?.county);
+    set("Estimated Value", l.owner?.totalValue);
+    return values;
+  };
+
   for (const listingChunk of chunkArray(listings, 50)) {
     for (const listing of listingChunk) {
       const contact1 = listing.contact1;
@@ -367,6 +405,7 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
       const owner = listing.owner;
       const list = await getOrCreateList(status);
 
+      const miscValues = buildMiscValues(listing);
       const newContact = await prisma.contact.create({
         data: {
           fullName: contact1.name,
@@ -381,6 +420,7 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
           mailingZip: owner?.zip ?? null,
           source,
           tags: ["MyPlusLeads", status],
+          miscValues: Object.keys(miscValues).length > 0 ? miscValues : undefined,
         },
       });
 

@@ -29,6 +29,7 @@ export const DEFAULT_MISC_FIELDS = [
     { fieldName: "Acres", type: "text" },
     { fieldName: "Auction Deposit", type: "text" },
     { fieldName: "Price", type: "text" },
+    { fieldName: "Estimated Value", type: "text" },
     { fieldName: "Auction Date", type: "text" },
     { fieldName: "Auction Location", type: "text" },
     { fieldName: "Loan Amount", type: "text" },
