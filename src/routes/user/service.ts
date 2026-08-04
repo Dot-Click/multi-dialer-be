@@ -246,7 +246,7 @@ async function getFirstAvailableStripePriceId(): Promise<string | null> {
     return null;
 }
 
-async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }, planId?: string) {
+export async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }, planId?: string) {
     // 1. Use the admin-selected plan
     // 2. Fall back to env defaults
     // 3. Auto-fetch the first active Stripe price as last resort

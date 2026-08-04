@@ -10,10 +10,10 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, emailChangeConfirmationTemp, sendEmail } from "../utils/email";
+import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, emailChangeConfirmationTemp, agentInviteTemp, memberAddedTemp, welcomeTemp, sendEmail } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { ensureDncFolder } from "../routes/contact/service";
-import { initializeUserAccount } from "../routes/user/service";
+import { initializeUserAccount, sendPaymentSetupEmail } from "../routes/user/service";
 import { releaseTwilioResourcesForUser } from "../services/twilio-account.service";
 import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service";
 import { getUserPlanLimits } from "../services/planLimits.service";
@@ -375,6 +375,82 @@ export const auth = betterAuth({
           }
         } catch (error) {
           console.error("Signup notification error:", error);
+        }
+      }
+
+      // The admin's own "Add Agent" UI (authClient.admin.createUser -> POST
+      // /admin/create-user) is a raw Better Auth creation with no app-level
+      // business logic — see the seat-cap comment on the `before` hook above.
+      // That means the agent-invite email createUserInDb sends never runs
+      // for this path; it's only ever fired by the separate, unused-by-the-
+      // current-UI POST /api/user route. This was reported as "the agent
+      // doesn't get the email" — confirmed via EmailLog: zero rows were ever
+      // written for a newly created agent, meaning sendEmail() was never
+      // even reached, not that it silently failed.
+      if (ctx.path.startsWith("/admin/create-user")) {
+        const body = ctx.body;
+        const role = body?.data?.role ?? body?.role;
+        const createdById = body?.data?.createdById ?? body?.createdById;
+
+        if (role === "AGENT" && createdById && body?.email) {
+          try {
+            const [newUser, admin] = await Promise.all([
+              prisma.user.findUnique({ where: { email: body.email } }),
+              prisma.user.findUnique({
+                where: { id: createdById },
+                select: { id: true, email: true, fullName: true },
+              }),
+            ]);
+
+            if (newUser) {
+              sendEmail(
+                newUser.email,
+                `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
+                agentInviteTemp(
+                  newUser.fullName || "there",
+                  admin?.fullName || "your admin",
+                  newUser.email,
+                  body.password || "",
+                  `${envConfig.FRONTEND_URL}/admin/login`,
+                ),
+                { userId: newUser.id },
+              ).catch((err: any) => console.error("[Auth] Failed to send agent invite email:", err?.message ?? err));
+
+              if (admin) {
+                sendEmail(
+                  admin.email,
+                  "New team member added to your Slingvo workspace",
+                  memberAddedTemp(admin.fullName || "there", newUser.fullName || newUser.email, newUser.email),
+                  { userId: admin.id },
+                ).catch((err: any) => console.error("[Auth] Failed to send member-added email:", err?.message ?? err));
+              }
+            }
+          } catch (err: any) {
+            console.error("[Auth] Failed to send agent invite/member-added emails:", err?.message ?? err);
+          }
+        } else if (role && role !== "AGENT" && body?.email) {
+          // Non-agent (ADMIN/OWNER) created manually via this same UI/endpoint —
+          // same gap as the agent case: createUserInDb's welcome + payment-setup
+          // email never runs here either, since this path bypasses that function
+          // entirely.
+          try {
+            const newUser = await prisma.user.findUnique({ where: { email: body.email } });
+            if (newUser) {
+              sendEmail(
+                newUser.email,
+                "Welcome to Slingvo - Your Account Details",
+                welcomeTemp(newUser.email, body.password || ""),
+                { userId: newUser.id },
+              ).catch((err: any) => console.error("[Auth] Failed to send welcome email:", err?.message ?? err));
+
+              const planId = body?.data?.planId ?? body?.planId;
+              sendPaymentSetupEmail(newUser, planId ?? undefined).catch((err: any) =>
+                console.error("[Auth] Failed to send payment setup email:", err?.message ?? err)
+              );
+            }
+          } catch (err: any) {
+            console.error("[Auth] Failed to send welcome/payment-setup emails:", err?.message ?? err);
+          }
         }
       }
 
