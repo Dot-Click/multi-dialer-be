@@ -110,8 +110,12 @@ export const createCalendarEvent = async (req: Request, res: Response): Promise<
 
     const payload = result.data;
     const hasAssignTo = typeof payload.assignToId === "string";
+    // Picking yourself explicitly (instead of leaving it blank) isn't "assigning
+    // to others" — only block explicit assignment to someone ELSE without the
+    // right role.
+    const assigningToSelf = hasAssignTo && payload.assignToId === userId;
 
-    if (hasAssignTo && !canManageOthers(role)) {
+    if (hasAssignTo && !assigningToSelf && !canManageOthers(role)) {
       errorResponse(
         res,
         "Only admins or owners can assign calendar events to other users",
