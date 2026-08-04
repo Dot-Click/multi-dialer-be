@@ -71,11 +71,20 @@ export async function getEmailAnalyticsSummary() {
 
 export async function getEmailTimeline(days = 30) {
   // Raw SQL is necessary to efficiently GROUP BY calendar date in PostgreSQL.
+  //
+  // Two things previously broke this query:
+  //  - `created_at` doesn't exist as a column — Prisma's default mapping made
+  //    it "createdAt" (like the other camelCase columns already quoted
+  //    below), so Postgres rejected the query outright with
+  //    `column "created_at" does not exist` before it could run at all.
+  //  - `${days} || ' days'` bound `days` as an integer parameter, and
+  //    Postgres has no `||` (concat) operator for `integer || text`. Fixed by
+  //    multiplying an INTERVAL literal instead, which is well-typed either way.
   const rows = await prisma.$queryRaw<
     { date: Date; sent: bigint; failed: bigint; delivered: bigint; opened: bigint; clicked: bigint; bounced: bigint }[]
   >`
     SELECT
-      DATE(created_at)                                          AS date,
+      DATE("createdAt")                                         AS date,
       COUNT(*) FILTER (WHERE status = 'SENT')::BIGINT           AS sent,
       COUNT(*) FILTER (WHERE status = 'FAILED')::BIGINT         AS failed,
       COUNT(*) FILTER (WHERE "deliveredAt" IS NOT NULL)::BIGINT AS delivered,
@@ -83,20 +92,41 @@ export async function getEmailTimeline(days = 30) {
       COUNT(*) FILTER (WHERE "clickedAt" IS NOT NULL)::BIGINT   AS clicked,
       COUNT(*) FILTER (WHERE "bounceType" IS NOT NULL)::BIGINT  AS bounced
     FROM email_logs
-    WHERE created_at >= NOW() - (${days} || ' days')::INTERVAL
-    GROUP BY DATE(created_at)
+    WHERE "createdAt" >= NOW() - (${days} * INTERVAL '1 day')
+    GROUP BY DATE("createdAt")
     ORDER BY date ASC
   `;
 
-  return rows.map((r) => ({
-    date:      r.date.toISOString().split("T")[0],
-    sent:      Number(r.sent),
-    failed:    Number(r.failed),
-    delivered: Number(r.delivered),
-    opened:    Number(r.opened),
-    clicked:   Number(r.clicked),
-    bounced:   Number(r.bounced),
-  }));
+  type DayMetrics = { sent: number; failed: number; delivered: number; opened: number; clicked: number; bounced: number };
+  const zero: DayMetrics = { sent: 0, failed: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0 };
+
+  const byDate = new Map<string, DayMetrics>(
+    rows.map((r) => [
+      r.date.toISOString().split("T")[0],
+      {
+        sent:      Number(r.sent),
+        failed:    Number(r.failed),
+        delivered: Number(r.delivered),
+        opened:    Number(r.opened),
+        clicked:   Number(r.clicked),
+        bounced:   Number(r.bounced),
+      },
+    ])
+  );
+
+  // The GROUP BY only produces rows for days that had at least one email —
+  // days with zero activity are simply absent, which turns a sparse range
+  // into a broken/discontinuous line on the chart. Fill every day in the
+  // requested range explicitly, defaulting to zero.
+  const result: (DayMetrics & { date: string })[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - i);
+    const dateStr = d.toISOString().split("T")[0];
+    result.push({ date: dateStr, ...(byDate.get(dateStr) ?? zero) });
+  }
+
+  return result;
 }
 
 // ── Paginated logs ────────────────────────────────────────────────────────────

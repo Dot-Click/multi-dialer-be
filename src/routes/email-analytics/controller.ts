@@ -19,7 +19,7 @@ export const getSummary = async (_req: Request, res: Response) => {
 
 export const getTimeline = async (req: Request, res: Response) => {
   try {
-    const days = Math.min(Number(req.query.days) || 30, 90);
+    const days = Math.max(1, Math.min(Number(req.query.days) || 30, 90));
     const data = await getEmailTimeline(days);
     successResponse(res, 200, "Email timeline", data);
   } catch (err: any) {
