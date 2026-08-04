@@ -394,8 +394,24 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
       }
 
       const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
-      const existing = await prisma.contact.findFirst({ where: { userId, source } });
+      const existing = await prisma.contact.findFirst({
+        where: { userId, source },
+        select: { id: true, miscValues: true },
+      });
       if (existing) {
+        // Backfill miscValues if the contact was imported before the
+        // property-details mapping shipped and doesn't have any yet.
+        const currentMisc = (existing.miscValues as Record<string, string> | null) ?? null;
+        const hasNoMisc = !currentMisc || Object.keys(currentMisc).length === 0;
+        if (hasNoMisc) {
+          const backfill = buildMiscValues(listing);
+          if (Object.keys(backfill).length > 0) {
+            await prisma.contact.update({
+              where: { id: existing.id },
+              data: { miscValues: backfill },
+            });
+          }
+        }
         skipped++;
         continue;
       }
