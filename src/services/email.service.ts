@@ -113,14 +113,22 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
     return { success: false, error: reason, suppressed: true };
   }
 
-  // Marketing emails get an unsubscribe footer (CAN-SPAM).
+  const transport = await getEmailTransporter(companyId);
+
+  // Marketing emails get an unsubscribe mechanism (CAN-SPAM). MailerSend's
+  // domain-level "Track unsubscribes" is on and auto-attaches its own
+  // List-Unsubscribe header/link — that's the one whose clicks fire
+  // activity.unsubscribed back to our webhook, keeping the suppression list
+  // in sync automatically. Appending our own signed link here would give
+  // recipients a second, competing unsubscribe path that bypasses MailerSend
+  // entirely (silently, since our /api/email/unsubscribe route still "works"),
+  // so it's only added for the SMTP path below, where MailerSend never sees
+  // the send and therefore can't do this for us.
   let htmlBody = html || text;
-  if (options.includeUnsubscribe) {
+  if (options.includeUnsubscribe && transport.kind === "smtp") {
     const url = buildUnsubscribeUrl(to);
     htmlBody += `<br/><br/><div style="font-size:12px;color:#9ca3af;text-align:center;line-height:1.5;">If you no longer wish to receive these emails, <a href="${url}" style="color:#9ca3af;">unsubscribe here</a>.</div>`;
   }
-
-  const transport = await getEmailTransporter(companyId);
   const fromEmail = transport.kind === "smtp" ? transport.fromEmail : (envConfig.MAILERSEND_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com");
   const fromName  = transport.kind === "smtp" ? transport.fromName  : (options.fromName || envConfig.MAILERSEND_FROM_NAME || "Dialer System");
   const fromHeader = `${fromName} <${fromEmail}>`;

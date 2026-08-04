@@ -65,12 +65,43 @@ export const handleMailerSendWebhook = async (req: Request, res: Response): Prom
 
   try {
     const data = event?.data;
-    const activityType: string | undefined = data?.type || event?.type?.replace(/^activity\./, "");
-    const email: string | undefined = data?.email || data?.recipient?.email;
-    const messageId: string | undefined = data?.message_id;
+
+    // The event type always lives on the webhook envelope (e.g. "activity.sent")
+    // — that's the one field MailerSend guarantees across every event category,
+    // so it's the primary source. data.type usually mirrors it but isn't a safe
+    // fallback-of-first-resort since some event categories don't set it.
+    const activityType: string | undefined =
+      event?.type?.replace(/^activity\./, "") || data?.type;
+
+    // MailerSend has shipped more than one shape for the recipient address —
+    // `data.email` is a plain string in the documented "sent" example, but an
+    // object with the address nested under `recipient` in others (this is what
+    // was actually silently breaking every event: `data.email` was truthy as an
+    // *object*, so `!email` never caught it, and downstream just no-opped).
+    // Try every known shape instead of assuming one.
+    const email: string | undefined =
+      (typeof data?.email === "string" ? data.email : undefined) ||
+      data?.email?.recipient?.email ||
+      data?.recipient?.email ||
+      data?.email?.email;
+
+    // Same story for the id used to match back to our EmailLog row.
+    const messageId: string | undefined =
+      data?.message_id || data?.email?.message?.id || data?.email_id;
+
+    // Always log the raw payload (address masked) so the next payload-shape
+    // surprise is a 2-minute diagnosis instead of a multi-day silent drop.
+    console.log(
+      "[MailerSend webhook] raw payload:",
+      JSON.stringify(event, (key, value) =>
+        key === "email" && typeof value === "string" ? maskEmail(value) : value
+      )
+    );
 
     if (!activityType || !email) {
-      console.warn("[MailerSend webhook] Missing type/email in payload:", event?.type);
+      console.warn(
+        `[MailerSend webhook] Could not extract type/email — type=${activityType ?? "MISSING"} email=${email ? "present" : "MISSING"} envelopeType=${event?.type}`
+      );
       return;
     }
 
@@ -78,7 +109,11 @@ export const handleMailerSendWebhook = async (req: Request, res: Response): Prom
 
     switch (activityType) {
       case "hard_bounced":
-        await addSuppression(email, "BOUNCE", data?.bounce?.description || data?.reason || "Hard bounce");
+        await addSuppression(
+          email,
+          "BOUNCE",
+          data?.bounce?.description || data?.email?.bounce?.description || data?.reason || "Hard bounce"
+        );
         if (messageId) {
           await prisma.emailLog.updateMany({
             where: { messageId },
