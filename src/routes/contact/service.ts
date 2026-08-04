@@ -3333,6 +3333,19 @@ export async function suppressNumberGloballyInDb(number: string, userId: string,
     await prisma.contactActivityLog.create({
       data: { contactId, userId, action: `DNC Number suppressed: ${number}` },
     });
+
+    // If that was the contact's only number (or the last one not already DNC),
+    // the whole contact is now undialable — move it to the DNC folder too,
+    // same as the DNC_CONTACT outcome, instead of leaving it stranded in its
+    // list with zero callable numbers.
+    const remainingPhones = await prisma.contactPhone.findMany({
+      where: { contactId },
+      select: { isDnc: true },
+    });
+    const allNumbersDnc = remainingPhones.length > 0 && remainingPhones.every((p) => p.isDnc);
+    if (allNumbersDnc) {
+      await moveToDncInDb(contactId, userId);
+    }
   }
   return { success: true };
 }
