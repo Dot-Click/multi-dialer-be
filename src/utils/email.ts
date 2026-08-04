@@ -121,7 +121,6 @@ export const welcomeTemp = (email: string, password: string) => `
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2>Welcome to Slingvo!</h2>
             <p>Your account has been successfully created. Here are your login details:</p>
@@ -206,7 +205,6 @@ export const newUserSignupTemp = (userEmail: string, signupTime: string) => `
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <h2 style="color: #2c3e50;">New User Signup Notification</h2>
         <p>A new user has signed up on Slingvo.</p>
         <div class="info">
@@ -238,7 +236,6 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <h2 style="color: #2c3e50;">User Login Alert</h2>
         <p>A user has logged in to Slingvo.</p>
         <div class="info">
@@ -273,7 +270,6 @@ export const emailChangeConfirmationTemp = (fullName: string, oldEmail: string, 
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Confirm your email change</h2>
             <p>Hi ${fullName},</p>
@@ -315,7 +311,6 @@ export const emailVerificationTemp = (fullName: string, email: string, password:
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Welcome to Slingvo!</h2>
             <p>Hi ${fullName || "there"},</p>
@@ -342,7 +337,6 @@ export const memberAddedTemp = (adminName: string, agentName: string, agentEmail
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Member Added - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">New team member added</h2>
 <p>Hi ${adminName},</p>
 <p>A new member has been added to your Slingvo workspace.</p>
@@ -359,7 +353,6 @@ export const memberRemovedTemp = (adminName: string, agentName: string, agentEma
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Member Removed - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#fff5f5;border:2px dashed #dc3545;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">Team member removed</h2>
 <p>Hi ${adminName},</p>
 <p>A member has been removed from your Slingvo workspace.</p>
@@ -376,7 +369,6 @@ export const roleChangedTemp = (userName: string, oldRole: string, newRole: stri
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Role Updated - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#f8f9fa;border:2px dashed #007bff;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">Your role has been updated</h2>
 <p>Hi ${userName},</p>
 <p>Your role in Slingvo has been changed.</p>
@@ -393,7 +385,6 @@ export const workspaceCreatedTemp = (ownerName: string, adminEmail: string, admi
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>New Workspace - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">New workspace created</h2>
 <p>Hi ${ownerName},</p>
 <p>A new customer workspace has been provisioned on Slingvo.</p>
@@ -410,7 +401,6 @@ export const inactivityNudgeTemp = (fullName: string, loginUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>We miss you - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">We haven't seen you in a while</h2>
 <p>Hi ${fullName},</p>
 <p>It's been a few days since you last logged in to Slingvo. Your leads and team are waiting — jump back in whenever you're ready.</p>
@@ -424,7 +414,6 @@ export const subscribeReminderTemp = (fullName: string, subscribeUrl: string) =>
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Complete your setup - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">Your account is ready — activate it now</h2>
 <p>Hi ${fullName},</p>
 <p>Your Slingvo account is set up, but you haven't started your subscription yet. Activate your plan to unlock your dialer, contacts, and team tools.</p>
@@ -438,7 +427,6 @@ export const reactivationTemp = (fullName: string, resubscribeUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Come back to Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">Your Slingvo access has ended — come back anytime</h2>
 <p>Hi ${fullName},</p>
 <p>Your Slingvo subscription is no longer active. Resubscribe to regain access to your dialer, contacts, and all your team's data.</p>
@@ -468,7 +456,6 @@ export const paymentFailedTemp = (fullName: string, amount: string, billingUrl: 
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #dc3545;">Your payment failed</h2>
             <p>Hi ${fullName},</p>
@@ -507,7 +494,6 @@ export const paymentSucceededTemp = (fullName: string, amount: string, billingUr
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #28a745;">Payment received</h2>
             <p>Hi ${fullName},</p>
@@ -545,7 +531,6 @@ export const subscriptionCancelledTemp = (fullName: string, planName: string, bi
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your subscription has been cancelled</h2>
             <p>Hi ${fullName},</p>
@@ -588,7 +573,6 @@ export const subscriptionChangedTemp = (
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your subscription was ${direction}</h2>
             <p>Hi ${fullName},</p>
@@ -630,7 +614,6 @@ export const gettingStartedTemp = (fullName: string, dashboardUrl: string) => `
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <h2 style="color: #2c3e50; margin-top: 0;">Here's how to get started</h2>
         <p>Hi ${fullName},</p>
         <p>Your Slingvo workspace is ready. Follow these steps to get up and running quickly:</p>
@@ -696,7 +679,6 @@ export const trialStartedTemp = (fullName: string, trialEndDate: string, dashboa
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your 30-day free trial has started!</h2>
             <p>Hi ${fullName},</p>
@@ -736,7 +718,6 @@ export const subscriptionActivatedTemp = (fullName: string, planName: string, da
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your subscription is now active</h2>
             <p>Hi ${fullName},</p>
@@ -775,7 +756,6 @@ export const trialEndingSoonTemp = (fullName: string, daysLeft: number, billingU
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your trial ends in ${daysLeft} day${daysLeft === 1 ? "" : "s"}</h2>
             <p>Hi ${fullName},</p>
@@ -814,7 +794,6 @@ export const subscriptionPausedTemp = (fullName: string, billingUrl: string) => 
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your subscription has been paused</h2>
             <p>Hi ${fullName},</p>
@@ -850,7 +829,6 @@ export const subscriptionExpiredTemp = (fullName: string, billingUrl: string) =>
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your Slingvo subscription has expired</h2>
             <p>Hi ${fullName},</p>
@@ -889,7 +867,6 @@ export const paymentReceiptTemp = (fullName: string, amount: string, invoiceNumb
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Payment Receipt</h2>
             <p>Hi ${fullName},</p>
@@ -931,7 +908,6 @@ export const subscriptionRenewedTemp = (fullName: string, planName: string, amou
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your subscription has renewed</h2>
             <p>Hi ${fullName},</p>
@@ -951,21 +927,20 @@ export const subscriptionRenewedTemp = (fullName: string, planName: string, amou
 </html>
 `
 
-export const agentInviteTemp = (fullName: string, adminName: string, email: string, password: string, loginUrl: string) => `
+export const agentInviteTemp = (fullName: string, adminName: string, email: string, password: string, verifyUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>You've Been Invited to Slingvo</title>
-<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.credentials{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.cred-row{margin:6px 0;font-size:15px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.credentials{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.cred-row{margin:6px 0;font-size:15px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">You've been invited to Slingvo</h2>
 <p>Hi ${fullName || "there"},</p>
-<p><strong>${adminName}</strong> has added you as an agent on their Slingvo workspace. Use the credentials below to log in and get started.</p>
+<p><strong>${adminName}</strong> has added you as an agent on their Slingvo workspace. Verify your email to activate your account, then log in with the credentials below.</p>
 <div class="credentials">
   <div class="cred-row"><strong>Email:</strong> ${email}</div>
   <div class="cred-row"><strong>Password:</strong> ${password}</div>
 </div>
-<p style="font-size:14px;color:#666;">Please log in and change your password after your first sign-in.</p>
-<div style="text-align:center;margin:30px 0"><a href="${loginUrl}" class="button">Log In Now</a></div>
+<p style="font-size:14px;color:#666;">Please change your password after your first sign-in.</p>
+<div style="text-align:center;margin:30px 0"><a href="${verifyUrl}" class="button">Verify Email</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
 </div>
         ${emailFooter()}
@@ -976,7 +951,6 @@ export const refundConfirmationTemp = (fullName: string, amount: string, billing
 <title>Refund Processed - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.receipt-box{background:#f0fdf4;border:2px dashed #22c55e;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">Your refund has been processed</h2>
 <p>Hi ${fullName},</p>
 <p>We have successfully issued a refund to your payment method on file. Please allow 5–10 business days for the amount to appear on your statement.</p>
@@ -994,7 +968,6 @@ export const invoiceUncollectibleTemp = (fullName: string, amount: string, billi
 <title>Invoice Uncollectible - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.alert-box{background:#fff5f5;border:2px dashed #dc3545;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#dc3545">We were unable to collect your payment</h2>
 <p>Hi ${fullName},</p>
 <p>After several attempts, we were unable to collect payment on your Slingvo invoice. As a result, some services associated with this invoice have been paused or removed.</p>
@@ -1013,7 +986,6 @@ export const paymentMethodAddedTemp = (fullName: string, cardBrand: string, card
 <title>Payment Method Added - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.info-box{background:#f8f9fa;border:2px dashed #007bff;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">New payment method added</h2>
 <p>Hi ${fullName},</p>
 <p>A new payment method was added to your Slingvo account. If you made this change, no action is needed.</p>
@@ -1032,7 +1004,6 @@ export const upcomingInvoiceTemp = (fullName: string, amount: string, billingUrl
 <title>Upcoming Invoice - Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.logo{font-size:24px;font-weight:bold;color:#2c3e50;text-align:center;margin-bottom:30px}.invoice-box{background:#f8f9fa;border:2px dashed #6c757d;padding:20px;border-radius:8px;margin:20px 0;text-align:center}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
-<div class="logo">Slingvo</div>
 <h2 style="color:#2c3e50">Your upcoming Slingvo invoice</h2>
 <p>Hi ${fullName},</p>
 <p>Your next Slingvo invoice has been generated and will be charged to your payment method on file shortly.</p>
@@ -1066,7 +1037,6 @@ export const cardExpiringTemp = (fullName: string, cardBrand: string, cardLast4:
 </head>
 <body>
     <div class="container">
-        <div class="header"><div class="logo">Slingvo</div></div>
         <div class="message">
             <h2 style="color: #2c3e50;">Your payment method expires soon</h2>
             <p>Hi ${fullName},</p>

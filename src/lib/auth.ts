@@ -18,6 +18,7 @@ import { releaseTwilioResourcesForUser } from "../services/twilio-account.servic
 import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service";
 import { getUserPlanLimits } from "../services/planLimits.service";
 import { validatePurchasedAgentSeat } from "../services/agentSeatBilling.service";
+import { buildVerifyEmailUrl } from "../utils/verifyEmailLink";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -403,6 +404,12 @@ export const auth = betterAuth({
             ]);
 
             if (newUser) {
+              // Agents created here never go through Better Auth's own
+              // verification flow (that only fires on the public /sign-up
+              // path), so emailVerified stays false and login is blocked
+              // forever with no way for the agent to resolve it themselves.
+              // The invite email's "Verify Email" button (below) is the only
+              // path that sets it true — see routes/user/verifyEmail.ts.
               sendEmail(
                 newUser.email,
                 `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
@@ -411,7 +418,7 @@ export const auth = betterAuth({
                   admin?.fullName || "your admin",
                   newUser.email,
                   body.password || "",
-                  `${envConfig.FRONTEND_URL}/admin/login`,
+                  buildVerifyEmailUrl(newUser.email),
                 ),
                 { userId: newUser.id },
               ).catch((err: any) => console.error("[Auth] Failed to send agent invite email:", err?.message ?? err));
@@ -436,6 +443,14 @@ export const auth = betterAuth({
           try {
             const newUser = await prisma.user.findUnique({ where: { email: body.email } });
             if (newUser) {
+              // Same emailVerified=false login-block bug as agents, minus the
+              // dedicated verify-email flow — createUserInDb's original intent
+              // for this branch was "administrative creation skips
+              // verification" entirely, so just mark it verified directly.
+              if (!newUser.emailVerified) {
+                await prisma.user.update({ where: { id: newUser.id }, data: { emailVerified: true } });
+              }
+
               sendEmail(
                 newUser.email,
                 "Welcome to Slingvo - Your Account Details",
