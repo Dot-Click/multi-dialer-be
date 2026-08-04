@@ -1,4 +1,5 @@
 import { envConfig } from "../lib/config";
+import { emailFooter } from "./emailFooter";
 export const otpTemp = (OTP: string) => `
 <!DOCTYPE html>
 <html lang="en">
@@ -94,6 +95,7 @@ export const otpTemp = (OTP: string) => `
             <p>© 2024 Your App Name. All rights reserved.</p>
         </div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -133,6 +135,7 @@ export const welcomeTemp = (email: string, password: string) => `
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -176,10 +179,11 @@ export const leadSheetEmailTemp = (contactName: string, leadSheetTitle: string, 
         </div>
         
         <div class="footer">
-            <p>Sent via CallScout Dialer</p>
+            <p>Sent via Slingvo</p>
             <p>© 2026 All rights reserved.</p>
         </div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -211,6 +215,7 @@ export const newUserSignupTemp = (userEmail: string, signupTime: string) => `
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -242,6 +247,7 @@ export const loginAlertTemp = (userEmail: string, loginTime: string) => `
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -283,6 +289,7 @@ export const emailChangeConfirmationTemp = (fullName: string, oldEmail: string, 
         <p style="font-size:14px;color:#666;">If you didn't request this, you can safely ignore this email — no change will be made.</p>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -324,6 +331,7 @@ export const emailVerificationTemp = (fullName: string, email: string, password:
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -343,7 +351,9 @@ export const memberAddedTemp = (adminName: string, agentName: string, agentEmail
   <p style="margin:8px 0 0"><strong>Email:</strong> ${agentEmail}</p>
 </div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const memberRemovedTemp = (adminName: string, agentName: string, agentEmail: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Member Removed - Slingvo</title>
@@ -358,7 +368,9 @@ export const memberRemovedTemp = (adminName: string, agentName: string, agentEma
   <p style="margin:8px 0 0"><strong>Email:</strong> ${agentEmail}</p>
 </div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const roleChangedTemp = (userName: string, oldRole: string, newRole: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Role Updated - Slingvo</title>
@@ -373,7 +385,9 @@ export const roleChangedTemp = (userName: string, oldRole: string, newRole: stri
   <p style="margin:8px 0 0"><strong>New role:</strong> ${newRole}</p>
 </div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const workspaceCreatedTemp = (ownerName: string, adminEmail: string, adminName: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>New Workspace - Slingvo</title>
@@ -388,7 +402,9 @@ export const workspaceCreatedTemp = (ownerName: string, adminEmail: string, admi
   <p style="margin:8px 0 0"><strong>Email:</strong> ${adminEmail}</p>
 </div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const inactivityNudgeTemp = (fullName: string, loginUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>We miss you - Slingvo</title>
@@ -400,7 +416,9 @@ export const inactivityNudgeTemp = (fullName: string, loginUrl: string) => `
 <p>It's been a few days since you last logged in to Slingvo. Your leads and team are waiting — jump back in whenever you're ready.</p>
 <div style="text-align:center;margin:30px 0"><a href="${loginUrl}" class="button">Log back in</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const subscribeReminderTemp = (fullName: string, subscribeUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Complete your setup - Slingvo</title>
@@ -412,7 +430,9 @@ export const subscribeReminderTemp = (fullName: string, subscribeUrl: string) =>
 <p>Your Slingvo account is set up, but you haven't started your subscription yet. Activate your plan to unlock your dialer, contacts, and team tools.</p>
 <div style="text-align:center;margin:30px 0"><a href="${subscribeUrl}" class="button">Activate my plan</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const reactivationTemp = (fullName: string, resubscribeUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Come back to Slingvo</title>
@@ -424,7 +444,9 @@ export const reactivationTemp = (fullName: string, resubscribeUrl: string) => `
 <p>Your Slingvo subscription is no longer active. Resubscribe to regain access to your dialer, contacts, and all your team's data.</p>
 <div style="text-align:center;margin:30px 0"><a href="${resubscribeUrl}" class="button">Resubscribe now</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const paymentFailedTemp = (fullName: string, amount: string, billingUrl: string) => `
 <!DOCTYPE html>
@@ -460,6 +482,7 @@ export const paymentFailedTemp = (fullName: string, amount: string, billingUrl: 
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -498,6 +521,7 @@ export const paymentSucceededTemp = (fullName: string, amount: string, billingUr
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -532,6 +556,7 @@ export const subscriptionCancelledTemp = (fullName: string, planName: string, bi
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -577,6 +602,7 @@ export const subscriptionChangedTemp = (
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -645,6 +671,7 @@ export const gettingStartedTemp = (fullName: string, dashboardUrl: string) => `
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -684,6 +711,7 @@ export const trialStartedTemp = (fullName: string, trialEndDate: string, dashboa
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -722,6 +750,7 @@ export const subscriptionActivatedTemp = (fullName: string, planName: string, da
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -761,6 +790,7 @@ export const trialEndingSoonTemp = (fullName: string, daysLeft: number, billingU
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -796,6 +826,7 @@ export const subscriptionPausedTemp = (fullName: string, billingUrl: string) => 
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -831,6 +862,7 @@ export const subscriptionExpiredTemp = (fullName: string, billingUrl: string) =>
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -872,6 +904,7 @@ export const paymentReceiptTemp = (fullName: string, amount: string, invoiceNumb
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -913,6 +946,7 @@ export const subscriptionRenewedTemp = (fullName: string, planName: string, amou
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `
@@ -933,7 +967,9 @@ export const agentInviteTemp = (fullName: string, adminName: string, email: stri
 <p style="font-size:14px;color:#666;">Please log in and change your password after your first sign-in.</p>
 <div style="text-align:center;margin:30px 0"><a href="${loginUrl}" class="button">Log In Now</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const refundConfirmationTemp = (fullName: string, amount: string, billingUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -949,7 +985,9 @@ export const refundConfirmationTemp = (fullName: string, amount: string, billing
 </div>
 <div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">View Billing History</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const invoiceUncollectibleTemp = (fullName: string, amount: string, billingUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -966,7 +1004,9 @@ export const invoiceUncollectibleTemp = (fullName: string, amount: string, billi
 <p>To restore full access, please update your payment method and contact support to reinstate any removed services.</p>
 <div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">Update Payment Method</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const paymentMethodAddedTemp = (fullName: string, cardBrand: string, cardLast4: string, billingUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -983,7 +1023,9 @@ export const paymentMethodAddedTemp = (fullName: string, cardBrand: string, card
 <p style="font-size:14px;color:#666;">If you did not add this card, please update your payment method immediately and contact support.</p>
 <div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">Manage Payment Methods</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const upcomingInvoiceTemp = (fullName: string, amount: string, billingUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1000,7 +1042,9 @@ export const upcomingInvoiceTemp = (fullName: string, amount: string, billingUrl
 <p style="font-size:14px;color:#666;">Make sure your payment method is up to date to avoid any interruption in service.</p>
 <div style="text-align:center;margin:30px 0"><a href="${billingUrl}" class="button">View Billing Details</a></div>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
-</div></body></html>`
+</div>
+        ${emailFooter()}
+</body></html>`
 
 export const cardExpiringTemp = (fullName: string, cardBrand: string, cardLast4: string, expMonth: number, expYear: number, billingUrl: string) => `
 <!DOCTYPE html>
@@ -1036,6 +1080,7 @@ export const cardExpiringTemp = (fullName: string, cardBrand: string, cardLast4:
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
+        ${emailFooter()}
 </body>
 </html>
 `

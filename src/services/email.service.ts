@@ -7,6 +7,7 @@ import { EmailStatus } from "@prisma/client";
 import { getSuppression, buildUnsubscribeUrl } from "../utils/emailSuppression";
 import { decryptSmtpPassword } from "../utils/encryption";
 import { maskEmail } from "../utils/maskEmail";
+import { emailFooter } from "../utils/emailFooter";
 
 export interface SendEmailOptions {
   to: string;
@@ -130,7 +131,7 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
     htmlBody += `<br/><br/><div style="font-size:12px;color:#9ca3af;text-align:center;line-height:1.5;">If you no longer wish to receive these emails, <a href="${url}" style="color:#9ca3af;">unsubscribe here</a>.</div>`;
   }
   const fromEmail = transport.kind === "smtp" ? transport.fromEmail : (envConfig.MAILERSEND_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com");
-  const fromName  = transport.kind === "smtp" ? transport.fromName  : (options.fromName || envConfig.MAILERSEND_FROM_NAME || "Dialer System");
+  const fromName  = transport.kind === "smtp" ? transport.fromName  : (options.fromName || envConfig.MAILERSEND_FROM_NAME || "Slingvo");
   const fromHeader = `${fromName} <${fromEmail}>`;
   const replyTo = transport.kind === "smtp" ? fromEmail : (replyToEmail || from || undefined);
 
@@ -285,11 +286,12 @@ export function getBaseEmailTemplate(title: string, content: string) {
           ${content}
         </div>
         <div class="footer">
-          <p>&copy; ${new Date().getFullYear()} CallScout. All rights reserved.</p>
+          <p>&copy; ${new Date().getFullYear()} Slingvo. All rights reserved.</p>
           <p>Professional Appointment Management</p>
         </div>
       </div>
-    </body>
+        ${emailFooter()}
+</body>
     </html>
   `;
 }

@@ -17,6 +17,10 @@ export const envConfig = {
   MAILERSEND_FROM_EMAIL: process.env.MAILERSEND_FROM_EMAIL,
   MAILERSEND_FROM_NAME: process.env.MAILERSEND_FROM_NAME,
   MAILERSEND_WEBHOOK_SECRET: process.env.MAILERSEND_WEBHOOK_SECRET,
+  // Hosted URL for the logo shown in the shared email footer (utils/emailFooter.ts).
+  // Not yet set — until it is, the footer omits the <img> rather than showing
+  // a broken-image icon in every outgoing email.
+  EMAIL_LOGO_URL: process.env.EMAIL_LOGO_URL,
   GROK_API_KEY: process.env.GROK_API_KEY,
   EMAIL_USER: process.env.EMAIL_USER,
 
