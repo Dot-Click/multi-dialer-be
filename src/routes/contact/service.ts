@@ -2700,24 +2700,31 @@ export async function scheduleTemplateEmailInDb(contactId: string, templateId: s
   console.log(`[SCHEDULED] Email template ${templateId} to contact ${contactId} at ${scheduledAt}`);
   return true;
 }
-export const getDuplicateContactsFromDb = async (userId: string, listId?: string) => {
+export const getDuplicateContactsFromDb = async (userId: string, listId?: string, folderId?: string) => {
   // Scope duplicate detection to the caller's tenant (self + their agents).
   // OWNER gets `null` back, meaning "no scoping, see everything".
   const tenantUserIds = await resolveTenantUserIds(userId);
   const tenantFilter = tenantUserIds ? { userId: { in: tenantUserIds } } : {};
 
-  // When called from within a specific list, narrow detection to just that
-  // list's members instead of the whole tenant.
-  let listFilter: { id?: { in: string[] } } = {};
+  // When called from within a specific list or folder, narrow detection to
+  // just that container's members instead of the whole tenant.
+  let scopeFilter: { id?: { in: string[] } } = {};
   if (listId) {
     const list = await prisma.contactList.findUnique({
       where: { id: listId },
       select: { contactIds: true },
     });
     if (!list) throwHttp(404, "List not found");
-    listFilter = { id: { in: list.contactIds } };
+    scopeFilter = { id: { in: list.contactIds } };
+  } else if (folderId) {
+    const folder = await prisma.contactFolder.findUnique({
+      where: { id: folderId },
+      select: { contactIds: true },
+    });
+    if (!folder) throwHttp(404, "Folder not found");
+    scopeFilter = { id: { in: folder.contactIds } };
   }
-  const contactFilter = { ...tenantFilter, ...listFilter };
+  const contactFilter = { ...tenantFilter, ...scopeFilter };
 
   // ── 1. Find Duplicate identifiers ───────────────────────────────
 

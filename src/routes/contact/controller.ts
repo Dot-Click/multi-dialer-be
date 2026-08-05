@@ -219,7 +219,8 @@ export const getDuplicateContacts = async (
 ): Promise<void> => {
   try {
     const listId = typeof req.query.listId === "string" ? req.query.listId : undefined;
-    const duplicates = await getDuplicateContactsFromDb((req as any).user.id, listId);
+    const folderId = typeof req.query.folderId === "string" ? req.query.folderId : undefined;
+    const duplicates = await getDuplicateContactsFromDb((req as any).user.id, listId, folderId);
     successResponse(res, 200, "Duplicate contacts fetched", duplicates);
   } catch (error: any) {
     errorResponse(
