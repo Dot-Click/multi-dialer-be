@@ -2700,11 +2700,24 @@ export async function scheduleTemplateEmailInDb(contactId: string, templateId: s
   console.log(`[SCHEDULED] Email template ${templateId} to contact ${contactId} at ${scheduledAt}`);
   return true;
 }
-export const getDuplicateContactsFromDb = async (userId: string) => {
+export const getDuplicateContactsFromDb = async (userId: string, listId?: string) => {
   // Scope duplicate detection to the caller's tenant (self + their agents).
   // OWNER gets `null` back, meaning "no scoping, see everything".
   const tenantUserIds = await resolveTenantUserIds(userId);
   const tenantFilter = tenantUserIds ? { userId: { in: tenantUserIds } } : {};
+
+  // When called from within a specific list, narrow detection to just that
+  // list's members instead of the whole tenant.
+  let listFilter: { id?: { in: string[] } } = {};
+  if (listId) {
+    const list = await prisma.contactList.findUnique({
+      where: { id: listId },
+      select: { contactIds: true },
+    });
+    if (!list) throwHttp(404, "List not found");
+    listFilter = { id: { in: list.contactIds } };
+  }
+  const contactFilter = { ...tenantFilter, ...listFilter };
 
   // ── 1. Find Duplicate identifiers ───────────────────────────────
 
@@ -2713,7 +2726,7 @@ export const getDuplicateContactsFromDb = async (userId: string) => {
     by: ['number'],
     _count: { number: true },
     having: { number: { _count: { gt: 1 } } },
-    where: { contact: tenantFilter },
+    where: { contact: contactFilter },
   });
   const dupPhoneNumbers = dupPhones.map((p) => p.number);
 
@@ -2722,7 +2735,7 @@ export const getDuplicateContactsFromDb = async (userId: string) => {
     by: ['email'],
     _count: { email: true },
     having: { email: { _count: { gt: 1 } } },
-    where: { contact: tenantFilter },
+    where: { contact: contactFilter },
   });
   const dupEmailAddresses = dupEmailsRaw.map((e) => e.email);
 
@@ -2736,7 +2749,7 @@ export const getDuplicateContactsFromDb = async (userId: string) => {
     having: { id: { _count: { gt: 1 } } },
     where: {
       NOT: [{ address: null }, { address: "" }, { city: null }, { city: "" }, { state: null }, { state: "" }],
-      ...tenantFilter,
+      ...contactFilter,
     }
   });
 
@@ -2747,14 +2760,14 @@ export const getDuplicateContactsFromDb = async (userId: string) => {
     having: { id: { _count: { gt: 1 } } },
     where: {
       NOT: [{ mailingAddress: null }, { mailingAddress: "" }, { mailingCity: null }, { mailingCity: "" }, { mailingState: null }, { mailingState: "" }],
-      ...tenantFilter,
+      ...contactFilter,
     }
   });
 
   // ── 2. Fetch All Contacts with Duplicates ──────────────────────────
   const contacts = await prisma.contact.findMany({
     where: {
-      ...tenantFilter,
+      ...contactFilter,
       OR: [
         { phones: { some: { number: { in: dupPhoneNumbers } } } },
         { emails: { some: { email: { in: dupEmailAddresses } } } },
