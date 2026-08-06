@@ -29,6 +29,19 @@ export interface MyPlusLead {
     zip?: string;
     totalValue?: string;
     occupied?: boolean;
+    saleAmount?: string;
+    saleDate?: string;
+    assessed_value?: string;
+    livingSquareFeet?: string;
+    yearBuilt?: string;
+    taxYear?: string;
+    apn?: string;
+  };
+  agent?: {
+    agentName?: string;
+    agentPhone?: string;
+    agentEmail?: string;
+    agentOffice?: string;
   };
   propertyDetails?: {
     mlsNumber?: string;
@@ -39,6 +52,13 @@ export interface MyPlusLead {
     bathrooms?: string;
     square_footage?: string;
     propertyType?: string;
+    lotSize?: string;
+    yearBuilt?: string;
+    taxes?: string;
+    remarks?: string;
+    subdivision?: string;
+    listingTitle?: string;
+    url?: string;
   };
   contact1?: {
     name?: string;
@@ -365,13 +385,17 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
   }
   const buildMiscValues = (l: MyPlusLead): Record<string, string> => {
     const values: Record<string, string> = {};
-    const set = (name: string, value?: string | null) => {
-      if (!value) return;
+    const set = (name: string, value?: string | number | boolean | null) => {
+      if (value === undefined || value === null || value === "") return;
       const id = miscFieldIdByName.get(name.trim().toLowerCase());
       if (id) values[id] = String(value);
     };
     const pd = l.propertyDetails;
     const pa = l.propertyAddress;
+    const ow = l.owner;
+    const ag = l.agent;
+
+    // Property details
     set("MLS ID", pd?.mlsNumber);
     set("Price", pd?.price);
     set("List Price", pd?.price);
@@ -380,8 +404,34 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
     set("Square Footage", pd?.square_footage);
     set("Property Type", pd?.propertyType);
     set("Listing Status", pd?.normalizedStatus ?? pd?.status);
+    set("Lot Size", pd?.lotSize);
+    set("Year Built", pd?.yearBuilt ?? ow?.yearBuilt);
+    set("Taxes", pd?.taxes);
+    set("Subdivision", pd?.subdivision);
+    set("Listing Title", pd?.listingTitle);
+    set("Listing URL", pd?.url);
+
+    // Location
     set("County", pa?.county);
-    set("Estimated Value", l.owner?.totalValue);
+
+    // Owner / valuation
+    set("Estimated Value", ow?.totalValue);
+    set("Assessed Value", ow?.assessed_value);
+    set("Last Sale Amount", ow?.saleAmount);
+    set("Last Sale Date", ow?.saleDate);
+    set("Living Square Feet", ow?.livingSquareFeet);
+    set("Tax Year", ow?.taxYear);
+    set("APN", ow?.apn);
+    if (ow?.occupied !== undefined && ow?.occupied !== null) {
+      set("Occupied", ow.occupied ? "Yes" : "No");
+    }
+
+    // Agent
+    set("Agent Name", ag?.agentName);
+    set("Agent Phone Number", ag?.agentPhone);
+    set("Agent Email", ag?.agentEmail);
+    set("Agent Company", ag?.agentOffice);
+
     return values;
   };
 
@@ -396,21 +446,24 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
       const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
       const existing = await prisma.contact.findFirst({
         where: { userId, source },
-        select: { id: true, miscValues: true },
+        select: { id: true, miscValues: true, description: true },
       });
       if (existing) {
-        // Backfill miscValues if the contact was imported before the
-        // property-details mapping shipped and doesn't have any yet.
+        // Backfill fields that were empty for contacts imported before the
+        // full property-detail mapping shipped.
         const currentMisc = (existing.miscValues as Record<string, string> | null) ?? null;
         const hasNoMisc = !currentMisc || Object.keys(currentMisc).length === 0;
+        const hasNoDescription = !existing.description || existing.description.trim() === "";
+        const patch: Record<string, unknown> = {};
         if (hasNoMisc) {
           const backfill = buildMiscValues(listing);
-          if (Object.keys(backfill).length > 0) {
-            await prisma.contact.update({
-              where: { id: existing.id },
-              data: { miscValues: backfill },
-            });
-          }
+          if (Object.keys(backfill).length > 0) patch.miscValues = backfill;
+        }
+        if (hasNoDescription && listing.propertyDetails?.remarks) {
+          patch.description = listing.propertyDetails.remarks;
+        }
+        if (Object.keys(patch).length > 0) {
+          await prisma.contact.update({ where: { id: existing.id }, data: patch });
         }
         skipped++;
         continue;
@@ -436,6 +489,7 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
           mailingZip: owner?.zip ?? null,
           source,
           tags: ["MyPlusLeads", status],
+          description: listing.propertyDetails?.remarks ?? null,
           miscValues: Object.keys(miscValues).length > 0 ? miscValues : undefined,
         },
       });
