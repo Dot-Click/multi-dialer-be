@@ -58,15 +58,23 @@ export const startUserLifecycleJob = () => {
 
     // ── 2. No-subscription reminder ───────────────────────────────────────────
     // Respects: emailPreferences.marketingEmails (default true)
+    //
+    // Window must be bounded like the trial/inactivity jobs below — an
+    // unbounded "createdAt <= 7 days ago" matches the same still-unsubscribed
+    // user on every single run forever, not once. Confirmed in production:
+    // the same 9 accounts got this email daily for 9 straight days before
+    // this fix (GA 4.0 duplicate-send finding).
     try {
-      const sevenDaysAgo = new Date(now);
-      sevenDaysAgo.setDate(now.getDate() - 7);
+      const sevenDaysFrom = new Date(now);
+      sevenDaysFrom.setDate(now.getDate() - 8);
+      const sevenDaysTo = new Date(now);
+      sevenDaysTo.setDate(now.getDate() - 7);
 
       const unsubscribedAdmins = await prisma.user.findMany({
         where: {
           role: "ADMIN",
           isSubscribed: false,
-          createdAt: { lte: sevenDaysAgo },
+          createdAt: { gte: sevenDaysFrom, lt: sevenDaysTo },
           userSubscriptions: { none: {} },
         },
         select: {
@@ -200,6 +208,22 @@ export const startUserLifecycleJob = () => {
       for (const sub of expiringSubs) {
         if (sub.user.role === "OWNER") continue;
         if (!sub.cardBrand || !sub.cardLast4 || !sub.cardExpMonth || !sub.cardExpYear) continue;
+
+        // cardExpMonth/Year match stays true for the whole current calendar
+        // month, so without this check the same card triggers a resend on
+        // every single day's run — same duplicate-send bug class as the
+        // no-subscription reminder above. No dedicated "last reminded" field
+        // exists, so use EmailLog itself as the dedup source of truth.
+        const alreadyReminded = await prisma.emailLog.findFirst({
+          where: {
+            userId: sub.user.id,
+            subject: "Your Slingvo payment card expires soon",
+            createdAt: { gte: new Date(now.getTime() - 25 * 24 * 60 * 60 * 1000) },
+          },
+          select: { id: true },
+        });
+        if (alreadyReminded) continue;
+
         await sendEmail({
           to: sub.user.email,
           from: envConfig.MAILERSEND_FROM_EMAIL || "noreply@slingvo.com",

@@ -1119,9 +1119,24 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     const invoice = event.data.object as any;
     console.log(`[Stripe Webhook] invoice.created: id=${invoice.id}, customer=${invoice.customer}, amount_due=${invoice.amount_due}`);
     // Record the open invoice in the Billing ledger as PENDING.
+    //
+    // Email intentionally NOT sent here — invoice.created fires the moment
+    // ANY invoice is created, including the very first one at checkout
+    // (GA 4.0 finding: the "upcoming invoice" email was firing 1 second
+    // after signup). The genuine pre-renewal reminder belongs on
+    // invoice.upcoming instead, which Stripe fires days before the actual
+    // charge and never fires for the initial subscription invoice.
     await mirrorInvoiceToBilling(stripe, invoice, "PENDING");
+    await persistEvent("PROCESSED");
 
-    // Notify the customer about their upcoming charge (only for non-zero invoices).
+  // ─── invoice.upcoming ──────────────────────────────────────────────────────
+  // Preview event, not a real persisted invoice (no ledger entry here — that
+  // still happens on invoice.created when Stripe actually creates the real
+  // invoice closer to the charge date). This is purely the advance reminder.
+  } else if (event.type === "invoice.upcoming") {
+    const invoice = event.data.object as any;
+    console.log(`[Stripe Webhook] invoice.upcoming: customer=${invoice.customer}, amount_due=${invoice.amount_due}`);
+
     if (invoice.amount_due > 0) {
       try {
         const subRecord = await prisma.userSubscription.findFirst({ where: { stripeCustomerId: invoice.customer } });

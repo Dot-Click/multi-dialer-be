@@ -73,21 +73,18 @@ export const handleMailerSendWebhook = async (req: Request, res: Response): Prom
     const activityType: string | undefined =
       event?.type?.replace(/^activity\./, "") || data?.type;
 
-    // MailerSend has shipped more than one shape for the recipient address —
-    // `data.email` is a plain string in the documented "sent" example, but an
-    // object with the address nested under `recipient` in others (this is what
-    // was actually silently breaking every event: `data.email` was truthy as an
-    // *object*, so `!email` never caught it, and downstream just no-opped).
-    // Try every known shape instead of assuming one.
+    // Confirmed against real raw-payload logs (GA 4.0): there is no
+    // data.email object at all — the recipient is `data.recipient`, a plain
+    // string. Our previous guess (data.email.recipient.email) was wrong and
+    // is why every event was still being dropped. data.email as a string
+    // fallback is kept since MailerSend's own docs show it for "sent" —
+    // real, just not what was actually breaking.
     const email: string | undefined =
-      (typeof data?.email === "string" ? data.email : undefined) ||
-      data?.email?.recipient?.email ||
-      data?.recipient?.email ||
-      data?.email?.email;
+      (typeof data?.recipient === "string" ? data.recipient : undefined) ||
+      (typeof data?.email === "string" ? data.email : undefined);
 
     // Same story for the id used to match back to our EmailLog row.
-    const messageId: string | undefined =
-      data?.message_id || data?.email?.message?.id || data?.email_id;
+    const messageId: string | undefined = data?.message_id || data?.email_id;
 
     // Always log the raw payload (address masked) so the next payload-shape
     // surprise is a 2-minute diagnosis instead of a multi-day silent drop.
@@ -112,7 +109,7 @@ export const handleMailerSendWebhook = async (req: Request, res: Response): Prom
         await addSuppression(
           email,
           "BOUNCE",
-          data?.bounce?.description || data?.email?.bounce?.description || data?.reason || "Hard bounce"
+          data?.bounce?.description || data?.reason || "Hard bounce"
         );
         if (messageId) {
           await prisma.emailLog.updateMany({
