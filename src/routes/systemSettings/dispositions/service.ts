@@ -4,7 +4,7 @@ import { ensureTrashFolder, ensureDncFolder, moveToDncInDb } from "../../contact
 // Protected default dispositions: seeded for every account, shown in the user's
 // Dispositions list (NOT as system "Call Outcomes"), and cannot be edited or
 // deleted. Matched by their `value`.
-const PROTECTED_DEFAULT_VALUES = ["TRASH"];
+const PROTECTED_DEFAULT_VALUES = ["TRASH", "LEAD"];
 
 export function isProtectedDispositionValue(value?: string | null) {
     return !!value && PROTECTED_DEFAULT_VALUES.includes(value.toUpperCase());
@@ -100,6 +100,26 @@ export class DispositionService {
                     data: { targetFolderId: trashFolder.id },
                 });
             }
+        }
+
+        // 2b-ii. Ensure the protected default "Lead" disposition exists — same
+        //        treatment as Trash above (seeded once, always present, cannot be
+        //        edited/deleted), but with no folder action: applying it just tags
+        //        the contact, it doesn't move anything.
+        const existingLead = systemSetting.dispositions.find(d => d.value === "LEAD");
+        if (!existingLead) {
+            await prisma.disposition.create({
+                data: {
+                    label: "Lead",
+                    value: "LEAD",
+                    color: "yellow",
+                    icon: "UserPlus",
+                    isSystem: false,
+                    isActive: true,
+                    order: 0,
+                    systemSettingId: systemSetting.id,
+                }
+            });
         }
 
         // 2c. Link the two DNC call outcomes ("DNC - Contact", "DNC - Number") to the

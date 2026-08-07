@@ -2890,6 +2890,52 @@ export async function bulkDeleteContactsInDb(
   // Use a transaction for consistency and performance
   return prisma.$transaction(async (tx) => {
 
+    // Shared by Cases 1 & 2: once a contact would have zero remaining
+    // list/folder homes, unlinking it just makes it an invisible orphan
+    // (still in the DB, unreachable from any view) — purge it for real
+    // instead, same backup+scrub path as the explicit hard-delete case.
+    const purgeOrphans = async (ids: string[], reason: string) => {
+      if (ids.length === 0) return;
+
+      const contactsToPurge = await tx.contact.findMany({
+        where: { id: { in: ids } },
+        include: { emails: true, phones: true, attachments: true }
+      });
+      if (contactsToPurge.length === 0) return;
+
+      await tx.backupContacts.create({
+        data: { userId, contacts: contactsToPurge as any }
+      });
+
+      const listsToScrub = await tx.contactList.findMany({
+        where: { contactIds: { hasSome: ids } },
+        select: { id: true, contactIds: true }
+      });
+      await Promise.all(listsToScrub.map((l) => tx.contactList.update({
+        where: { id: l.id },
+        data: { contactIds: l.contactIds.filter(id => !ids.includes(id)) }
+      })));
+
+      const groupsToScrub = await tx.contactGroups.findMany({
+        where: { contactIds: { hasSome: ids } },
+        select: { id: true, contactIds: true }
+      });
+      await Promise.all(groupsToScrub.map((g) => tx.contactGroups.update({
+        where: { id: g.id },
+        data: { contactIds: g.contactIds.filter(id => !ids.includes(id)) }
+      })));
+
+      await tx.contact.deleteMany({ where: { id: { in: ids } } });
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: `Bulk hard deleted ${ids.length} orphaned contacts`,
+          details: `Reason: ${reason}. IDs: ${ids.slice(0, 5).join(', ')}...`
+        }
+      });
+    };
+
     // ── CASE 1: Contextual Removal from Folder ──────────────────────────────────
     if (folderId && !hardDelete) {
       // 1. Fetch contacts and remove the specific folderId from their arrays
@@ -2897,8 +2943,23 @@ export async function bulkDeleteContactsInDb(
         where: { id: { in: contactIds }, folderIds: { has: folderId } },
         select: { id: true, folderIds: true }
       });
+      const ids = contacts.map(c => c.id);
 
-      await Promise.all(contacts.map((contact) => tx.contact.update({
+      // List membership isn't mirrored on Contact, so check from the list
+      // side: is any of these contacts still referenced by ANY list?
+      const listsWithAny = await tx.contactList.findMany({
+        where: { contactIds: { hasSome: ids } },
+        select: { contactIds: true }
+      });
+      const inAnyList = new Set<string>();
+      listsWithAny.forEach(l => l.contactIds.forEach(id => { if (ids.includes(id)) inAnyList.add(id); }));
+
+      const toUnlink = contacts.filter(c =>
+        c.folderIds.filter(id => id !== folderId).length > 0 || inAnyList.has(c.id)
+      );
+      const toPurge = contacts.filter(c => !toUnlink.includes(c)).map(c => c.id);
+
+      await Promise.all(toUnlink.map((contact) => tx.contact.update({
         where: { id: contact.id },
         data: {
           folderIds: contact.folderIds.filter(id => id !== folderId)
@@ -2914,20 +2975,24 @@ export async function bulkDeleteContactsInDb(
         await tx.contactFolder.update({
           where: { id: folderId },
           data: {
-            contactIds: folder.contactIds.filter(id => !contactIds.includes(id))
+            contactIds: folder.contactIds.filter(id => !ids.includes(id))
           }
         });
       }
 
-      await tx.auditLog.create({
-        data: {
-          userId,
-          action: `Bulk removed ${contactIds.length} contacts from folder`,
-          details: `Folder ID: ${folderId}`
-        }
-      });
+      if (toUnlink.length > 0) {
+        await tx.auditLog.create({
+          data: {
+            userId,
+            action: `Bulk removed ${toUnlink.length} contacts from folder`,
+            details: `Folder ID: ${folderId}`
+          }
+        });
+      }
 
-      return { success: true, count: contactIds.length, mode: 'removed_from_folder' };
+      await purgeOrphans(toPurge, `only home was folder ${folderId}`);
+
+      return { success: true, count: ids.length, mode: 'removed_from_folder', purged: toPurge.length };
     }
 
     // ── CASE 2: Contextual Removal from List ────────────────────────────────────
@@ -2937,24 +3002,48 @@ export async function bulkDeleteContactsInDb(
         select: { id: true, contactIds: true }
       });
 
+      // Only the requested contacts that are actually in this list.
+      const ids = list ? contactIds.filter(id => list.contactIds.includes(id)) : [];
+
+      const contacts = await tx.contact.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, folderIds: true }
+      });
+
+      const otherLists = await tx.contactList.findMany({
+        where: { id: { not: listId }, contactIds: { hasSome: ids } },
+        select: { contactIds: true }
+      });
+      const inOtherList = new Set<string>();
+      otherLists.forEach(l => l.contactIds.forEach(id => { if (ids.includes(id)) inOtherList.add(id); }));
+
+      const toPurge = contacts
+        .filter(c => c.folderIds.length === 0 && !inOtherList.has(c.id))
+        .map(c => c.id);
+      const toUnlinkCount = ids.length - toPurge.length;
+
       if (list) {
         await tx.contactList.update({
           where: { id: listId },
           data: {
-            contactIds: list.contactIds.filter(id => !contactIds.includes(id))
+            contactIds: list.contactIds.filter(id => !ids.includes(id))
           }
         });
       }
 
-      await tx.auditLog.create({
-        data: {
-          userId,
-          action: `Bulk removed ${contactIds.length} contacts from list`,
-          details: `List ID: ${listId}`
-        }
-      });
+      if (toUnlinkCount > 0) {
+        await tx.auditLog.create({
+          data: {
+            userId,
+            action: `Bulk removed ${toUnlinkCount} contacts from list`,
+            details: `List ID: ${listId}`
+          }
+        });
+      }
 
-      return { success: true, count: contactIds.length, mode: 'removed_from_list' };
+      await purgeOrphans(toPurge, `only home was list ${listId}`);
+
+      return { success: true, count: ids.length, mode: 'removed_from_list', purged: toPurge.length };
     }
 
     // ── CASE 3: Hard Delete or Smart Safe-Unlink ────────────────────────────────
