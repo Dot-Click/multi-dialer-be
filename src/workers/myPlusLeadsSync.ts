@@ -29,5 +29,5 @@ export function startMyPlusLeadsSyncWorker() {
     }
 
     console.log("[MyPlusLeads] Daily sync complete.");
-  }, { timezone: "America/New_York" });
+  }, { timezone: "America/Chicago" });
 }
