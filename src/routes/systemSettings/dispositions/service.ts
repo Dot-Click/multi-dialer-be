@@ -112,11 +112,37 @@ export class DispositionService {
                 data: {
                     label: "Lead",
                     value: "LEAD",
-                    color: "yellow",
+                    color: "green",
                     icon: "UserPlus",
                     isSystem: false,
                     isActive: true,
                     order: 0,
+                    systemSettingId: systemSetting.id,
+                }
+            });
+        } else if (existingLead.color !== "green") {
+            await prisma.disposition.update({
+                where: { id: existingLead.id },
+                data: { color: "green" }
+            });
+        }
+
+        // 2b-iii. Ensure the default "Appointment Set" disposition exists — seeded
+        //         once for every account, same tagging-only treatment as Lead (no
+        //         folder move on apply). Unlike Trash/Lead it is NOT protected, so
+        //         the user can edit it later (e.g. via autoCreateFolder) to link a
+        //         folder if they want one.
+        const existingAppointmentSet = systemSetting.dispositions.find(d => d.value === "APPOINTMENT_SET");
+        if (!existingAppointmentSet) {
+            await prisma.disposition.create({
+                data: {
+                    label: "Appointment Set",
+                    value: "APPOINTMENT_SET",
+                    color: "gray",
+                    icon: "CalendarCheck",
+                    isSystem: false,
+                    isActive: true,
+                    order: 7,
                     systemSettingId: systemSetting.id,
                 }
             });

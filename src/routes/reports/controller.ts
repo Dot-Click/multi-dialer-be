@@ -62,13 +62,40 @@ export const getAgentReport: RequestHandler = async (req, res) => {
             }
         });
 
-        // 3. Leads (total assigned to agent, filtered by date range when provided)
-        const totalLeads = await prisma.lead.count({
-            where: {
-                userId,
-                ...dateFilter
-            }
+        // 3. Leads (distinct contacts currently marked with the "Lead" disposition,
+        // scoped to when that disposition was applied by this agent)
+        const reportedUser = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { role: true, createdById: true }
         });
+        const targetAccountId = (reportedUser?.role === "AGENT" && reportedUser?.createdById)
+            ? reportedUser.createdById
+            : userId;
+
+        const leadDisposition = await prisma.disposition.findFirst({
+            where: { value: "LEAD", systemSetting: { userId: targetAccountId } },
+            select: { id: true }
+        });
+
+        let totalLeads = 0;
+        if (leadDisposition) {
+            const leadLogs = await prisma.contactDispositionLog.findMany({
+                where: {
+                    dispositionId: leadDisposition.id,
+                    appliedById: userId,
+                    ...dateFilter
+                },
+                select: { contactId: true },
+                distinct: ["contactId"]
+            });
+
+            totalLeads = await prisma.contact.count({
+                where: {
+                    id: { in: leadLogs.map(l => l.contactId) },
+                    disposition: "LEAD"
+                }
+            });
+        }
 
         // 4. Contacts (Calls that resulted in analysis - implying a conversation happened)
         // Since CallAnalysis doesn't have a direct relation in schema, we'll use a subquery approach
