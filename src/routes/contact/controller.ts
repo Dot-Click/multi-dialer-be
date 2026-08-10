@@ -174,7 +174,15 @@ export const updateContact = async (
     const payload = { ...req.body };
     const result = (await validateData(updateContactSchema, payload)) as any;
     if (!("data" in result)) {
-      errorResponse(res, "Validation error", 400);
+      // validateData returns the raw ZodError issues array on failure — log it
+      // in full (this endpoint's "Validation error" 400s were previously
+      // undiagnosable from the client's generic toast alone) and surface the
+      // specific field/reason so it's actionable without a server log dive.
+      console.error(`updateContact validation failed for contact ${id}:`, JSON.stringify(result));
+      const detail = Array.isArray(result)
+        ? result.map((issue: any) => `${issue.path?.join(".") || "field"} - ${issue.message}`).join("; ")
+        : result?.message;
+      errorResponse(res, detail ? `Validation error: ${detail}` : "Validation error", 400);
       return;
     }
 

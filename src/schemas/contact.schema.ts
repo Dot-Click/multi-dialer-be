@@ -1,7 +1,19 @@
 import { z } from "zod";
 
+// Deliberately just "non-empty" — not z.string().email(), not even a
+// require-an-"@" refine. Confirmed on production data: 158 of ~27.8k
+// ContactEmail rows fail a strict format check, including 110 that are
+// literal placeholders ("none", "-") with no "@" at all, from the
+// MyPlusLeads import path only checking email.includes("@") (some not even
+// that) before writing to the DB. Since updateContactInDb replaces a
+// contact's whole emails array on every save, ANY format requirement here
+// blocks editing unrelated fields on those contacts until every legacy
+// email on the record is manually fixed. Real format enforcement for a
+// NEW/edited email lives client-side in EmailModal, which is the only place
+// a human is actually typing one — this schema just guards against an
+// empty string reaching the DB.
 export const contactEmailSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().min(1, "Email is required"),
   isPrimary: z.boolean().default(false),
 });
 
