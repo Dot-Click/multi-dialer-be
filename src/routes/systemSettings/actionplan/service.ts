@@ -1,4 +1,5 @@
 import prisma from '../../../lib/prisma';
+import type { Prisma } from '@prisma/client';
 
 // The frontend validates this before submit, but a raw API call (or a future
 // UI bug) shouldn't ever surface a raw Prisma "Argument contentValue is
@@ -78,6 +79,21 @@ export class ActionPlanService {
 
       if (!plan) throw new Error("Action Plan not found");
 
+      // A contact may only have one ACTIVE plan at a time (enforced here and,
+      // as a backstop against races/bugs, by a partial unique index on
+      // contact_action_plans — see the 20260810010000 migration). Re-assigning
+      // the SAME plan (e.g. to tweak the start date) is allowed and replaces
+      // it below; assigning a DIFFERENT plan while one is active is not.
+      const existingActive = await tx.contactActionPlan.findFirst({
+        where: { contactId, status: 'ACTIVE' },
+        include: { plan: { select: { name: true } } },
+      });
+      if (existingActive && existingActive.planId !== planId) {
+        throw new Error(
+          `This contact already has an active action plan ("${existingActive.plan.name}"). Remove it before assigning a different plan.`
+        );
+      }
+
       const baseDate = new Date(startDate);
 
       // 2. Record the enrollment itself first — everything below hangs off
@@ -98,19 +114,19 @@ export class ActionPlanService {
         }
       });
 
-      // 3. Loop through steps. EMAIL steps are queued for automatic sending
-      // (actionPlanStep.job.ts) — no Calendar row, since nothing needs a
-      // human to act on it and a duplicate "reminder" about the same email
-      // is exactly the confusing double-notification this replaces. Every
-      // other step type still needs a person to actually do it, so those
-      // keep the existing Calendar-task behavior unchanged.
+      // 3. Loop through steps. EMAIL, PHONE_CALL, and TASK steps are all
+      // queued as an ActionPlanStepExecution — actionPlanStep.job.ts fires
+      // each one on its due date (sending the email, or creating the
+      // Callback/Task at that point) rather than the Calendar row appearing
+      // immediately at assignment time. LETTER/MAILING_LABEL have no
+      // dispatch mechanism yet, so they keep the old eager Calendar-row stub.
       for (const step of plan.steps) {
         let execDate = new Date(baseDate);
         if (step.dayOffset) {
           execDate.setDate(execDate.getDate() + step.dayOffset);
         }
 
-        if (step.actionType === 'EMAIL') {
+        if (step.actionType === 'EMAIL' || step.actionType === 'PHONE_CALL' || step.actionType === 'TASK') {
           await tx.actionPlanStepExecution.create({
             data: {
               assignmentId: assignment.id,
@@ -122,10 +138,8 @@ export class ActionPlanService {
           continue;
         }
 
-        // Map Step Type to Calendar Category
-        let category: 'TASK' | 'APPOINTMENT' | 'FOLLOW_UP' = 'TASK';
-        if (step.actionType === 'PHONE_CALL') category = 'FOLLOW_UP';
-
+        // LETTER / MAILING_LABEL — out of scope (no print/label generation
+        // exists), so these remain a plain Calendar reminder for now.
         const title = `${step.actionType}: ${plan.name} - Step ${step.order}`;
         const description = step.contentValue || `Action Plan Step: ${step.actionType}`;
 
@@ -133,9 +147,9 @@ export class ActionPlanService {
           data: {
             title,
             description,
-            color: category === 'FOLLOW_UP' ? '#3b82f6' : '#8b5cf6',
+            color: '#8b5cf6',
             eventType: 'START_ONLY',
-            category,
+            category: 'TASK',
             startDate: execDate,
             assignToId: assignToId,
             assignById: creatorId,
@@ -155,13 +169,29 @@ export class ActionPlanService {
     });
   }
 
-  /** Active (or most-recent) plan assignments for a contact, newest first. */
+  /**
+   * Active (or most-recent) plan assignments for a contact, newest first —
+   * including each step's live execution status. For PHONE_CALL/TASK steps
+   * that have already fired, the linked Callback/Task's own status (e.g.
+   * COMPLETED, MISSED) is more up to date than the execution row itself,
+   * which just records that it fired.
+   */
   static async getActiveForContact(contactId: string) {
     return prisma.contactActionPlan.findMany({
       where: { contactId, status: 'ACTIVE' },
       include: {
         plan: { select: { id: true, name: true } },
         assignedTo: { select: { id: true, fullName: true, email: true } },
+        stepExecutions: {
+          include: {
+            step: { select: { id: true, order: true, actionType: true, dayOffset: true, contentValue: true } },
+            callback: { select: { id: true, status: true, scheduledAt: true } },
+            task: { select: { id: true, status: true, dueAt: true } },
+          },
+          // Plan-defined order, not dueAt — two steps can share a due date
+          // (dayOffset 0), and the step sequence is what "Step 2 of 5" means.
+          orderBy: { step: { order: 'asc' } },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -183,5 +213,42 @@ export class ActionPlanService {
         data: { status: 'REMOVED', removedAt: new Date() },
       });
     });
+  }
+
+  /**
+   * Stops every ACTIVE plan assignment for a contact — same effect as
+   * unassign() for each of them, but bulk and callable from another
+   * transaction (e.g. moveToDncInDb marking a contact DNC). Any PENDING
+   * ActionPlanStepExecution rows are flipped to SKIPPED so they can't fire
+   * after removal — actionPlanStep.job.ts also re-checks assignment.status
+   * before firing as a second guard, but that check only runs once a row
+   * comes due, so it can't stop this from showing as "still pending" in the
+   * meantime; skipping it here immediately keeps assignment and execution
+   * state consistent.
+   *
+   * Accepts an optional transaction client so callers already inside a
+   * transaction (like moveToDncInDb) can include this atomically instead of
+   * opening a second, separate transaction.
+   */
+  static async stopActivePlansForContact(
+    contactId: string,
+    client: Prisma.TransactionClient | typeof prisma = prisma
+  ) {
+    const activeAssignments = await client.contactActionPlan.findMany({
+      where: { contactId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (activeAssignments.length === 0) return { stopped: 0 };
+
+    const assignmentIds = activeAssignments.map((a) => a.id);
+    await client.actionPlanStepExecution.updateMany({
+      where: { assignmentId: { in: assignmentIds }, status: 'PENDING' },
+      data: { status: 'SKIPPED' },
+    });
+    await client.contactActionPlan.updateMany({
+      where: { id: { in: assignmentIds } },
+      data: { status: 'REMOVED', removedAt: new Date() },
+    });
+    return { stopped: assignmentIds.length };
   }
 }

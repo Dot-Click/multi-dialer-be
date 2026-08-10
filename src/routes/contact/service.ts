@@ -9,6 +9,7 @@ import { resolveTenantUserIds, resolveTenantRootId } from "../../utils/tenant";
 import { resolveCompanyContext } from "../../utils/resolveCompany";
 import { envConfig } from "@/lib/config";
 import { startOfTodayInTimezone } from "../../utils/timezone";
+import { ActionPlanService } from "../systemSettings/actionplan/service";
 
 
 function throwHttp(statusCode: number, message: string): never {
@@ -1397,6 +1398,11 @@ export async function moveToDncInDb(
         folderIds: dncFolder ? [dncFolder.id] : [],
       },
     });
+
+    // 2b. A contact moved to DNC — by any path, since they all funnel through
+    // here — should stop receiving any active Action Plan (no more drip
+    // emails, follow-up call/task reminders, etc.).
+    await ActionPlanService.stopActivePlansForContact(contactId, tx);
 
     // 3. Create Audit Log
     const phoneNumbers = contact.phones.map((p) => p.number).join(", ");

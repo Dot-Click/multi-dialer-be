@@ -21,6 +21,7 @@ export async function createCallbackInDb(data: {
   contactId?: string | null;
   scheduledAt: Date;
   notes?: string | null;
+  actionPlanStepExecutionId?: string | null;
 }) {
   return prisma.$transaction(async (tx) => {
     const callback = await tx.callback.create({
@@ -29,6 +30,7 @@ export async function createCallbackInDb(data: {
         contactId: data.contactId ?? null,
         scheduledAt: data.scheduledAt,
         notes: data.notes ?? null,
+        actionPlanStepExecutionId: data.actionPlanStepExecutionId ?? null,
       },
       include: callbackInclude,
     });

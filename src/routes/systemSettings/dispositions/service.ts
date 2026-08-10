@@ -4,7 +4,7 @@ import { ensureTrashFolder, ensureDncFolder, moveToDncInDb } from "../../contact
 // Protected default dispositions: seeded for every account, shown in the user's
 // Dispositions list (NOT as system "Call Outcomes"), and cannot be edited or
 // deleted. Matched by their `value`.
-const PROTECTED_DEFAULT_VALUES = ["TRASH", "LEAD"];
+const PROTECTED_DEFAULT_VALUES = ["TRASH", "LEAD", "NOT_INTERESTED"];
 
 export function isProtectedDispositionValue(value?: string | null) {
     return !!value && PROTECTED_DEFAULT_VALUES.includes(value.toUpperCase());
@@ -127,7 +127,27 @@ export class DispositionService {
             });
         }
 
-        // 2b-iii. Ensure the default "Appointment Set" disposition exists — seeded
+        // 2b-iii. Ensure the protected default "Not Interested" disposition exists —
+        //         same treatment as Lead above (seeded once, always present, cannot
+        //         be edited/deleted). Tallied by the Call Statistics widget as its
+        //         own metric, the counterpart to Lead's "Interested" count.
+        const existingNotInterested = systemSetting.dispositions.find(d => d.value === "NOT_INTERESTED");
+        if (!existingNotInterested) {
+            await prisma.disposition.create({
+                data: {
+                    label: "Not Interested",
+                    value: "NOT_INTERESTED",
+                    color: "red",
+                    icon: "ThumbsDown",
+                    isSystem: false,
+                    isActive: true,
+                    order: 0,
+                    systemSettingId: systemSetting.id,
+                }
+            });
+        }
+
+        // 2b-iv. Ensure the default "Appointment Set" disposition exists — seeded
         //         once for every account, same tagging-only treatment as Lead (no
         //         folder move on apply). Unlike Trash/Lead it is NOT protected, so
         //         the user can edit it later (e.g. via autoCreateFolder) to link a

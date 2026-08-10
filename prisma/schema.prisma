@@ -1450,6 +1450,12 @@ model Callback {
   externalEventId  String?          @unique
   externalProvider ExternalProvider @default(NONE)
 
+  // Set when this Callback was created by a firing Action Plan step
+  // (actionPlanStep.job.ts), so it can be traced back to the plan/step that
+  // scheduled it. Null for callbacks created manually by an agent.
+  actionPlanStepExecutionId String?                  @unique
+  actionPlanStepExecution   ActionPlanStepExecution? @relation(fields: [actionPlanStepExecutionId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1504,6 +1510,12 @@ model Task {
 
   externalEventId  String?          @unique
   externalProvider ExternalProvider @default(NONE)
+
+  // Set when this Task was created by a firing Action Plan step
+  // (actionPlanStep.job.ts), so it can be traced back to the plan/step that
+  // scheduled it. Null for tasks created manually by an agent.
+  actionPlanStepExecutionId String?                  @unique
+  actionPlanStepExecution   ActionPlanStepExecution? @relation(fields: [actionPlanStepExecutionId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1624,6 +1636,12 @@ enum ContactActionPlanStatus {
 // Tracks which contact is currently enrolled in which Action Plan, so the
 // contact detail page can show real assignment status instead of just the
 // side-effect Calendar rows assignToContact() creates for each step.
+//
+// NOTE — DB constraint not visible below: a partial unique index enforcing
+// "at most one ACTIVE row per contactId" exists in the database (see
+// migration 20260810010000_contact_action_plan_one_active_unique). Prisma's
+// schema DSL has no syntax for WHERE-qualified unique indexes, so it can't be
+// declared here — do not treat its absence from this model as drift to fix.
 model ContactActionPlan {
   id String @id @default(uuid())
 
@@ -1678,10 +1696,11 @@ enum ActionPlanStepExecutionStatus {
   SKIPPED
 }
 
-// One row per EMAIL-type step per enrollment — the actual dispatch queue for
-// automated Action Plan emails. Other step types (PHONE_CALL/TASK/LETTER/
-// MAILING_LABEL) require a human to act, so they stay Calendar-only; only
-// EMAIL steps get autonomously executed by actionPlanStep.job.ts.
+// One row per EMAIL/PHONE_CALL/TASK step per enrollment — the dispatch queue
+// actionPlanStep.job.ts polls to fire Action Plan steps on their due date.
+// EMAIL steps send automatically; PHONE_CALL/TASK steps create a Callback or
+// Task row (see below) for a human to act on. LETTER/MAILING_LABEL steps are
+// still Calendar-only stubs (no execution row, no dispatch mechanism yet).
 model ActionPlanStepExecution {
   id String @id @default(uuid())
 
@@ -1695,6 +1714,12 @@ model ActionPlanStepExecution {
   status     ActionPlanStepExecutionStatus @default(PENDING)
   error      String?                       @db.Text
   executedAt DateTime?
+
+  // Populated when this execution fired a PHONE_CALL/TASK step — the
+  // Callback/Task that was created for it. At most one of these is ever set,
+  // depending on the owning step's actionType.
+  callback Callback?
+  task     Task?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -554,63 +554,62 @@ export const getCallStatistics: RequestHandler = async (req, res) => {
             }
         });
 
-        const analyses = await prisma.callAnalysis.findMany({
-            where: { createdAt: { gte: startDate } },
-            select: { callSid: true }
-        });
-        const analyzedCallSids = analyses.map(a => a.callSid);
-
-        const connectedCallsCount = await prisma.callRecord.count({
+        // Disposition-based outcomes: tallied from ContactDispositionLog (written
+        // every time a disposition is applied) keyed by the disposition's stable
+        // `value`, not the dead CallRecord.disposition string field (that column
+        // is only ever set to "MACHINE" for answering-machine detection).
+        const dispositionLogs = await prisma.contactDispositionLog.findMany({
             where: {
-                userId: { in: targetUserIds },
-                startTime: { gte: startDate },
-                callSid: { in: analyzedCallSids }
-            }
-        });
-
-        const connectionRate = totalCalls > 0 ? Math.round((connectedCallsCount / totalCalls) * 100) : 0;
-
-        const outcomes = await prisma.callRecord.groupBy({
-            by: ['disposition'],
-            where: {
-                userId: { in: targetUserIds },
-                startTime: { gte: startDate }
+                appliedById: { in: targetUserIds },
+                createdAt: { gte: startDate },
+                disposition: { value: { in: ["CONTACT", "LEAD", "NOT_INTERESTED", "NO_ANSWER"] } },
             },
-            _count: { _all: true }
+            select: { disposition: { select: { value: true } } },
         });
 
-        const targetCallSids = await prisma.callRecord.findMany({
+        const dispositionCounts = { CONTACT: 0, LEAD: 0, NOT_INTERESTED: 0, NO_ANSWER: 0 };
+        for (const log of dispositionLogs) {
+            const value = log.disposition.value as keyof typeof dispositionCounts;
+            if (value in dispositionCounts) dispositionCounts[value]++;
+        }
+
+        // Connection Rate = % of this period's calls where the agent dispositioned
+        // the contact as "Contacted".
+        const connectionRate = totalCalls > 0
+            ? Math.round((dispositionCounts.CONTACT / totalCalls) * 100)
+            : 0;
+
+        // Follow-Up = Follow-Up category calendar events created in the period.
+        const followupCount = await prisma.calendar.count({
+            where: {
+                category: "FOLLOW_UP",
+                OR: [
+                    { assignToId: { in: targetUserIds } },
+                    { assignById: { in: targetUserIds } },
+                ],
+                createdAt: { gte: startDate },
+            },
+        });
+
+        // DNC = contacts placed on Do Not Call in the period. Every path that
+        // flips Contact.status to DO_NOT_CALL (manual move, last-number-DNC,
+        // or the "DNC - Contact"/"DNC - Number" call outcomes) funnels through
+        // moveToDncInDb, which always writes this exact audit log entry.
+        const dncCount = await prisma.auditLog.count({
             where: {
                 userId: { in: targetUserIds },
-                startTime: { gte: startDate }
+                action: "Contact marked as DNC",
+                createdAt: { gte: startDate },
             },
-            select: { callSid: true }
-        });
-        const callSids = targetCallSids.map(c => c.callSid);
-
-        const interestedCount = await prisma.callAnalysis.count({
-            where: {
-                callSid: { in: callSids },
-                confidence: { gte: 0.7 }
-            }
         });
 
         const outcomeCounts = {
-            interested: interestedCount,
-            followup: 0,
-            noAnswer: 0,
-            notInterested: 0,
-            dnc: 0
+            interested: dispositionCounts.LEAD,
+            followup: followupCount,
+            noAnswer: dispositionCounts.NO_ANSWER,
+            notInterested: dispositionCounts.NOT_INTERESTED,
+            dnc: dncCount,
         };
-
-        outcomes.forEach(o => {
-            const status = o.disposition;
-            const count = o._count._all;
-            if (status === 'CALL_BACK') outcomeCounts.followup += count;
-            else if (status === 'NO_ANSWER') outcomeCounts.noAnswer += count;
-            else if (status === 'NOT_INTERESTED') outcomeCounts.notInterested += count;
-            else if (status === 'DO_NOT_CALL') outcomeCounts.dnc += count;
-        });
 
         const data = {
             totalCalls,

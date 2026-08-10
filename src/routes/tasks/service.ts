@@ -12,6 +12,7 @@ export async function createTaskInDb(data: {
   title: string;
   dueAt: Date;
   notes?: string | null;
+  actionPlanStepExecutionId?: string | null;
 }) {
   return prisma.task.create({
     data: {
@@ -20,6 +21,7 @@ export async function createTaskInDb(data: {
       title: data.title,
       dueAt: data.dueAt,
       notes: data.notes ?? null,
+      actionPlanStepExecutionId: data.actionPlanStepExecutionId ?? null,
     },
     include: taskInclude,
   });
