@@ -8,6 +8,7 @@ import { createInternalNotification } from "../notification/controller";
 import { resolveTenantUserIds, resolveTenantRootId } from "../../utils/tenant";
 import { resolveCompanyContext } from "../../utils/resolveCompany";
 import { envConfig } from "@/lib/config";
+import { startOfTodayInTimezone } from "../../utils/timezone";
 
 
 function throwHttp(statusCode: number, message: string): never {
@@ -2457,12 +2458,15 @@ export async function permanentlyDeleteContactFromDb(
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the top-10 contacts ranked by total dialing time (desc),
- * with high confidence and positive sentiment from CallAnalysis.
+ * Returns today's contacts marked with the "Lead" disposition — the protected
+ * default disposition seeded for every tenant (Disposition.value === "LEAD").
+ * The list resets itself daily: it only ever includes ContactDispositionLog
+ * rows created since local midnight in the fixed CST/CDT timezone, so
+ * yesterday's leads naturally drop out with no cleanup job required.
  *
- * - AGENT: only contacts the agent personally called
- * - ADMIN: contacts called by the admin or any of their agents
- * - OWNER: all contacts across the system
+ * - AGENT: only leads they personally marked
+ * - ADMIN: leads marked by the admin or any of their agents
+ * - OWNER: all leads marked across the system
  */
 export async function getHotlistFromDb(userId: string, role: string) {
   let userIds: string[] = [userId];
@@ -2476,130 +2480,42 @@ export async function getHotlistFromDb(userId: string, role: string) {
   }
   // AGENT: just their own userId (default from initialisation)
 
-  // 1. Aggregate total dialing time per contactId from CallRecord
-  const callRecords = await prisma.callRecord.findMany({
+  const startOfToday = startOfTodayInTimezone("America/Chicago");
+
+  const logs = await prisma.contactDispositionLog.findMany({
     where: {
-      userId: { in: userIds },
-      contactId: { not: null },
-      duration: { not: null },
+      appliedById: { in: userIds },
+      createdAt: { gte: startOfToday },
+      disposition: { value: "LEAD" },
     },
-    select: {
-      contactId: true,
-      duration: true,
-      callSid: true,
-    },
-  });
-
-  // 2. Build a map: contactId -> { totalDuration, callSids[] }
-  const contactMap = new Map<
-    string,
-    { totalDuration: number; callSids: string[] }
-  >();
-
-  for (const record of callRecords) {
-    if (!record.contactId) continue;
-    const existing = contactMap.get(record.contactId);
-    if (existing) {
-      existing.totalDuration += record.duration ?? 0;
-      existing.callSids.push(record.callSid);
-    } else {
-      contactMap.set(record.contactId, {
-        totalDuration: record.duration ?? 0,
-        callSids: [record.callSid],
-      });
-    }
-  }
-
-  if (contactMap.size === 0) return [];
-
-  // 3. Enrich with sentiment/confidence from CallAnalysis
-  const allCallSids = Array.from(contactMap.values()).flatMap(
-    (v) => v.callSids,
-  );
-
-  const analyses = await prisma.callAnalysis.findMany({
-    where: { callSid: { in: allCallSids } },
-    select: { callSid: true, sentiment: true, confidence: true },
-  });
-
-  // Map callSid -> analysis
-  const analysisMap = new Map(
-    analyses.map((a) => [a.callSid, a]),
-  );
-
-  // 4. Compute per-contact: avg confidence, dominant sentiment
-  type EnrichedContact = {
-    contactId: string;
-    totalDuration: number;
-    avgConfidence: number;
-    sentiment: string;
-  };
-
-  const enriched: EnrichedContact[] = [];
-
-  for (const [contactId, { totalDuration, callSids }] of contactMap) {
-    const relatedAnalyses = callSids
-      .map((sid) => analysisMap.get(sid))
-      .filter(Boolean) as { callSid: string; sentiment: string; confidence: number }[];
-
-    const avgConfidence =
-      relatedAnalyses.length > 0
-        ? relatedAnalyses.reduce((acc, a) => acc + a.confidence, 0) /
-        relatedAnalyses.length
-        : 0;
-
-    // Dominant sentiment (most frequent)
-    const sentimentCounts: Record<string, number> = {};
-    for (const a of relatedAnalyses) {
-      sentimentCounts[a.sentiment] = (sentimentCounts[a.sentiment] ?? 0) + 1;
-    }
-    const sentiment =
-      Object.entries(sentimentCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ??
-      "neutral";
-
-    enriched.push({ contactId, totalDuration, avgConfidence, sentiment });
-  }
-
-  // 5. Filter: high confidence (>= 0.6) and positive/neutral sentiment
-  const filtered = enriched.filter(
-    (e) =>
-      e.avgConfidence >= 0.6 &&
-      (e.sentiment === "positive" || e.sentiment === "neutral"),
-  );
-
-  // If not enough filtered results, fall back to all enriched contacts
-  const ranked = (filtered.length >= 3 ? filtered : enriched)
-    .sort((a, b) => b.totalDuration - a.totalDuration)
-    .slice(0, 10);
-
-  // 6. Fetch actual contact details
-  const contactIds = ranked.map((r) => r.contactId);
-
-  const contacts = await prisma.contact.findMany({
-    where: { id: { in: contactIds } },
     include: {
-      phones: { take: 1 },
-      emails: { where: { isPrimary: true }, take: 1 },
+      contact: {
+        include: {
+          phones: { take: 1 },
+          emails: { where: { isPrimary: true }, take: 1 },
+        },
+      },
+      appliedBy: { select: { fullName: true } },
     },
+    orderBy: { createdAt: "desc" },
   });
 
-  // 7. Merge and preserve rank order
-  const contactDetailMap = new Map(contacts.map((c) => [c.id, c]));
+  // One row per contact — if marked Lead more than once today, keep the most
+  // recent (logs are already ordered desc, so the first occurrence wins).
+  const seenContactIds = new Set<string>();
+  const deduped = logs.filter((log) => {
+    if (seenContactIds.has(log.contactId)) return false;
+    seenContactIds.add(log.contactId);
+    return true;
+  });
 
-  return ranked
-    .map((r) => {
-      const contact = contactDetailMap.get(r.contactId);
-      if (!contact) return null;
-      return {
-        id: contact.id,
-        fullName: contact.fullName,
-        phone: contact.phones[0]?.number ?? null,
-        totalDialingTime: r.totalDuration,
-        avgConfidence: r.avgConfidence,
-        sentiment: r.sentiment,
-      };
-    })
-    .filter(Boolean);
+  return deduped.map((log) => ({
+    id: log.contact.id,
+    fullName: log.contact.fullName,
+    phone: log.contact.phones[0]?.number ?? null,
+    markedAt: log.createdAt,
+    markedBy: log.appliedBy?.fullName ?? null,
+  }));
 }
 
 // Replaces {{token}} merge fields with the contact's data. Used for both subject and body.
