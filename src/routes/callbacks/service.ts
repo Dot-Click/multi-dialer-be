@@ -6,7 +6,7 @@ export const callbackInclude = {
     select: {
       id: true,
       fullName: true,
-      phones: { select: { number: true, isPrimary: true, isValid: true, isDnc: true } },
+      phones: { select: { number: true, isBestNumber: true, isValid: true, isDnc: true } },
     },
   },
   lead: { select: { id: true, fullName: true } },
