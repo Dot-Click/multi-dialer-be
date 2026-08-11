@@ -732,9 +732,20 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           },
         });
 
+        // A live subscription (paid `active` OR still-in-`trialing`) should
+        // unlock the dialer. Only cancel_at_period_end (or a truly-canceled
+        // status) removes access. Without the trialing case, a fresh resub
+        // that starts in trial leaves the user locked out.
+        const isLive = (status === "active" || status === "trialing") && !cancelAtPeriodEnd;
         await prisma.user.update({
           where: { id: subRecord.userId },
-          data: { isSubscribed: status === "active" && !cancelAtPeriodEnd },
+          data: {
+            isSubscribed: isLive,
+            // Clear EXPIRED (left over from a previous cancel) once access is
+            // restored, so isFeatureLocked doesn't fall through to the trial
+            // check with a stale value.
+            ...(isLive ? { trialStatus: status === "trialing" ? ("ACTIVE" as any) : ("NONE" as any) } : {}),
+          },
         });
 
         // Notify the customer on a genuine plan/amount change — not on
