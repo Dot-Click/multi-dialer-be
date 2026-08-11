@@ -19,6 +19,7 @@ import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service"
 import { getUserPlanLimits } from "../services/planLimits.service";
 import { validatePurchasedAgentSeat } from "../services/agentSeatBilling.service";
 import { buildVerifyEmailUrl } from "../utils/verifyEmailLink";
+import { buildSetPasswordUrl } from "../utils/setPasswordLink";
 
 // Define the User type to include your custom fields
 interface AuthUser {
@@ -404,12 +405,12 @@ export const auth = betterAuth({
             ]);
 
             if (newUser) {
-              // Agents created here never go through Better Auth's own
-              // verification flow (that only fires on the public /sign-up
-              // path), so emailVerified stays false and login is blocked
-              // forever with no way for the agent to resolve it themselves.
-              // The invite email's "Verify Email" button (below) is the only
-              // path that sets it true — see routes/user/verifyEmail.ts.
+              // GA 4.0 client audit finding: the previous flow emailed the
+              // plaintext password from Better Auth's body. We now send a
+              // single-use set-password link instead — the user picks their
+              // own password on our server-rendered page, which also flips
+              // emailVerified to true in the same step (so the separate
+              // verify-email flow is no longer needed for this path).
               sendEmail(
                 newUser.email,
                 `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
@@ -417,8 +418,7 @@ export const auth = betterAuth({
                   newUser.fullName || "there",
                   admin?.fullName || "your admin",
                   newUser.email,
-                  body.password || "",
-                  buildVerifyEmailUrl(newUser.email),
+                  buildSetPasswordUrl(newUser.email, newUser.password),
                 ),
                 { userId: newUser.id },
               ).catch((err: any) => console.error("[Auth] Failed to send agent invite email:", err?.message ?? err));
@@ -443,18 +443,14 @@ export const auth = betterAuth({
           try {
             const newUser = await prisma.user.findUnique({ where: { email: body.email } });
             if (newUser) {
-              // Same emailVerified=false login-block bug as agents, minus the
-              // dedicated verify-email flow — createUserInDb's original intent
-              // for this branch was "administrative creation skips
-              // verification" entirely, so just mark it verified directly.
-              if (!newUser.emailVerified) {
-                await prisma.user.update({ where: { id: newUser.id }, data: { emailVerified: true } });
-              }
-
+              // No preemptive emailVerified=true here anymore — the set-password
+              // link flips it as part of the flow. Better Auth's
+              // requireEmailVerification then blocks direct password login until
+              // the user has actually completed setup.
               sendEmail(
                 newUser.email,
-                "Welcome to Slingvo - Your Account Details",
-                welcomeTemp(newUser.email, body.password || ""),
+                "Welcome to Slingvo - Set your password",
+                welcomeTemp(newUser.email, buildSetPasswordUrl(newUser.email, newUser.password)),
                 { userId: newUser.id },
               ).catch((err: any) => console.error("[Auth] Failed to send welcome email:", err?.message ?? err));
 

@@ -100,7 +100,7 @@ export const otpTemp = (OTP: string) => `
 </html>
 `
 
-export const welcomeTemp = (email: string, password: string) => `
+export const welcomeTemp = (email: string, setPasswordUrl: string) => `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -115,22 +115,21 @@ export const welcomeTemp = (email: string, password: string) => `
         .details-box { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
         .message { margin: 20px 0; }
         .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
-        .credential { margin: 10px 0; font-size: 18px; }
-        .label { font-weight: bold; color: #555; }
+        .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="message">
             <h2>Welcome to Slingvo!</h2>
-            <p>Your account has been successfully created. Here are your login details:</p>
+            <p>Your account has been successfully created. To activate it, choose a password using the button below.</p>
         </div>
         <div class="details-box">
-            <div class="credential"><span class="label">Email:</span> ${email}</div>
-            <div class="credential"><span class="label">Password:</span> ${password}</div>
+            <p style="margin:0;font-size:15px;"><strong>Email:</strong> ${email}</p>
         </div>
+        <div style="text-align:center;margin:30px 0"><a href="${setPasswordUrl}" class="button">Set Password</a></div>
         <div class="message">
-            <p>Please login and change your password after your first login.</p>
+            <p style="font-size:13px;color:#666;">This link is single-use and stops working the moment you set your password. If you didn't expect this email, please ignore it.</p>
         </div>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
@@ -927,20 +926,19 @@ export const subscriptionRenewedTemp = (fullName: string, planName: string, amou
 </html>
 `
 
-export const agentInviteTemp = (fullName: string, adminName: string, email: string, password: string, verifyUrl: string) => `
+export const agentInviteTemp = (fullName: string, adminName: string, email: string, setPasswordUrl: string) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>You've Been Invited to Slingvo</title>
 <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.credentials{background:#f8f9fa;border:2px dashed #28a745;padding:20px;border-radius:8px;margin:20px 0}.cred-row{margin:6px 0;font-size:15px}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}.button{display:inline-block;background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold}</style>
 </head><body><div class="container">
 <h2 style="color:#2c3e50">You've been invited to Slingvo</h2>
 <p>Hi ${fullName || "there"},</p>
-<p><strong>${adminName}</strong> has added you as an agent on their Slingvo workspace. Verify your email to activate your account, then log in with the credentials below.</p>
+<p><strong>${adminName}</strong> has added you as an agent on their Slingvo workspace. To activate your account, choose your own password using the button below.</p>
 <div class="credentials">
   <div class="cred-row"><strong>Email:</strong> ${email}</div>
-  <div class="cred-row"><strong>Password:</strong> ${password}</div>
 </div>
-<p style="font-size:14px;color:#666;">Please change your password after your first sign-in.</p>
-<div style="text-align:center;margin:30px 0"><a href="${verifyUrl}" class="button">Verify Email</a></div>
+<div style="text-align:center;margin:30px 0"><a href="${setPasswordUrl}" class="button">Set Password</a></div>
+<p style="font-size:13px;color:#666;">This link is single-use and stops working the moment you set your password. If you didn't expect this invite, please ignore this email.</p>
 <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
 </div>
         ${emailFooter()}
@@ -1054,6 +1052,47 @@ export const cardExpiringTemp = (fullName: string, cardBrand: string, cardLast4:
 </body>
 </html>
 `
+
+// Sent to BOTH the old and new addresses when an admin changes a user's
+// email in the Super-Admin UI (bypasses Better Auth's own change-email
+// verification flow, so nothing else notifies either party). GA 4.0 audit
+// finding: "changing a user's email sends no notification to either address."
+export const emailChangedByAdminTemp = (fullName: string, oldEmail: string, newEmail: string, kind: "old" | "new") => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your Slingvo email address was changed</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.info{background:#fffbeb;border:2px dashed #f59e0b;padding:20px;border-radius:8px;margin:20px 0}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
+</head><body><div class="container">
+<h2 style="color:#2c3e50">Your Slingvo email address was changed</h2>
+<p>Hi ${fullName || "there"},</p>
+<p>${kind === "old"
+  ? "An administrator has changed the email address on your Slingvo account. Future emails from us will be sent to the new address below."
+  : "An administrator has updated your Slingvo account to use this email address. You'll now receive all future account emails here."}</p>
+<div class="info">
+  <p style="margin:4px 0"><strong>Previous email:</strong> ${oldEmail}</p>
+  <p style="margin:4px 0"><strong>New email:</strong> ${newEmail}</p>
+</div>
+<p style="font-size:14px;color:#666;">If you didn't expect this change, please contact your administrator or reply to support@slingvo.com immediately.</p>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div>
+        ${emailFooter()}
+</body></html>`
+
+// Sent to the deleted user themselves before their account is removed.
+// GA 4.0 audit finding: "deleting a user sends nothing and has no
+// confirmation prompt - one click and the account is gone."
+export const accountClosedTemp = (fullName: string, closedByRole: "admin" | "system") => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your Slingvo account has been closed</title>
+<style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;background:#f4f4f4}.container{background:#fff;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}.footer{text-align:center;margin-top:30px;color:#666;font-size:14px}</style>
+</head><body><div class="container">
+<h2 style="color:#2c3e50">Your Slingvo account has been closed</h2>
+<p>Hi ${fullName || "there"},</p>
+<p>Your Slingvo account has been closed${closedByRole === "admin" ? " by an administrator" : ""}. You will no longer be able to sign in, and this address will not receive further account emails after this one.</p>
+<p style="font-size:14px;color:#666;">If you believe this was done in error, please contact support@slingvo.com right away.</p>
+<div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
+</div>
+        ${emailFooter()}
+</body></html>`
 
 import { sendEmail as trackedSendEmail } from "../services/email.service";
 

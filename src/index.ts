@@ -13,6 +13,7 @@ import { handleStripeWebhook } from "@/routes/webhooks/stripe";
 import { handleMailerSendWebhook } from "@/routes/webhooks/mailersend";
 import { handleUnsubscribe } from "@/routes/email/unsubscribe";
 import { handleVerifyEmail } from "@/routes/user/verifyEmail";
+import { showSetPasswordForm, submitSetPassword } from "@/routes/user/setPassword";
 import { startA2PStatusPoller } from "@/workers/a2pStatusPoller";
 import { startMyPlusLeadsSyncWorker } from "@/workers/myPlusLeadsSync";
 import { backfillMyPlusLeadsExistingUsers } from "@/workers/myPlusLeadsBackfill";
@@ -99,6 +100,12 @@ app.get("/api/email/unsubscribe", handleUnsubscribe);
 // Public verify-email endpoint (no auth — accessed from the "Verify Email"
 // button in agent-invite/admin-welcome emails)
 app.get("/api/user/verify-email", handleVerifyEmail);
+
+// Public set-password endpoint (no auth — accessed from the "Set Password"
+// button in admin-created account emails; HMAC signature bound to the
+// current password hash makes the link single-use automatically)
+app.get("/api/user/set-password", showSetPasswordForm);
+app.post("/api/user/set-password", submitSetPassword);
 
 app.use("/api", routes);
 

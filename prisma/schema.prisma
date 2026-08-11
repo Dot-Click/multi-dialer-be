@@ -1956,8 +1956,14 @@ model EmailLog {
   bounceType  BounceType?
 
   // Relations
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  //
+  // userId is nullable + SetNull on delete so the analytics dashboard keeps
+  // the historical record even after an account is removed. Previously
+  // Cascade wiped every email a user had ever sent/received the instant
+  // their account was deleted, which is what caused the client's "0% open
+  // rate" observation during their end-to-end delete test (GA 4.0 audit).
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   contactId String?
   contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)

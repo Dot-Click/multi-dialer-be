@@ -8,8 +8,9 @@ import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.serv
 import { subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { sendEmail, welcomeTemp, agentInviteTemp, memberAddedTemp, memberRemovedTemp, roleChangedTemp } from "../../utils/email";
+import { sendEmail, welcomeTemp, agentInviteTemp, memberAddedTemp, memberRemovedTemp, roleChangedTemp, emailChangedByAdminTemp, accountClosedTemp } from "../../utils/email";
 import { envConfig } from "../../lib/config";
+import { buildSetPasswordUrl } from "../../utils/setPasswordLink";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
     apiVersion: "2026-04-22.dahlia",
@@ -62,11 +63,19 @@ export async function createUserInDb(payload: any) {
     // Use a transaction for atomicity
     const newUser = await prisma.$transaction(async (tx) => {
         // 1. Create User
+        //
+        // emailVerified starts FALSE — the set-password link the invite email
+        // carries flips it to true as part of the flow (see
+        // routes/user/setPassword.ts). Previously this was set to true
+        // preemptively with a "administrative creation skips verification"
+        // comment, which combined with emailing the plaintext password
+        // meant every admin-created account was insecure by default
+        // (GA 4.0 audit finding).
         const newUser = await tx.user.create({
             data: {
                 ...rest,
                 password: hashedPassword,
-                emailVerified: true, // Administrative creation skips verification
+                emailVerified: false,
             },
         });
 
@@ -178,12 +187,17 @@ export async function createUserInDb(payload: any) {
         },
     });
 
-    // Send invite/welcome email with login credentials — non-blocking
+    // Send invite/welcome email carrying a single-use set-password link
+    // (never a plaintext password). newUser.password is the bcrypt hash at
+    // this point — the link's signature is bound to that hash so once the
+    // user actually sets a new password the link automatically stops working
+    // without any DB dedup table.
+    const setPasswordUrl = buildSetPasswordUrl(newUser.email, hashedPassword);
+
     if (newUser.role === "AGENT" && rest.createdById) {
         // Fetch admin name for the invite email and the member-added notification in one shot
         prisma.user.findUnique({ where: { id: rest.createdById }, select: { id: true, email: true, fullName: true } })
             .then(admin => {
-                // Agent invite email to the new agent
                 sendEmail(
                     newUser.email,
                     `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
@@ -191,8 +205,7 @@ export async function createUserInDb(payload: any) {
                         newUser.fullName || "there",
                         admin?.fullName || "your admin",
                         newUser.email,
-                        password,
-                        `${envConfig.FRONTEND_URL}/admin/login`,
+                        setPasswordUrl,
                     ),
                     { userId: newUser.id },
                 ).catch(err => console.error("[UserService] Failed to send agent invite email:", err?.message ?? err));
@@ -209,11 +222,10 @@ export async function createUserInDb(payload: any) {
             })
             .catch(err => console.error("[UserService] Failed to fetch admin for invite emails:", err?.message ?? err));
     } else {
-        // Non-agent (ADMIN/OWNER created manually) gets the generic welcome email
         sendEmail(
             newUser.email,
-            "Welcome to Slingvo - Your Account Details",
-            welcomeTemp(newUser.email, password),
+            "Welcome to Slingvo - Set your password",
+            welcomeTemp(newUser.email, setPasswordUrl),
             { userId: newUser.id },
         ).catch(err => console.error("[UserService] Failed to send welcome email:", err?.message ?? err));
 
@@ -501,6 +513,28 @@ export async function updateUserInDb(
         ).catch(err => console.error("[UserService] Failed to send role-changed email:", err?.message ?? err));
     }
 
+    // GA 4.0 audit finding: admin-initiated email changes previously bypassed
+    // Better Auth's own change-email verification flow entirely and notified
+    // no one. Now notify BOTH addresses so the user (a) knows the change
+    // happened and (b) has a record of the previous address as a fallback.
+    if (payload.email && payload.email !== existing.email) {
+        const oldEmail = existing.email;
+        const newEmail = payload.email;
+        sendEmail(
+            oldEmail,
+            "Your Slingvo email address was changed",
+            emailChangedByAdminTemp(existing.fullName || "there", oldEmail, newEmail, "old"),
+            { userId: id },
+        ).catch(err => console.error("[UserService] Failed to send email-change (old) notification:", err?.message ?? err));
+
+        sendEmail(
+            newEmail,
+            "Your Slingvo email address was changed",
+            emailChangedByAdminTemp(existing.fullName || "there", oldEmail, newEmail, "new"),
+            { userId: id },
+        ).catch(err => console.error("[UserService] Failed to send email-change (new) notification:", err?.message ?? err));
+    }
+
     return updated;
 }
 
@@ -597,6 +631,21 @@ export async function deleteUserFromDb(id: string) {
         select: { id: true, email: true, fullName: true, role: true, createdById: true },
     });
     if (!existing) throwHttp(404, "User not found");
+
+    // GA 4.0 audit finding: deleted users got no notification of any kind.
+    // Send the closed-account email BEFORE the delete so it goes out while
+    // the row still exists. Deliberately do NOT tie it to userId — the user
+    // is about to be deleted and EmailLog.userId cascades on delete, which
+    // would wipe this log the moment the delete lands.
+    try {
+        await sendEmail(
+            existing.email,
+            "Your Slingvo account has been closed",
+            accountClosedTemp(existing.fullName || "there", "admin"),
+        );
+    } catch (err: any) {
+        console.error(`[UserService] Failed to send account-closed email to ${existing.email}:`, err?.message ?? err);
+    }
 
     // Only ADMIN accounts own a Twilio sub-account + numbers of their own —
     // agents use their admin's, and OWNER (platform staff) have none at all.
