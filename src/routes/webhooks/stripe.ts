@@ -712,11 +712,20 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
           console.error(`[Stripe Webhook] Could not resolve product name on update:`, err?.message);
         }
 
+        // "Cancel at period end" leaves Stripe status as `trialing`/`active`
+        // until the period ends. Without this check, mapStripeSubscriptionStatus
+        // maps that live status back to ACTIVE and overwrites the CANCELLED
+        // our cancel handler just wrote.
+        const cancelAtPeriodEnd = Boolean(subscription.cancel_at_period_end);
+        const mappedStatus = cancelAtPeriodEnd
+          ? "CANCELLED"
+          : mapStripeSubscriptionStatus(status);
+
         await prisma.userSubscription.update({
           where: { id: subRecord.id },
           data: {
             plan: planName,
-            status: mapStripeSubscriptionStatus(status),
+            status: mappedStatus,
             amount: amountStr,
             usersCount: quantity,
             billingCycle: billingCycle as any,
@@ -725,7 +734,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
         await prisma.user.update({
           where: { id: subRecord.userId },
-          data: { isSubscribed: status === "active" },
+          data: { isSubscribed: status === "active" && !cancelAtPeriodEnd },
         });
 
         // Notify the customer on a genuine plan/amount change — not on
