@@ -9,6 +9,7 @@ import { subscriptionIdFromInvoice } from "../../services/billingLedger.service"
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { sendEmail, welcomeTemp, agentInviteTemp, memberAddedTemp, memberRemovedTemp, roleChangedTemp, emailChangedByAdminTemp, accountClosedTemp } from "../../utils/email";
+import { emailFooter } from "../../utils/emailFooter";
 import { envConfig } from "../../lib/config";
 import { buildSetPasswordUrl } from "../../utils/setPasswordLink";
 
@@ -308,9 +309,7 @@ export async function sendPaymentSetupEmail(user: { id: string; email: string; f
 <div style="font-family: Arial, sans-serif; background:#f4f6f8; padding:20px;">
   <div style="max-width:600px; margin:auto; background:#ffffff; border-radius:10px; padding:30px; box-shadow:0 2px 10px rgba(0,0,0,0.1);">
 
-    <div style="text-align:center; margin-bottom:20px;">
-      <h1 style="color:#2c3e50; margin:0;">Slingvo</h1>
-    </div>
+    <h2 style="color:#2c3e50; margin:0 0 20px;">Complete your payment setup</h2>
 
     <p style="font-size:16px; color:#333;">Hi <strong>${displayName}</strong>,</p>
 
@@ -337,6 +336,7 @@ export async function sendPaymentSetupEmail(user: { id: string; email: string; f
     <hr style="border:none; border-top:1px solid #eee; margin:24px 0;"/>
     <p style="font-size:12px; color:#999; text-align:center;">© 2026 Slingvo. All rights reserved.</p>
   </div>
+  ${emailFooter()}
 </div>
         `.trim()
     );
