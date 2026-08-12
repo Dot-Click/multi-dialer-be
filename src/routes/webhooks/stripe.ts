@@ -404,15 +404,64 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         const existingUser = await prisma.user.findUnique({ where: { email } });
         if (existingUser) {
           if (metadata?.isManualProvision === "true" || metadata?.userId) {
+            // Previously this spread stripeCustomerId directly onto
+            // prisma.user.update() — but User has no such field (it only
+            // lives on UserSubscription). Prisma rejected the whole update
+            // as invalid, which meant isSubscribed never got set either,
+            // since it was the same atomic call. Reproduced live: payment
+            // succeeded in Stripe, this event was recorded FAILED in
+            // billing_events, and the dialer stayed locked despite payment.
+            // Now mirrors the isExistingUserSubscribe branch above: create
+            // a real UserSubscription row instead of just a flag flip, so
+            // plan/billing pages have something to actually show.
             const stripeCustomerId = session.customer as string | null;
-            await prisma.user.update({
-              where: { id: existingUser.id },
+            const stripeSubscriptionId = session.subscription as string | null;
+
+            let planName = "STARTER";
+            let billingCycle: any = "MONTHLY";
+            let amountStr: string | null = null;
+            let usersCount = 1;
+
+            if (stripeSubscriptionId) {
+              const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+              const item = stripeSub.items.data[0];
+              const interval = item?.price?.recurring?.interval;
+              billingCycle = interval === "year" ? "YEARLY" : "MONTHLY";
+
+              const quantity = item?.quantity ?? 1;
+              usersCount = quantity;
+              if (typeof item?.price?.unit_amount === "number") {
+                amountStr = String((item.price.unit_amount / 100) * quantity);
+              }
+
+              const priceId = item?.price?.id;
+              if (priceId) {
+                const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+                const product = price.product as any;
+                if (product?.name) planName = product.name;
+              }
+            }
+
+            await prisma.userSubscription.create({
               data: {
-                isSubscribed: true,
-                ...(stripeCustomerId ? { stripeCustomerId } : {}),
+                userId: existingUser.id,
+                plan: planName,
+                status: "ACTIVE",
+                startDate: new Date(),
+                stripeCustomerId,
+                stripeSubscriptionId,
+                billingCycle,
+                amount: amountStr,
+                usersCount,
               },
             });
-            console.log(`[Stripe Webhook] Manual user ${email} subscription activated (customer: ${stripeCustomerId}).`);
+
+            await prisma.user.update({
+              where: { id: existingUser.id },
+              data: { isSubscribed: true },
+            });
+
+            console.log(`[Stripe Webhook] Manual user ${email} subscription activated: plan=${planName}, cycle=${billingCycle} (customer: ${stripeCustomerId}).`);
           } else {
             console.log(`[Stripe Webhook] User ${email} already exists, skipping provisioning.`);
           }
