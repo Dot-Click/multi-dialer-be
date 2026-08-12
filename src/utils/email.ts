@@ -289,20 +289,22 @@ export const emailChangeConfirmationTemp = (fullName: string, oldEmail: string, 
 </html>
 `
 
-export const emailVerificationTemp = (fullName: string, email: string, password: string, loginUrl: string) => `
+// Rewritten to drop the plaintext-password "account details" format entirely
+// (P0 security finding — same class of issue already fixed on the invite/
+// welcome flows). This is Better Auth's own sendVerificationEmail callback;
+// it now uses the real verification URL Better Auth generates for the
+// callback, instead of ignoring it and building a fake "login" link that
+// carried the account's password in the clear.
+export const emailVerificationTemp = (fullName: string, email: string, verifyUrl: string) => `
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Your Slingvo Account Details</title>
+    <title>Verify your Slingvo email address</title>
     <style>
         body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
         .container { background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .header { text-align: center; margin-bottom: 30px; }
-        .logo { font-size: 24px; font-weight: bold; color: #2c3e50; }
-        .credentials { background: #f8f9fa; border: 2px dashed #28a745; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .cred-row { margin: 6px 0; font-size: 15px; }
         .message { margin: 20px 0; }
         .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
         .button { display: inline-block; background: #FFCA06; color: #1a1a1a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; font-weight: bold; }
@@ -311,18 +313,14 @@ export const emailVerificationTemp = (fullName: string, email: string, password:
 <body>
     <div class="container">
         <div class="message">
-            <h2 style="color: #2c3e50;">Welcome to Slingvo!</h2>
+            <h2 style="color: #2c3e50;">Verify your email address</h2>
             <p>Hi ${fullName || "there"},</p>
-            <p>Your account has been successfully created. Here are your login details:</p>
+            <p>Please confirm <strong>${email}</strong> is your email address by clicking the button below.</p>
         </div>
-        <div class="credentials">
-            <div class="cred-row"><strong>Email:</strong> ${email}</div>
-            <div class="cred-row"><strong>Password:</strong> ${password}</div>
-        </div>
-        <p style="font-size:14px;color:#666;">Please log in and change your password after your first sign-in.</p>
         <div style="text-align:center; margin: 30px 0;">
-            <a href="${loginUrl}" class="button">Log In Now</a>
+            <a href="${verifyUrl}" class="button">Verify Email</a>
         </div>
+        <p style="font-size:13px;color:#666;">If you didn't expect this email, you can safely ignore it.</p>
         <div class="footer"><p>© 2026 Slingvo. All rights reserved.</p></div>
     </div>
         ${emailFooter()}

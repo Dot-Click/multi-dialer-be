@@ -36,8 +36,6 @@ interface AuthUser {
   defaultCallerId?: string | null;
 }
 
-const pendingPasswords = new Map<string, string>();
-
 export const auth = betterAuth({
   appName: "Slingvo",
   database: prismaAdapter(prisma, { provider: "postgresql" }),
@@ -94,20 +92,24 @@ export const auth = betterAuth({
   emailVerification: {
     sendVerificationEmail: async ({
       user,
+      url,
     }: {
       user: AuthUser;
       url: string;
       token: string;
     }) => {
-      const password = pendingPasswords.get(user.email.toLowerCase()) || "";
+      // P0 fix: this previously emailed the account's plaintext password
+      // under a "Your Account Details" subject and ignored the real
+      // verification `url` Better Auth generated for this callback,
+      // building a fake login link instead. Now actually verifies the
+      // email via Better Auth's own link — no password anywhere.
       await sendEmail(
         user.email,
-        "Welcome to Slingvo – Your Account Details",
+        "Verify your Slingvo email address",
         emailVerificationTemp(
           user.fullName ?? "there",
           user.email,
-          password,
-          `${envConfig.FRONTEND_URL}/admin/login`,
+          url,
         ),
       );
     },
@@ -295,15 +297,10 @@ export const auth = betterAuth({
         }
       }
 
-      // Capture plain password for the email hook
       if (ctx.path.includes("sign-up")) {
         const body = ctx.body;
         if (body?.role?.toLowerCase() === "owner") {
           throw new APIError("BAD_REQUEST", { message: "invalid role" });
-        }
-        if (body?.email && body?.password) {
-          console.log(`[Auth] Captured password for \${body.email}`);
-          pendingPasswords.set(body.email.toLowerCase(), body.password);
         }
       }
 
@@ -313,16 +310,8 @@ export const auth = betterAuth({
     }),
 
     after: createAuthMiddleware(async (ctx: any) => {
-      // Cleanup password store after request
       if (ctx.path.includes("sign-up")) {
         const body = ctx.body;
-
-        if (body?.email) {
-          setTimeout(
-            () => pendingPasswords.delete(body.email.toLowerCase()),
-            10000,
-          );
-        }
 
         const user = await prisma.user.findUnique({
           where: { email: body.email },
