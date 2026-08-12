@@ -257,41 +257,25 @@ export async function createUserInDb(payload: any) {
  * Creates a Stripe checkout session for a manually provisioned user and sends
  * them an email with the payment link so they can enter their card details.
  */
-async function getFirstAvailableStripePriceId(): Promise<string | null> {
-    try {
-        const products = await stripe.products.list({ active: true, limit: 10 });
-        for (const product of products.data) {
-            const prices = await stripe.prices.list({ product: product.id, active: true, type: "recurring", limit: 1 });
-            if (prices.data.length > 0) {
-                console.log(`[UserService] Auto-selected Stripe price: ${prices.data[0].id} (${product.name})`);
-                return prices.data[0].id;
-            }
-        }
-    } catch (err: any) {
-        console.warn("[UserService] Could not auto-fetch Stripe price:", err?.message);
-    }
-    return null;
-}
-
 export async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }, planId?: string) {
-    // 1. Use the admin-selected plan
-    // 2. Fall back to env defaults
-    // 3. Auto-fetch the first active Stripe price as last resort
+    // P0 billing finding: the previous "3. Auto-fetch the first active
+    // Stripe price as last resort" step silently picked whatever product
+    // Stripe's API happened to list first — which sent a user the admin
+    // put on $97/mo Starter a checkout link for $5,368/year Scale Yearly
+    // instead. A wrong price charged is worse than a blocked request:
+    // refuse to guess. If no planId was actually passed and no env
+    // default is configured, this throws instead of resolving.
     const trimmed = planId?.trim() || "";
-    let resolvedPlanId: string | null =
+    const resolvedPlanId: string | null =
         trimmed ||
         envConfig.STRIPE_PRICE_BASIC?.trim() ||
         envConfig.STRIPE_PRICE_STANDARD?.trim() ||
         null;
 
     if (!resolvedPlanId) {
-        console.log("[UserService] No planId or env default — auto-fetching first Stripe price...");
-        resolvedPlanId = await getFirstAvailableStripePriceId();
-    }
-
-    if (!resolvedPlanId) {
-        console.warn("[UserService] No active Stripe prices found. Skipping payment email.");
-        return;
+        throw new Error(
+            `sendPaymentSetupEmail: no planId provided for ${user.email} and no STRIPE_PRICE_BASIC/STRIPE_PRICE_STANDARD env default is configured — refusing to auto-select a Stripe price.`
+        );
     }
 
     const session = await stripe.checkout.sessions.create({
