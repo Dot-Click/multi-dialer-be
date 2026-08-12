@@ -57,7 +57,7 @@ import {
   bulkDeleteContactsInDb,
   bulkAssignContactsToFolderInDb,
   mergeContactsInDb,
-  getRealtorLinkForContactInDb,
+  getZillowLinkForContactInDb,
   markAsContactedInDb,
   markPhoneInvalidInDb,
   suppressNumberGloballyInDb,
@@ -138,7 +138,7 @@ export const getContactById = async (
   }
 };
 
-export const getRealtorLink = async (
+export const getZillowLink = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
@@ -149,8 +149,8 @@ export const getRealtorLink = async (
       return;
     }
 
-    const realtorData = await getRealtorLinkForContactInDb(id);
-    successResponse(res, 200, "Realtor property link fetched", realtorData);
+    const zillowData = await getZillowLinkForContactInDb(id);
+    successResponse(res, 200, "Zillow link fetched", zillowData);
   } catch (error: any) {
     errorResponse(
       res,

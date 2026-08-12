@@ -16,63 +16,12 @@ function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
 }
 
-const REALTOR_API_BASE_URL = "https://realtor-com4.p.rapidapi.com";
+const ZILLOW_API_BASE_URL = "https://zillow-com-live-data-scraper-api.p.rapidapi.com";
 
 function normalizeText(value: unknown): string {
   return String(value || "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
-}
-
-function recursiveFindByKeys(value: any, keys: string[]): any[] {
-  const results: any[] = [];
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      results.push(...recursiveFindByKeys(item, keys));
-    }
-    return results;
-  }
-
-  if (value && typeof value === "object") {
-    const normalizedEntries = Object.entries(value).map(([key, entryValue]) => ({
-      key: key.toLowerCase(),
-      value: entryValue,
-    }));
-
-    for (const entry of normalizedEntries) {
-      if (keys.includes(entry.key)) {
-        results.push(entry.value);
-      }
-      results.push(...recursiveFindByKeys(entry.value, keys));
-    }
-  }
-
-  return results;
-}
-
-function collectPropertyCandidates(value: any): Array<Record<string, any>> {
-  const candidates: Array<Record<string, any>> = [];
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      candidates.push(...collectPropertyCandidates(item));
-    }
-    return candidates;
-  }
-
-  if (value && typeof value === "object") {
-    const propertyId = value.property_id ?? value.propertyId ?? value.mpr_id ?? value.mprid ?? value.geo_id;
-    if (propertyId) {
-      candidates.push(value);
-    }
-
-    for (const entryValue of Object.values(value)) {
-      candidates.push(...collectPropertyCandidates(entryValue));
-    }
-  }
-
-  return candidates;
 }
 
 function buildContactAddress(contact: {
@@ -87,27 +36,39 @@ function buildContactAddress(contact: {
     .trim();
 }
 
-function scorePropertyCandidate(
-  candidate: Record<string, any>,
+// Zillow's bylocation response wraps its results in different possible
+// container keys depending on API/version — check the common ones rather
+// than assume one fixed shape. Falls back to treating the payload itself as
+// the results array if it's already one.
+function extractZillowResults(payload: any): Array<Record<string, any>> {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+
+  const candidates = payload.results ?? payload.data ?? payload.props ?? payload.homes ?? payload.listings;
+  return Array.isArray(candidates) ? candidates : [];
+}
+
+function scoreZillowResult(
+  result: Record<string, any>,
   target: { address: string; city: string; state: string; zip: string }
 ): number {
-  const candidateBlob = normalizeText(JSON.stringify(candidate));
+  const resultBlob = normalizeText(JSON.stringify(result));
   let score = 0;
 
-  if (target.address && candidateBlob.includes(target.address)) score += 6;
-  if (target.city && candidateBlob.includes(target.city)) score += 3;
-  if (target.state && candidateBlob.includes(target.state)) score += 2;
-  if (target.zip && candidateBlob.includes(target.zip)) score += 4;
+  if (target.address && resultBlob.includes(target.address)) score += 6;
+  if (target.city && resultBlob.includes(target.city)) score += 3;
+  if (target.state && resultBlob.includes(target.state)) score += 2;
+  if (target.zip && resultBlob.includes(target.zip)) score += 4;
 
   return score;
 }
 
-function pickBestPropertyId(autoCompletePayload: any, contact: {
+function pickBestZillowResult(payload: any, contact: {
   address?: string | null;
   city?: string | null;
   state?: string | null;
   zip?: string | null;
-}): string | null {
+}): Record<string, any> | null {
   const normalizedTarget = {
     address: normalizeText(contact.address),
     city: normalizeText(contact.city),
@@ -115,40 +76,35 @@ function pickBestPropertyId(autoCompletePayload: any, contact: {
     zip: normalizeText(contact.zip),
   };
 
-  const candidates = collectPropertyCandidates(autoCompletePayload);
+  const results = extractZillowResults(payload);
+  if (results.length === 0) return null;
 
-  if (candidates.length > 0) {
-    const ranked = candidates
-      .map((candidate) => ({
-        propertyId: String(candidate.property_id ?? candidate.propertyId ?? candidate.mpr_id ?? candidate.mprid ?? candidate.geo_id),
-        score: scorePropertyCandidate(candidate, normalizedTarget),
-      }))
-      .filter((candidate) => candidate.propertyId);
+  const ranked = results
+    .map((result) => ({ result, score: scoreZillowResult(result, normalizedTarget) }))
+    .sort((a, b) => b.score - a.score);
 
-    ranked.sort((a, b) => b.score - a.score);
-    if (ranked[0]?.propertyId) {
-      return ranked[0].propertyId;
-    }
-  }
-
-  const propertyIds = recursiveFindByKeys(autoCompletePayload, ["property_id", "propertyid", "mpr_id", "mprid", "geo_id"])
-    .map((propertyId) => String(propertyId))
-    .filter(Boolean);
-
-  return propertyIds[0] ?? null;
+  return ranked[0]?.result ?? null;
 }
 
-function extractRealtorUrl(value: any): string | null {
+function looksLikeZillowUrl(value: string): boolean {
+  return value.includes("zillow.com/homedetails") || value.startsWith("/homedetails/");
+}
+
+function resolveZillowUrl(value: string): string | null {
+  if (value.startsWith("https://")) return value;
+  if (value.startsWith("http://")) return value.replace("http://", "https://");
+  if (value.startsWith("/")) return `https://www.zillow.com${value}`;
+  return `https://www.zillow.com/${value}`;
+}
+
+function extractZillowUrl(value: any): string | null {
   if (typeof value === "string") {
-    if (value.startsWith("https://www.realtor.com/")) return value;
-    if (value.startsWith("http://www.realtor.com/")) return value.replace("http://", "https://");
-    if (value.startsWith("/realestateandhomes-detail/")) return `https://www.realtor.com${value}`;
-    if (value.startsWith("realestateandhomes-detail/")) return `https://www.realtor.com/${value}`;
+    return looksLikeZillowUrl(value) ? resolveZillowUrl(value) : null;
   }
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      const nestedUrl = extractRealtorUrl(item);
+      const nestedUrl = extractZillowUrl(item);
       if (nestedUrl) return nestedUrl;
     }
     return null;
@@ -159,13 +115,14 @@ function extractRealtorUrl(value: any): string | null {
       const normalizedKey = key.toLowerCase();
       if (
         typeof entryValue === "string" &&
-        ["href", "permalink", "url", "link", "web_url", "rdc_web_url"].includes(normalizedKey)
+        ["detailurl", "hdpurl", "url", "link"].includes(normalizedKey) &&
+        looksLikeZillowUrl(entryValue)
       ) {
-        const resolvedUrl = extractRealtorUrl(entryValue);
+        const resolvedUrl = resolveZillowUrl(entryValue);
         if (resolvedUrl) return resolvedUrl;
       }
 
-      const nestedUrl = extractRealtorUrl(entryValue);
+      const nestedUrl = extractZillowUrl(entryValue);
       if (nestedUrl) return nestedUrl;
     }
   }
@@ -388,16 +345,16 @@ export async function getContactByIdFromDb(id: string) {
   return contact;
 }
 
-export async function getRealtorLinkForContactInDb(contactId: string) {
-  console.log("[Realtor] Starting realtor link fetch for contact:", contactId);
-  
-  if (!envConfig.REALTOR_RAPIDAPI_KEY) {
-    console.error("[Realtor] REALTOR_RAPIDAPI_KEY is not configured");
-    throwHttp(500, "Realtor RapidAPI key is not configured on the server");
+export async function getZillowLinkForContactInDb(contactId: string) {
+  console.log("[Zillow] Starting Zillow link fetch for contact:", contactId);
+
+  if (!envConfig.ZILLOW_RAPIDAPI_KEY) {
+    console.error("[Zillow] ZILLOW_RAPIDAPI_KEY is not configured");
+    throwHttp(500, "Zillow RapidAPI key is not configured on the server");
   }
 
-  console.log("[Realtor] API Key present:", !!envConfig.REALTOR_RAPIDAPI_KEY);
-  console.log("[Realtor] API Host:", envConfig.REALTOR_RAPIDAPI_HOST);
+  console.log("[Zillow] API Key present:", !!envConfig.ZILLOW_RAPIDAPI_KEY);
+  console.log("[Zillow] API Host:", envConfig.ZILLOW_RAPIDAPI_HOST);
 
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
@@ -412,69 +369,58 @@ export async function getRealtorLinkForContactInDb(contactId: string) {
   });
 
   if (!contact) {
-    console.error("[Realtor] Contact not found:", contactId);
+    console.error("[Zillow] Contact not found:", contactId);
     throwHttp(404, "Contact not found");
   }
 
   const addressQuery = buildContactAddress(contact);
-  console.log("[Realtor] Address query:", addressQuery);
-  
+  console.log("[Zillow] Address query:", addressQuery);
+
   if (!addressQuery) {
-    console.error("[Realtor] No property address for contact:", contactId);
+    console.error("[Zillow] No property address for contact:", contactId);
     throwHttp(400, "Contact does not have a property address");
   }
 
   const rapidApiHeaders = {
     "Content-Type": "application/json",
-    "x-rapidapi-host": envConfig.REALTOR_RAPIDAPI_HOST || "realtor-com4.p.rapidapi.com",
-    "x-rapidapi-key": envConfig.REALTOR_RAPIDAPI_KEY,
+    "x-rapidapi-host": envConfig.ZILLOW_RAPIDAPI_HOST || "zillow-com-live-data-scraper-api.p.rapidapi.com",
+    "x-rapidapi-key": envConfig.ZILLOW_RAPIDAPI_KEY,
   };
 
-  let propertyId: string | null = null;
-  let realtorUrl: string | null = null;
+  let zillowUrl: string | null = null;
 
   try {
-    console.log("[Realtor] Calling auto-complete API...");
-    const autoCompleteResponse = await axios.get(
-      `${REALTOR_API_BASE_URL}/auto-complete`,
+    console.log("[Zillow] Calling bylocation API...");
+    const listResponse = await axios.get(
+      `${ZILLOW_API_BASE_URL}/bylocation`,
       {
-        params: { input: addressQuery },
+        params: { location: addressQuery, page: 1 },
         headers: rapidApiHeaders,
       }
     );
-    console.log("[Realtor] Auto-complete response received");
-    console.log(autoCompleteResponse.data)
+    console.log("[Zillow] bylocation response received");
+    console.log(listResponse.data)
 
-    propertyId = pickBestPropertyId(autoCompleteResponse.data, contact);
-    console.log("[Realtor] Property ID:", propertyId);
-    
-    if (!propertyId) {
-      console.error("[Realtor] No property match found for:", addressQuery);
-      throwHttp(404, "No Realtor property match was found for this address");
+    const bestResult = pickBestZillowResult(listResponse.data, contact);
+    console.log("[Zillow] Best matching result:", bestResult ? "found" : "none");
+
+    if (!bestResult) {
+      console.error("[Zillow] No property match found for:", addressQuery);
+      throwHttp(404, "No Zillow listing found for this address");
     }
 
-    console.log("[Realtor] Calling properties/detail API...");
-    const detailResponse = await axios.get(
-      `${REALTOR_API_BASE_URL}/properties/detail`,
-      {
-        params: { property_id: propertyId },
-        headers: rapidApiHeaders,
-      }
-    );
+    zillowUrl = extractZillowUrl(bestResult);
+    console.log("[Zillow] Zillow URL:", zillowUrl);
 
-    console.log("[Realtor] Detail response received");
-    realtorUrl = extractRealtorUrl(detailResponse.data);
-    console.log("[Realtor] Realtor URL:", realtorUrl);
-    
-    if (!realtorUrl) {
-      console.error("[Realtor] No URL in detail response");
-      throwHttp(404, "The Realtor detail response did not include a property URL");
+    if (!zillowUrl) {
+      console.error("[Zillow] No URL in matched result");
+      throwHttp(404, "Could not extract Zillow URL from response");
     }
   } catch (error: any) {
-    console.error("[Realtor] Error occurred:", error?.message);
-    console.error("[Realtor] Error status:", error?.response?.status);
-    console.error("[Realtor] Error data:", error?.response?.data);
-    
+    console.error("[Zillow] Error occurred:", error?.message);
+    console.error("[Zillow] Error status:", error?.response?.status);
+    console.error("[Zillow] Error data:", error?.response?.data);
+
     if (error?.statusCode) {
       throw error;
     }
@@ -484,16 +430,15 @@ export async function getRealtorLinkForContactInDb(contactId: string) {
       error?.response?.data?.message ||
       error?.response?.data?.error ||
       error?.message ||
-      "Failed to fetch Realtor property details";
+      "Zillow API request failed";
 
     throwHttp(statusCode, providerMessage);
   }
 
   return {
     contactId: contact.id,
-    propertyId,
     addressQuery,
-    realtorUrl,
+    zillowUrl,
   };
 }
 

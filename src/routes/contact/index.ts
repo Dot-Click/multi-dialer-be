@@ -45,7 +45,7 @@ import {
   getContactsByFolder,
   bulkDeleteContacts,
   mergeContacts,
-  getRealtorLink,
+  getZillowLink,
   markAsContacted,
   markBadNumber,
   dncNumber,
@@ -73,7 +73,7 @@ router.get("/group", getAllContactGroups);
 router.get("/", getAllContacts);
 router.get("/dnc-list", getDncList);
 router.get("/contacts-list/:lid", getContactsByList);
-router.get("/:id/realtor-link", getRealtorLink);
+router.get("/:id/zillow-link", getZillowLink);
 router.get("/:id/activity-logs", getContactActivityLogs);
 router.post("/:id/mark-as-contacted", markAsContacted);
 router.post("/:id/mark-bad-number", markBadNumber);
