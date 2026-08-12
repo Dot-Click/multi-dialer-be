@@ -393,7 +393,22 @@ export const auth = betterAuth({
               prisma.company.findFirst({ where: { userId: createdById }, select: { companyName: true } }),
             ]);
 
-            if (newUser) {
+            // This `after` hook runs unconditionally — including when
+            // admin.createUser actually failed (e.g. duplicate email).
+            // In that case the findUnique above resolves to the
+            // PRE-EXISTING account, not a fresh one, and without this
+            // guard we'd send an invite/notification for an agent that
+            // was never actually added (client report: admin gets the
+            // "member added" email, but the agent never appears in the
+            // list). Only proceed if this row both belongs to this admin
+            // AND was created within this request's lifetime — a genuine
+            // pre-existing account fails one or both checks.
+            const justCreated =
+              newUser &&
+              newUser.createdById === createdById &&
+              Date.now() - new Date(newUser.createdAt).getTime() < 15_000;
+
+            if (newUser && justCreated) {
               // Switched to MailerSend dashboard-hosted template
               // "01 Welcome / Agent invite" (client audit: use as-is).
               // The template expects a plaintext temp_password + an
@@ -436,7 +451,14 @@ export const auth = betterAuth({
           // entirely.
           try {
             const newUser = await prisma.user.findUnique({ where: { email: body.email } });
-            if (newUser) {
+            // Same "after hook runs even on failure" issue as the agent
+            // branch above — a duplicate-email rejection would otherwise
+            // re-fetch the pre-existing account and email it a fresh
+            // welcome/set-password link. createdById isn't reliably present
+            // for this branch (e.g. an OWNER self-provisioning an admin), so
+            // recency alone is the guard here.
+            const justCreated = newUser && Date.now() - new Date(newUser.createdAt).getTime() < 15_000;
+            if (newUser && justCreated) {
               // No preemptive emailVerified=true here anymore — the set-password
               // link flips it as part of the flow. Better Auth's
               // requireEmailVerification then blocks direct password login until
