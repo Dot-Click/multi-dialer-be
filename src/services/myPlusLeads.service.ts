@@ -443,10 +443,11 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
         continue;
       }
 
+      const currentStatus = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
       const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
       const existing = await prisma.contact.findFirst({
         where: { userId, source },
-        select: { id: true, miscValues: true, description: true },
+        select: { id: true, miscValues: true, description: true, tags: true },
       });
       if (existing) {
         // Backfill fields that were empty for contacts imported before the
@@ -462,14 +463,39 @@ export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlus
         if (hasNoDescription && listing.propertyDetails?.remarks) {
           patch.description = listing.propertyDetails.remarks;
         }
+        // Keep the MyPlusLeads status tag in sync with the current MPL state —
+        // a listing tagged Expired here may now be Withdrawn there. Strip any
+        // prior status tag and stamp today's, without touching user-added tags.
+        const KNOWN_STATUSES = new Set(["Expired", "Withdrawn", "Canceled", "FSBO", "FRBO", "PreForclosure", "PreForeclosure"]);
+        const keptTags = existing.tags.filter((t) => !KNOWN_STATUSES.has(t));
+        const desiredTags = ["MyPlusLeads", ...keptTags.filter((t) => t !== "MyPlusLeads"), currentStatus];
+        const tagsChanged =
+          desiredTags.length !== existing.tags.length ||
+          desiredTags.some((t, i) => t !== existing.tags[i]);
+        if (tagsChanged) patch.tags = desiredTags;
         if (Object.keys(patch).length > 0) {
           await prisma.contact.update({ where: { id: existing.id }, data: patch });
+        }
+        // Heal list membership: if the contact isn't in the correct status
+        // list right now (maybe removed manually, or landed in a different
+        // list under an old naming scheme), add it back.
+        const targetList = await getOrCreateList(currentStatus);
+        const listWithMembers = await prisma.contactList.findUnique({
+          where: { id: targetList.id },
+          select: { contactIds: true },
+        });
+        const memberIds = new Set((listWithMembers?.contactIds ?? []) as string[]);
+        if (!memberIds.has(existing.id)) {
+          await prisma.contactList.update({
+            where: { id: targetList.id },
+            data: { contactIds: { push: existing.id } },
+          });
         }
         skipped++;
         continue;
       }
 
-      const status = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
+      const status = currentStatus;
       const prop = listing.propertyAddress;
       const owner = listing.owner;
       const list = await getOrCreateList(status);
