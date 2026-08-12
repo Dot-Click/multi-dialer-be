@@ -1108,6 +1108,12 @@ export const sendEmail = async (
         includeUnsubscribe?: boolean;
         companyId?: string;
         replyToEmail?: string;
+
+        // MailerSend dashboard-hosted template. When set, `html` is
+        // ignored — MailerSend renders the template itself with these
+        // merge variables.
+        mailerSendTemplateId?: string;
+        variables?: Record<string, string | number | boolean | null>;
     }
 ) => {
     try {
@@ -1124,6 +1130,8 @@ export const sendEmail = async (
             includeUnsubscribe: tracking?.includeUnsubscribe,
             companyId: tracking?.companyId,
             replyToEmail: tracking?.replyToEmail,
+            mailerSendTemplateId: tracking?.mailerSendTemplateId,
+            variables: tracking?.variables,
         });
     }
     catch (error) {

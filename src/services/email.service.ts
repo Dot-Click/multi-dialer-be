@@ -35,7 +35,16 @@ export interface SendEmailOptions {
   userId?: string;
   contactId?: string;
   leadId?: string;
-  templateId?: string;
+  templateId?: string;   // Our EmailTemplate table row (for analytics)
+
+  // ─── MailerSend-hosted template send ──────────────────────────────────────
+  // When set + transport is MailerSend, the email is rendered from the
+  // dashboard-hosted template rather than our inline HTML. `variables` are
+  // the merge tag values. Ignored for SMTP transport (SMTP sends fall back
+  // to html/text). Distinct from `templateId` above, which is our own
+  // EmailTemplate row id — MailerSend's IDs live in their dashboard.
+  mailerSendTemplateId?: string;
+  variables?: Record<string, string | number | boolean | null>;
 }
 
 // SES v2 client (singleton) — retired in favor of MailerSend, kept here for
@@ -153,9 +162,18 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
       const emailParams = new EmailParams()
         .setFrom(sentFrom)
         .setTo([new Recipient(to)])
-        .setSubject(subject)
-        .setHtml(htmlBody)
-        .setText(text);
+        .setSubject(subject);
+
+      if (options.mailerSendTemplateId) {
+        // Dashboard-hosted template. MailerSend renders subject + html from
+        // the template itself; passing setSubject above is a safe fallback
+        // for the (rare) case where the template has no subject configured.
+        emailParams
+          .setTemplateId(options.mailerSendTemplateId)
+          .setPersonalization([{ email: to, data: options.variables ?? {} }]);
+      } else {
+        emailParams.setHtml(htmlBody).setText(text);
+      }
       if (replyTo) emailParams.setReplyTo(new Sender(replyTo));
 
       const response = await mailerSend.email.send(emailParams);
@@ -206,11 +224,18 @@ export async function sendEmail(options: SendEmailOptions) {
 
   // ── Log outcome to EmailLog ───────────────────────────────────────────────
   if (userId) {
+    // For MailerSend-hosted template sends, html/text are empty (the
+    // template is rendered server-side by MailerSend). Store a marker + the
+    // merge variables so the analytics dashboard still shows *something*
+    // meaningful instead of a blank content column.
+    const content = options.mailerSendTemplateId
+      ? `[MailerSend template ${options.mailerSendTemplateId}]\n${JSON.stringify(options.variables ?? {}, null, 2)}`
+      : (html || text);
     try {
       await prisma.emailLog.create({
         data: {
           to, from, subject,
-          content: html || text,
+          content,
           status:    result.success ? EmailStatus.SENT : EmailStatus.FAILED,
           error:     result.success ? null : (result.error ?? null),
           messageId: result.success ? (result.messageId ?? null) : null,

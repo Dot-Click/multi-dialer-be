@@ -12,6 +12,7 @@ import { sendEmail, welcomeTemp, agentInviteTemp, memberAddedTemp, memberRemoved
 import { emailFooter } from "../../utils/emailFooter";
 import { envConfig } from "../../lib/config";
 import { buildSetPasswordUrl } from "../../utils/setPasswordLink";
+import { buildVerifyEmailUrl } from "../../utils/verifyEmailLink";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
     apiVersion: "2026-04-22.dahlia",
@@ -188,30 +189,43 @@ export async function createUserInDb(payload: any) {
         },
     });
 
-    // Send invite/welcome email carrying a single-use set-password link
-    // (never a plaintext password). newUser.password is the bcrypt hash at
-    // this point — the link's signature is bound to that hash so once the
-    // user actually sets a new password the link automatically stops working
-    // without any DB dedup table.
+    // For admin/owner welcome (non-agent branch), we still use our inline
+    // template with a set-password link — MailerSend's Template Library only
+    // has agent-invite/reset/removed live so far; the rest of Jason's 12
+    // pre-zipped templates haven't been imported yet.
     const setPasswordUrl = buildSetPasswordUrl(newUser.email, hashedPassword);
 
     if (newUser.role === "AGENT" && rest.createdById) {
-        // Fetch admin name for the invite email and the member-added notification in one shot
-        prisma.user.findUnique({ where: { id: rest.createdById }, select: { id: true, email: true, fullName: true } })
-            .then(admin => {
+        // Fetch admin + their workspace name for the invite email and the
+        // member-added notification in one shot.
+        Promise.all([
+            prisma.user.findUnique({ where: { id: rest.createdById }, select: { id: true, email: true, fullName: true } }),
+            prisma.company.findFirst({ where: { userId: rest.createdById }, select: { companyName: true } }),
+        ])
+            .then(([admin, adminCompany]) => {
+                // Agent invite → MailerSend template "01 Welcome / Agent invite".
+                // Template expects a plaintext temp_password + an activate_url
+                // that flips emailVerified=true and redirects to login.
                 sendEmail(
                     newUser.email,
                     `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
-                    agentInviteTemp(
-                        newUser.fullName || "there",
-                        admin?.fullName || "your admin",
-                        newUser.email,
-                        setPasswordUrl,
-                    ),
-                    { userId: newUser.id },
+                    "", // ignored — MailerSend renders the template
+                    {
+                        userId: newUser.id,
+                        mailerSendTemplateId: envConfig.MAILERSEND_TEMPLATE_WELCOME_AGENT,
+                        variables: {
+                            first_name: (newUser.fullName || "there").split(" ")[0],
+                            inviter_name: admin?.fullName || "your admin",
+                            email: newUser.email,
+                            temp_password: password,
+                            company_name: adminCompany?.companyName || "your workspace",
+                            activate_url: buildVerifyEmailUrl(newUser.email),
+                        },
+                    },
                 ).catch(err => console.error("[UserService] Failed to send agent invite email:", err?.message ?? err));
 
-                // Member-added notification to the admin
+                // Member-added notification to the admin (still our inline
+                // template — no MailerSend equivalent imported yet)
                 if (admin) {
                     sendEmail(
                         admin.email,
@@ -661,16 +675,32 @@ export async function deleteUserFromDb(id: string) {
 
     await prisma.user.delete({ where: { id } });
 
-    // Notify the owning admin when one of their agents is removed
+    // Notify the owning admin when one of their agents is removed —
+    // MailerSend template "03 Team member removed" (client audit: use as-is).
     if (existing.role === "AGENT" && existing.createdById) {
-        prisma.user.findUnique({ where: { id: existing.createdById }, select: { id: true, email: true, fullName: true } })
-            .then(admin => {
+        const removedAt = new Date();
+        Promise.all([
+            prisma.user.findUnique({ where: { id: existing.createdById }, select: { id: true, email: true, fullName: true } }),
+            prisma.company.findFirst({ where: { userId: existing.createdById }, select: { companyName: true } }),
+        ])
+            .then(([admin, adminCompany]) => {
                 if (!admin) return;
                 return sendEmail(
                     admin.email,
                     "A team member has been removed from your Slingvo workspace",
-                    memberRemovedTemp(admin.fullName || "there", existing.fullName || existing.email, existing.email),
-                    { userId: admin.id },
+                    "", // ignored — MailerSend renders the template
+                    {
+                        userId: admin.id,
+                        mailerSendTemplateId: envConfig.MAILERSEND_TEMPLATE_MEMBER_REMOVED,
+                        variables: {
+                            removed_by: admin.fullName || "An administrator",
+                            company_name: adminCompany?.companyName || "your workspace",
+                            member_name: existing.fullName || existing.email,
+                            member_email: existing.email,
+                            removed_at: removedAt.toISOString().replace("T", " ").slice(0, 16) + " UTC",
+                            manage_url: `${envConfig.FRONTEND_URL}/admin/user-management`,
+                        },
+                    },
                 );
             })
             .catch(err => console.error("[UserService] Failed to send member-removed email:", err?.message ?? err));

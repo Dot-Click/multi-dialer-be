@@ -21,6 +21,14 @@ export const envConfig = {
   // Not yet set — until it is, the footer omits the <img> rather than showing
   // a broken-image icon in every outgoing email.
   EMAIL_LOGO_URL: process.env.EMAIL_LOGO_URL,
+
+  // MailerSend-hosted template IDs (from the dashboard's Template Library).
+  // Each defaults to the ID the client has already imported and confirmed
+  // live; override via env when the ID changes or a new template is
+  // swapped in.
+  MAILERSEND_TEMPLATE_WELCOME_AGENT: process.env.MAILERSEND_TEMPLATE_WELCOME_AGENT || "jpzkmgq5mrng059v",
+  MAILERSEND_TEMPLATE_PASSWORD_RESET: process.env.MAILERSEND_TEMPLATE_PASSWORD_RESET || "3z0vklo5d1747qrx",
+  MAILERSEND_TEMPLATE_MEMBER_REMOVED: process.env.MAILERSEND_TEMPLATE_MEMBER_REMOVED || "7dnvo4dywj645r86",
   GROK_API_KEY: process.env.GROK_API_KEY,
   EMAIL_USER: process.env.EMAIL_USER,
 

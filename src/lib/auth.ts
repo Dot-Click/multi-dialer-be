@@ -124,35 +124,23 @@ export const auth = betterAuth({
       const resetUrl = token
         ? `${envConfig.FRONTEND_URL}/admin/create-password?token=${token}`
         : url;
+
+      // MailerSend template "02 Password reset" (client audit: use as-is).
+      // Better Auth's default reset-token TTL is 60 minutes.
       await sendEmail(
         user.email,
         "Reset Your Slingvo Password",
-        `
-<div style="font-family:Arial,sans-serif;background:#f4f6f8;padding:20px;">
-  <div style="max-width:600px;margin:auto;background:#fff;border-radius:10px;padding:30px;box-shadow:0 2px 10px rgba(0,0,0,.1);">
-    <div style="text-align:center;margin-bottom:20px;">
-      <h1 style="color:#2c3e50;margin:0;">Slingvo</h1>
-    </div>
-    <p style="font-size:16px;color:#333;">Hi <strong>${displayName}</strong>,</p>
-    <p style="font-size:15px;color:#555;">
-      We received a request to reset the password for your account (<strong>${user.email}</strong>).
-      Click the button below to choose a new password. This link expires in <strong>1 hour</strong>.
-    </p>
-    <div style="text-align:center;margin:30px 0;">
-      <a href="${resetUrl}"
-         style="background:#FFCA06;color:#1a1a1a;padding:14px 32px;border-radius:8px;
-                text-decoration:none;font-size:16px;font-weight:bold;display:inline-block;">
-        Reset Password
-      </a>
-    </div>
-    <p style="font-size:14px;color:#666;">
-      If you didn't request a password reset, you can safely ignore this email — your password will not change.
-    </p>
-
-    <hr style="border:none;border-top:1px solid #eee;margin:24px 0;"/>
-    <p style="font-size:12px;color:#999;text-align:center;">© 2026 Slingvo. All rights reserved.</p>
-  </div>
-</div>`,
+        "", // ignored — MailerSend renders the template
+        {
+          userId: user.id,
+          mailerSendTemplateId: envConfig.MAILERSEND_TEMPLATE_PASSWORD_RESET,
+          variables: {
+            first_name: displayName.split(" ")[0],
+            email: user.email,
+            expiry_minutes: 60,
+            reset_url: resetUrl,
+          },
+        },
       );
       console.log(`[Auth] Password reset email sent to ${user.email}`);
     },
@@ -396,31 +384,37 @@ export const auth = betterAuth({
 
         if (role === "AGENT" && createdById && body?.email) {
           try {
-            const [newUser, admin] = await Promise.all([
+            const [newUser, admin, adminCompany] = await Promise.all([
               prisma.user.findUnique({ where: { email: body.email } }),
               prisma.user.findUnique({
                 where: { id: createdById },
                 select: { id: true, email: true, fullName: true },
               }),
+              prisma.company.findFirst({ where: { userId: createdById }, select: { companyName: true } }),
             ]);
 
             if (newUser) {
-              // GA 4.0 client audit finding: the previous flow emailed the
-              // plaintext password from Better Auth's body. We now send a
-              // single-use set-password link instead — the user picks their
-              // own password on our server-rendered page, which also flips
-              // emailVerified to true in the same step (so the separate
-              // verify-email flow is no longer needed for this path).
+              // Switched to MailerSend dashboard-hosted template
+              // "01 Welcome / Agent invite" (client audit: use as-is).
+              // The template expects a plaintext temp_password + an
+              // activate_url that flips emailVerified=true and lands the
+              // user on the login page.
               sendEmail(
                 newUser.email,
                 `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
-                agentInviteTemp(
-                  newUser.fullName || "there",
-                  admin?.fullName || "your admin",
-                  newUser.email,
-                  buildSetPasswordUrl(newUser.email, newUser.password),
-                ),
-                { userId: newUser.id },
+                "", // ignored — MailerSend renders the template
+                {
+                  userId: newUser.id,
+                  mailerSendTemplateId: envConfig.MAILERSEND_TEMPLATE_WELCOME_AGENT,
+                  variables: {
+                    first_name: (newUser.fullName || "there").split(" ")[0],
+                    inviter_name: admin?.fullName || "your admin",
+                    email: newUser.email,
+                    temp_password: body.password || "",
+                    company_name: adminCompany?.companyName || "your workspace",
+                    activate_url: buildVerifyEmailUrl(newUser.email),
+                  },
+                },
               ).catch((err: any) => console.error("[Auth] Failed to send agent invite email:", err?.message ?? err));
 
               if (admin) {
