@@ -45,7 +45,7 @@ export const startUserLifecycleJob = () => {
           from: envConfig.MAILERSEND_FROM_EMAIL || "noreply@slingvo.com",
           subject: "We haven't seen you in a while — Slingvo",
           text: `Hi ${user.fullName || "there"}, it's been a few days since you logged in to Slingvo.`,
-          html: inactivityNudgeTemp(user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/login`),
+          html: inactivityNudgeTemp(user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/login`, user.email),
           userId: user.id,
         }).catch(err => console.error(`[UserLifecycle] Inactivity email failed for ${maskEmail(user.email)}:`, err?.message));
         sent++;
@@ -91,7 +91,7 @@ export const startUserLifecycleJob = () => {
           from: envConfig.MAILERSEND_FROM_EMAIL || "noreply@slingvo.com",
           subject: "Your Slingvo account is ready — activate it now",
           text: `Hi ${user.fullName || "there"}, your Slingvo account is set up but you haven't subscribed yet.`,
-          html: subscribeReminderTemp(user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/billing`),
+          html: subscribeReminderTemp(user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/billing`, user.email),
           userId: user.id,
         }).catch(err => console.error(`[UserLifecycle] Subscribe reminder failed for ${maskEmail(user.email)}:`, err?.message));
         sent++;
@@ -134,7 +134,7 @@ export const startUserLifecycleJob = () => {
           from: envConfig.MAILERSEND_FROM_EMAIL || "noreply@slingvo.com",
           subject: "Come back to Slingvo — resubscribe anytime",
           text: `Hi ${sub.user.fullName || "there"}, your Slingvo subscription has ended. Resubscribe to regain access.`,
-          html: reactivationTemp(sub.user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/billing`),
+          html: reactivationTemp(sub.user.fullName || "there", `${envConfig.FRONTEND_URL}/admin/billing`, sub.user.email),
           userId: sub.user.id,
         }).catch(err => console.error(`[UserLifecycle] Reactivation email failed for ${maskEmail(sub.user.email)}:`, err?.message));
         sent++;

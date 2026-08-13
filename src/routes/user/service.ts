@@ -8,8 +8,8 @@ import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.serv
 import { subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { sendEmail, welcomeTemp, agentInviteTemp, memberAddedTemp, memberRemovedTemp, roleChangedTemp, emailChangedByAdminTemp, accountClosedTemp } from "../../utils/email";
-import { emailFooter } from "../../utils/emailFooter";
+import { sendEmail, welcomeTemp, memberAddedTemp, roleChangedTemp, emailChangedByAdminTemp, accountClosedTemp } from "../../utils/email";
+import { emailShell, emailParagraph } from "../../utils/emailShell";
 import { envConfig } from "../../lib/config";
 import { buildSetPasswordUrl } from "../../utils/setPasswordLink";
 import { buildVerifyEmailUrl } from "../../utils/verifyEmailLink";
@@ -303,40 +303,18 @@ export async function sendPaymentSetupEmail(user: { id: string; email: string; f
     await sendEmail(
         user.email,
         "Complete Your Slingvo Account Setup — Payment Required",
-        `
-<div style="font-family: Arial, sans-serif; background:#f4f6f8; padding:20px;">
-  <div style="max-width:600px; margin:auto; background:#ffffff; border-radius:10px; padding:30px; box-shadow:0 2px 10px rgba(0,0,0,0.1);">
-
-    <h2 style="color:#2c3e50; margin:0 0 20px;">Complete your payment setup</h2>
-
-    <p style="font-size:16px; color:#333;">Hi <strong>${displayName}</strong>,</p>
-
-    <p style="font-size:15px; color:#555;">
-      Your Slingvo account has been created by your administrator. To activate it, please complete your payment setup by clicking the button below.
-    </p>
-
-    <div style="text-align:center; margin:30px 0;">
-      <a href="${session.url}"
-         style="background:#FFCA06; color:#1a1a1a; padding:14px 32px; border-radius:8px; text-decoration:none; font-size:16px; font-weight:bold; display:inline-block;">
-        Complete Payment Setup
-      </a>
-    </div>
-
-    <p style="font-size:14px; color:#666;">
-      Your account includes a <strong>30-day free trial</strong> — no charge until the trial ends. You can cancel anytime.
-    </p>
-
-    <p style="font-size:14px; color:#666;">
-      If the button doesn't work, copy and paste this link into your browser:<br/>
-      <a href="${session.url}" style="color:#1D85F0; word-break:break-all;">${session.url}</a>
-    </p>
-
-    <hr style="border:none; border-top:1px solid #eee; margin:24px 0;"/>
-    <p style="font-size:12px; color:#999; text-align:center;">© 2026 Slingvo. All rights reserved.</p>
-  </div>
-  ${emailFooter()}
-</div>
-        `.trim()
+        emailShell({
+            title: "Complete Your Slingvo Account Setup",
+            preheader: "Complete your Slingvo payment setup to activate your account.",
+            badgeLabel: "Account update",
+            heading: "Complete your payment setup.",
+            bodyHtml:
+                emailParagraph(`Hi <strong>${displayName}</strong>, your Slingvo account has been created by your administrator. To activate it, please complete your payment setup by clicking the button below.`) +
+                emailParagraph(`Your account includes a <strong>30-day free trial</strong> — no charge until the trial ends. You can cancel anytime.`),
+            buttonText: "Complete Payment Setup",
+            buttonUrl: session.url,
+            footnote: `If the button doesn't work, copy and paste this link into your browser: <a href="${session.url}" style="color:#2D5BE3;word-break:break-all;">${session.url}</a>`,
+        })
     );
 
     console.log(`[UserService] Payment setup email sent to ${user.email} (Stripe session: ${session.id})`);

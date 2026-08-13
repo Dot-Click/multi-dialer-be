@@ -30,9 +30,10 @@ function page(title: string, message: string): string {
  * GET /api/user/verify-email?email=...&sig=...
  * Verifies the HMAC signature (same stateless pattern as the unsubscribe
  * link), marks the account emailVerified, then redirects to login. Used by
- * the "Verify Email" button in agentInviteTemp — admin-created accounts
- * (via Better Auth's /admin/create-user) never go through Better Auth's own
- * verification flow, so this is the only path that sets emailVerified for them.
+ * the "activate_url" variable in the agent-invite MailerSend template —
+ * admin-created accounts (via Better Auth's /admin/create-user) never go
+ * through Better Auth's own verification flow, so this is the only path
+ * that sets emailVerified for them.
  */
 export const handleVerifyEmail = async (req: Request, res: Response): Promise<void> => {
   const email = String(req.query.email || "");
