@@ -7,7 +7,7 @@ import { EmailStatus } from "@prisma/client";
 import { getSuppression, buildUnsubscribeUrl } from "../utils/emailSuppression";
 import { decryptSmtpPassword } from "../utils/encryption";
 import { maskEmail } from "../utils/maskEmail";
-import { emailFooter } from "../utils/emailFooter";
+import { emailBrandedFooter, LOGO_URL as BRAND_LOGO_URL } from "../utils/emailShell";
 
 export interface SendEmailOptions {
   to: string;
@@ -281,42 +281,67 @@ export async function sendEmail(options: SendEmailOptions) {
 }
 
 /**
- * Generates a premium HTML email template.
+ * Generates the branded HTML shell used by the appointment/task reminder
+ * jobs and Lead Store owner notifications. These shipped as plain Arial
+ * on #f4f4f4 with a generic footer — nothing like the branded emailShell.ts
+ * templates the rest of the app sends (design audit finding). Kept as a
+ * (title, content) function so existing callers don't need to change; the
+ * `.info-card`/`.info-item`/`.info-label`/`.info-value`/`.highlight` classes
+ * their content HTML already uses are restyled here to the same palette
+ * (cream background, yellow accent, black footer) as emailShell.ts.
  */
 export function getBaseEmailTemplate(title: string, content: string) {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f7fa; }
-        .container { max-width: 600px; margin: 40px auto; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1); background-color: #ffffff; border: 1px solid #e2e8f0; }
-        .content { padding: 40px; background-color: #ffffff; }
-        .content h2 { color: #1f2937; margin-top: 0; font-size: 22px; font-weight: 600; }
-        .content p { color: #4b5563; font-size: 16px; margin-bottom: 24px; line-height: 1.8; }
-        .info-card { background-color: #f8fafc; border-radius: 12px; padding: 24px; border: 1px solid #e2e8f0; margin: 30px 0; }
-        .info-item { margin-bottom: 12px; font-size: 15px; display: flex; align-items: center; }
-        .info-label { font-weight: 700; color: #64748b; width: 120px; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }
-        .info-value { color: #1e293b; font-weight: 500; flex: 1; }
-        .footer { background-color: #f8fafc; color: #94a3b8; padding: 30px; text-align: center; font-size: 13px; border-top: 1px solid #f1f5f9; }
-        .footer p { margin: 5px 0; }
-        .highlight { color: #4f46e5; font-weight: 600; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="content">
-          <h2>${title}</h2>
-          ${content}
-        </div>
-        <div class="footer">
-          <p>&copy; ${new Date().getFullYear()} Slingvo. All rights reserved.</p>
-          <p>Professional Appointment Management</p>
-        </div>
-      </div>
-        ${emailFooter()}
+  return `<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title}</title>
+<style>
+  body { margin:0; padding:0; background-color:#F5F1E8; font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; }
+  .content h2 { font-family:'Outfit','Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; color:#1A1A1A; margin:0 0 16px 0; font-size:24px; font-weight:800; }
+  .content p { color:#3D3D3D; font-size:16px; margin-bottom:16px; line-height:26px; }
+  .info-card { background-color:#FFFBF3; border-left:4px solid #FACC15; border-radius:0 8px 8px 0; padding:20px 22px; margin:22px 0; }
+  .info-item { margin-bottom:10px; font-size:14px; }
+  .info-label { font-weight:700; color:#8A8A8A; text-transform:uppercase; font-size:12px; letter-spacing:0.5px; display:inline-block; min-width:90px; }
+  .info-value { color:#1A1A1A; font-weight:600; }
+  .highlight { color:#B45309; }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:#F5F1E8;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#F5F1E8;">
+    <tr>
+      <td align="center" style="padding:28px 12px 40px 12px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px;max-width:600px;">
+          <tr>
+            <td align="left" style="padding:4px 0 20px 4px;">
+              <a href="https://slingvo.com" style="text-decoration:none;"><img src="${BRAND_LOGO_URL}" width="150" alt="Slingvo" style="width:150px;height:auto;display:block;border:0;" /></a>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#FFFFFF;border-radius:14px;border:1px solid #E6E1D6;overflow:hidden;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td style="height:5px;background-color:#FACC15;font-size:0;line-height:0;">&nbsp;</td>
+                </tr>
+                <tr>
+                  <td class="content" style="padding:36px 40px 40px 40px;">
+                    <h2>${title}</h2>
+                    ${content}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0;">
+              ${emailBrandedFooter()}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
-    </html>
-  `;
+</html>`;
 }

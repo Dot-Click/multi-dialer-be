@@ -11,7 +11,7 @@ import { envConfig } from "../lib/config";
 // template's own convention) so this HTML would also work unmodified if
 // ever uploaded as a literal MailerSend template later.
 
-const LOGO_URL = envConfig.EMAIL_LOGO_URL
+export const LOGO_URL = envConfig.EMAIL_LOGO_URL
   || (envConfig.BACKEND_URL ? `${envConfig.BACKEND_URL.replace(/\/$/, "")}/slingvo-logo.png` : "");
 
 /** Simple {{key}} -> value substitution. Missing keys are left as-is. */
@@ -87,6 +87,39 @@ export interface EmailShellOptions {
    * that shouldn't carry an unsubscribe link at all. */
   unsubscribeUrl?: string;
   preferencesUrl?: string;
+}
+
+/**
+ * The branded black footer (SLINGVO wordmark, contact info, postal address,
+ * copyright, optional unsubscribe row) — extracted so getBaseEmailTemplate()
+ * in email.service.ts can reuse the exact same footer instead of the plain
+ * "© year Slingvo" line it shipped with (mail-tester/design audit finding:
+ * those templates weren't using the branded system at all).
+ */
+export function emailBrandedFooter(unsubRowHtml: string = ""): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:20px;background-color:#000000;border-radius:14px;">
+  <tr>
+    <td class="pad" style="padding:28px 40px 26px 40px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+      <p style="margin:0 0 12px 0;font-family:'Outfit','Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#FACC15;letter-spacing:0.4px;">SLINGVO</p>
+      <p style="margin:0 0 12px 0;font-size:13px;line-height:21px;color:#C9C9C9;">
+        Questions? Reply to this email, or reach us at<br />
+        <a href="mailto:support@slingvo.com" style="color:#FACC15;text-decoration:none;">support@slingvo.com</a>
+        <span style="color:#4A4A4A;"> &nbsp;·&nbsp; </span>
+        <a href="tel:+17372379535" style="color:#FACC15;text-decoration:none;">(737) 237-9535</a>
+      </p>
+      <p style="margin:0 0 16px 0;font-size:12px;line-height:19px;color:#8A8A8A;">
+        Slingvo LLC · 102 Wonder World Dr, San Marcos, TX 78666
+      </p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td style="border-top:1px solid #262626;padding-top:14px;font-size:12px;line-height:19px;color:#8A8A8A;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">© 2026 Slingvo. All rights reserved. &nbsp;·&nbsp;
+            <a href="https://slingvo.com" style="color:#8A8A8A;text-decoration:underline;">slingvo.com</a>${unsubRowHtml}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>`;
 }
 
 export function emailShell(opts: EmailShellOptions): string {
@@ -171,29 +204,7 @@ export function emailShell(opts: EmailShellOptions): string {
           </tr>
           <tr>
             <td style="padding:0;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:20px;background-color:#000000;border-radius:14px;">
-                <tr>
-                  <td class="pad" style="padding:28px 40px 26px 40px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
-                    <p style="margin:0 0 12px 0;font-family:'Outfit','Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#FACC15;letter-spacing:0.4px;">SLINGVO</p>
-                    <p style="margin:0 0 12px 0;font-size:13px;line-height:21px;color:#C9C9C9;">
-          Questions? Reply to this email, or reach us at<br />
-          <a href="mailto:support@slingvo.com" style="color:#FACC15;text-decoration:none;">support@slingvo.com</a>
-          <span style="color:#4A4A4A;"> &nbsp;·&nbsp; </span>
-          <a href="tel:+17372379535" style="color:#FACC15;text-decoration:none;">(737) 237-9535</a>
-        </p>
-                    <p style="margin:0 0 16px 0;font-size:12px;line-height:19px;color:#8A8A8A;">
-          Slingvo LLC · 102 Wonder World Dr, San Marcos, TX 78666
-        </p>
-                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-                      <tr>
-                        <td style="border-top:1px solid #262626;padding-top:14px;font-size:12px;line-height:19px;color:#8A8A8A;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">© 2026 Slingvo. All rights reserved. &nbsp;·&nbsp;
-                          <a href="https://slingvo.com" style="color:#8A8A8A;text-decoration:underline;">slingvo.com</a>${unsubRow}
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
+              ${emailBrandedFooter(unsubRow)}
             </td>
           </tr>
         </table>
