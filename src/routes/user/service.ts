@@ -314,7 +314,8 @@ export async function sendPaymentSetupEmail(user: { id: string; email: string; f
             buttonText: "Complete Payment Setup",
             buttonUrl: session.url,
             footnote: `If the button doesn't work, copy and paste this link into your browser: <a href="${session.url}" style="color:#2D5BE3;word-break:break-all;">${session.url}</a>`,
-        })
+        }),
+        { userId: user.id },
     );
 
     console.log(`[UserService] Payment setup email sent to ${user.email} (Stripe session: ${session.id})`);

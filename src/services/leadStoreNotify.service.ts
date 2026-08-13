@@ -26,6 +26,7 @@ export async function notifyClients(title: string, description: string, type: st
           subject: title,
           text: description,
           html: getBaseEmailTemplate(title, `<p>${description}</p>`),
+          userId: owner.id,
         }).catch((err) => console.error(`[LeadStore] Failed to email owner ${owner.email}:`, err));
       }
     }),

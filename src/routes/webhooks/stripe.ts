@@ -178,7 +178,8 @@ async function deactivateAgentSeatsForUncollectibleInvoice(invoice: any): Promis
           <p>Hi ${agent.createdBy.fullName ?? "there"},</p>
           <p>We were unable to collect payment for the extra agent seat billed for <strong>${agent.fullName ?? agent.email}</strong>. This agent's account has been deactivated.</p>
           <p>Update your payment method and re-purchase the seat from User Management to restore access.</p>
-        </div>`
+        </div>`,
+        { userId: agent.createdBy.id },
       ).catch((err: any) => console.error(`[Stripe Webhook] Failed to send seat-payment-failed email to ${agent.createdBy?.email}:`, err.message));
     }
   }

@@ -97,6 +97,7 @@ export const startAppointmentReminderJob = () => {
                                 subject: `⏰ Reminder: ${event.title}`,
                                 text: `Reminder: ${event.title} starting soon.`,
                                 html: htmlContent,
+                                userId: event.assignToId,
                             });
                         } catch (e) { console.error("Agent email failed:", e); }
                     }
@@ -133,6 +134,7 @@ export const startAppointmentReminderJob = () => {
                             subject: `⏰ Organizer Reminder: ${event.title}`,
                             text: `Reminder: ${event.title} you organized is starting soon.`,
                             html: htmlContent,
+                            userId: event.assignById,
                         });
                     } catch (e) { console.error("Admin organizer email failed:", e); }
                 }
@@ -209,6 +211,7 @@ export const startAppointmentReminderJob = () => {
                 subject: `⏰ Task due soon: ${task.title}`,
                 text: `Reminder: your task "${task.title}" is due at ${dueStr}.`,
                 html: htmlContent,
+                userId: task.agentId,
               });
             } catch (e) {
               console.error(`[Job] Task reminder email failed for task ${task.id}:`, e);

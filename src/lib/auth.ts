@@ -75,6 +75,7 @@ export const auth = betterAuth({
           newEmail,
           "Confirm your new Slingvo email address",
           emailChangeConfirmationTemp(user.fullName ?? "there", user.email, newEmail, url),
+          { userId: user.id },
         );
       },
     },
@@ -111,6 +112,7 @@ export const auth = betterAuth({
           user.email,
           url,
         ),
+        { userId: user.id },
       );
     },
   },
@@ -337,7 +339,7 @@ export const auth = betterAuth({
         try {
           const companiesToNotify = await prisma.company.findMany({
             where: { newUserSignup: true, email: { not: null } },
-            select: { email: true },
+            select: { email: true, userId: true },
           });
 
           if (companiesToNotify.length > 0) {
@@ -347,7 +349,7 @@ export const auth = betterAuth({
             // Send emails asynchronously (fire and forget)
             companiesToNotify.forEach((company) => {
               if (company.email && user) {
-                sendEmail(company.email, "New User Signed Up on Slingvo", emailHtml)
+                sendEmail(company.email, "New User Signed Up on Slingvo", emailHtml, { userId: company.userId })
                   .catch(err => console.error("Failed to send signup notification:", err));
               }
             });
@@ -513,7 +515,7 @@ export const auth = betterAuth({
         try {
           const companiesToNotify = await prisma.company.findMany({
             where: { loginAlerts: true, email: { not: null } },
-            select: { email: true },
+            select: { email: true, userId: true },
           });
 
           if (companiesToNotify.length > 0) {
@@ -523,7 +525,7 @@ export const auth = betterAuth({
             // Send emails asynchronously (fire and forget)
             companiesToNotify.forEach((company) => {
               if (company.email) {
-                sendEmail(company.email, "User Logged into Slingvo", emailHtml)
+                sendEmail(company.email, "User Logged into Slingvo", emailHtml, { userId: company.userId })
                   .catch(err => console.error("Failed to send login alert:", err));
               }
             });
