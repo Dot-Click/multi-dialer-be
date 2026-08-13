@@ -97,3 +97,35 @@ export const applyDisposition: RequestHandler = async (req, res) => {
         errorResponse(res, { message: error.message });
     }
 };
+
+export const getContactDispositions: RequestHandler = async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const dispositionIds = await DispositionService.getContactDispositions(contactId);
+        successResponse(res, 200, "Contact dispositions fetched", { dispositionIds });
+    } catch (error: any) {
+        errorResponse(res, { message: error.message });
+    }
+};
+
+export const setContactDispositions: RequestHandler = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            errorResponse(res, { message: "Unauthorized" }, 401);
+            return;
+        }
+
+        const { contactId } = req.params;
+        const { dispositionIds } = req.body;
+        if (!Array.isArray(dispositionIds)) {
+            errorResponse(res, { message: "dispositionIds must be an array" }, 400);
+            return;
+        }
+
+        const result = await DispositionService.setContactDispositions(contactId, dispositionIds, userId);
+        successResponse(res, 200, "Contact dispositions updated", { dispositionIds: result });
+    } catch (error: any) {
+        errorResponse(res, { message: error.message });
+    }
+};

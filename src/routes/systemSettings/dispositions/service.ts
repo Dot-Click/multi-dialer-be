@@ -420,4 +420,79 @@ export class DispositionService {
 
         return { success: true, folderId: resolvedFolderId };
     }
+
+    // ── Multiple simultaneous "tag" dispositions ────────────────────────────
+    // Separate from applyDisposition/Contact.disposition above: those model
+    // the single folder-moving disposition a contact can be "in" at a time
+    // (e.g. Trash). This models an independent set of non-exclusive tags
+    // (e.g. "Hot Lead" + "Follow Up") a contact can carry simultaneously —
+    // QA finding: the picker UI could only ever hold one selection because
+    // Contact.disposition is a scalar column, not because of a UI bug.
+
+    static async getContactDispositions(contactId: string): Promise<string[]> {
+        const rows = await prisma.contactDisposition.findMany({
+            where: { contactId },
+            select: { dispositionId: true },
+        });
+        return rows.map(r => r.dispositionId);
+    }
+
+    static async setContactDispositions(contactId: string, dispositionIds: string[], appliedById: string): Promise<string[]> {
+        return prisma.$transaction(async (tx) => {
+            const existing = await tx.contactDisposition.findMany({
+                where: { contactId },
+                select: { dispositionId: true },
+            });
+            const existingIds = new Set(existing.map(e => e.dispositionId));
+            const nextIds = new Set(dispositionIds);
+
+            const toRemove = [...existingIds].filter(id => !nextIds.has(id));
+            const toAdd = dispositionIds.filter(id => !existingIds.has(id));
+
+            if (toRemove.length === 0 && toAdd.length === 0) {
+                return dispositionIds;
+            }
+
+            if (toRemove.length > 0) {
+                await tx.contactDisposition.deleteMany({
+                    where: { contactId, dispositionId: { in: toRemove } },
+                });
+            }
+            if (toAdd.length > 0) {
+                await tx.contactDisposition.createMany({
+                    data: toAdd.map(dispositionId => ({ contactId, dispositionId, appliedById })),
+                    skipDuplicates: true,
+                });
+            }
+
+            // Mirror into ContactActivityLog, same as applyDisposition does,
+            // so tag changes show up in the contact detail page's History tab.
+            const changedIds = [...toAdd, ...toRemove];
+            if (changedIds.length > 0) {
+                const changedDispositions = await tx.disposition.findMany({
+                    where: { id: { in: changedIds } },
+                    select: { id: true, label: true },
+                });
+                const labelOf = (id: string) => changedDispositions.find(d => d.id === id)?.label ?? id;
+                const parts = [
+                    ...toAdd.map(id => `+${labelOf(id)}`),
+                    ...toRemove.map(id => `-${labelOf(id)}`),
+                ];
+                await tx.contactActivityLog.create({
+                    data: {
+                        contactId,
+                        userId: appliedById,
+                        action: "Updated dispositions",
+                        note: parts.join(", "),
+                    },
+                });
+            }
+
+            const result = await tx.contactDisposition.findMany({
+                where: { contactId },
+                select: { dispositionId: true },
+            });
+            return result.map(r => r.dispositionId);
+        });
+    }
 }
