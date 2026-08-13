@@ -983,6 +983,48 @@ export async function ensureTrashFolder(userId: string, tx?: any) {
   }
 }
 
+/**
+ * Moves contacts into the account's system "Trash" folder — the same
+ * treatment applyDisposition() gives contacts tagged with the protected
+ * "Trash" disposition (systemSettings/dispositions/service.ts): removed from
+ * every list, folderIds set to just the Trash folder. Reversible (move to a
+ * different folder/list later), unlike deleteContactFromDb's hard delete.
+ * This is what the "Delete"/"Delete Selected" buttons use by default now —
+ * QA found neither actually moved anything to Trash before this.
+ */
+export async function moveContactsToTrash(contactIds: string[], userId: string, tx?: any): Promise<string | null> {
+  const client = tx || prisma;
+  if (contactIds.length === 0) return null;
+
+  // Trash is scoped to the admin/tenant, same resolution dispositions'
+  // getDispositions() uses — an agent's deleted contacts land in their
+  // admin's Trash folder, not a separate per-agent one.
+  const performer = await client.user.findUnique({
+    where: { id: userId },
+    select: { role: true, createdById: true },
+  });
+  const adminId = (performer?.role === "AGENT" && performer.createdById) ? performer.createdById : userId;
+
+  const trashFolder = await ensureTrashFolder(adminId, tx);
+  if (!trashFolder) throwHttp(500, "Failed to resolve Trash folder");
+
+  const lists = await client.contactList.findMany({
+    where: { contactIds: { hasSome: contactIds } },
+    select: { id: true, contactIds: true },
+  });
+  await Promise.all(lists.map((l: any) => client.contactList.update({
+    where: { id: l.id },
+    data: { contactIds: l.contactIds.filter((id: string) => !contactIds.includes(id)) },
+  })));
+
+  await client.contact.updateMany({
+    where: { id: { in: contactIds } },
+    data: { folderIds: [trashFolder.id] },
+  });
+
+  return trashFolder.id;
+}
+
 export async function createContactFolderInDb(
   payload: { name: string; listIds: string[]; contactIds?: string[]; parentId?: string },
   userId: string,
@@ -2913,28 +2955,23 @@ export async function bulkDeleteContactsInDb(
       return { success: true, count: ids.length, mode: 'removed_from_list', purged: toPurge.length };
     }
 
-    // ── CASE 3: Hard Delete or Smart Safe-Unlink ────────────────────────────────
+    // ── CASE 3: Hard Delete or Move to Trash ────────────────────────────────────
     if (!hardDelete) {
-      // SMART SAFE-UNLINK: If no folderId was provided, remove from ALL folders
-      // but keep the contact record. This prevents accidental global purge.
-      const contacts = await tx.contact.findMany({
-        where: { id: { in: contactIds } },
-        select: { id: true, folderIds: true }
-      });
-
-      await Promise.all(contacts.map((contact) => tx.contact.update({
-        where: { id: contact.id },
-        data: { folderIds: [] } // Unassign from all folders
-      })));
+      // No folderId/listId in context (e.g. deleting from "All Contacts") —
+      // move to the Trash folder instead of just clearing folderIds. QA
+      // finding: the old "safe-unassign" here left the contact fully live
+      // and queryable, so it silently reappeared on the next refetch even
+      // though Redux had optimistically removed it from view.
+      const trashFolderId = await moveContactsToTrash(contactIds, userId, tx);
 
       await tx.auditLog.create({
         data: {
           userId,
-          action: `Bulk safe-unassigned ${contactIds.length} contacts from all folders`,
+          action: `Bulk moved ${contactIds.length} contacts to Trash`,
         }
       });
 
-      return { success: true, count: contactIds.length, mode: 'safe_unassign' };
+      return { success: true, count: contactIds.length, mode: 'moved_to_trash', folderId: trashFolderId };
     }
 
     // ── CASE 4: Explicit Hard Delete (Global Purge) ──────────────────────────────

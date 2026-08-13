@@ -271,6 +271,7 @@ model User {
   phoneNumberSubscription PhoneNumberSubscription?
   agentSeatSubscription   AgentSeatSubscription?
   dispositionLogs         ContactDispositionLog[]
+  currentDispositionsApplied ContactDisposition[]
   dialListSessions        DialListSession[]
   contactActionPlansAssignedTo ContactActionPlan[] @relation("ContactActionPlanAssignedTo")
   contactActionPlansAssignedBy ContactActionPlan[] @relation("ContactActionPlanAssignedBy")
@@ -473,6 +474,7 @@ model Contact {
   emailLogs       EmailLog[]
   smsLogs         SmsLog[]
   dispositionLogs ContactDispositionLog[]
+  currentDispositions ContactDisposition[]
   activityLogs    ContactActivityLog[]
   actionPlanAssignments ContactActionPlan[]
 
@@ -784,6 +786,7 @@ model Disposition {
 
   callRecords     CallRecord[]
   dispositionLogs ContactDispositionLog[]
+  currentOnContacts ContactDisposition[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2056,6 +2059,31 @@ model ContactDispositionLog {
   createdAt DateTime @default(now())
 
   @@map("contact_disposition_logs")
+}
+
+// Currently-applied dispositions for a contact — a contact can carry more
+// than one tag-style disposition at once (e.g. "Hot Lead" + "Follow Up"),
+// unlike Contact.disposition (a single scalar, kept for the one folder-moving
+// disposition a contact can be "in" at a time, e.g. Trash). This is the
+// "current state" counterpart to ContactDispositionLog's append-only history.
+model ContactDisposition {
+  id String @id @default(cuid())
+
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  dispositionId String
+  disposition   Disposition @relation(fields: [dispositionId], references: [id], onDelete: Cascade)
+
+  appliedById String
+  appliedBy   User   @relation(fields: [appliedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([contactId, dispositionId])
+  @@index([contactId])
+  @@index([dispositionId])
+  @@map("contact_dispositions")
 }
 
 model DialListSession {

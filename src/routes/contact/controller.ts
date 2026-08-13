@@ -10,6 +10,7 @@ import {
 import {
   createContactInDb,
   deleteContactFromDb,
+  moveContactsToTrash,
   getAllContactsFromDb,
   getContactByIdFromDb,
   updateContactInDb,
@@ -261,7 +262,7 @@ export const deleteContact = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    let { restore, delete: deleteQuery, folderId, listId } = req.query;
+    let { restore, delete: deleteQuery, folderId, listId, hardDelete } = req.query;
 
     if (!id) {
       errorResponse(res, "Contact id is required", 400);
@@ -296,9 +297,16 @@ export const deleteContact = async (
         hardDelete: false
       });
       successResponse(res, 200, "Contact removed from folder/list successfully", null);
-    } else {
+    } else if (hardDelete === "true") {
       await deleteContactFromDb(id, userId);
       successResponse(res, 200, "Contact deleted successfully", null);
+    } else {
+      // Default "Delete Contact" action — move to Trash instead of an
+      // irreversible hard delete. The frontend's hardDelete=true query param
+      // was previously never read here, so this branch always hard-deleted
+      // regardless of what the caller passed.
+      await moveContactsToTrash([id], userId);
+      successResponse(res, 200, "Contact moved to Trash", null);
     }
   } catch (error: any) {
     errorResponse(
