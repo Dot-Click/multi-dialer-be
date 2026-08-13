@@ -1372,16 +1372,20 @@ export const cancelSubscription = async (req: Request, res: Response): Promise<v
       }
     }
 
-    // Mark locally as CANCELLED
+    // Mark locally as CANCELLED so customer.subscription.updated's
+    // cancelAtPeriodEnd check (see that handler) doesn't map the still-live
+    // Stripe status back to ACTIVE before the period actually ends.
     await prisma.userSubscription.update({
       where: { id: dbSub.id },
       data: { status: "CANCELLED" },
     });
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { isSubscribed: false, trialStatus: "EXPIRED" as any },
-    });
+    // Access revocation and the cancellation email both belong to the real
+    // cancellation, handled by customer.subscription.deleted once the period
+    // actually ends — this action only schedules it. Flipping isSubscribed
+    // here immediately contradicted the "keeps access until period end"
+    // comment above: QA found the user locked out right away while Stripe
+    // (and the invoice) still showed the subscription live for weeks.
 
     successResponse(res, 200, "Subscription cancelled successfully", null);
   } catch (error: any) {

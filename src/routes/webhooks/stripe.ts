@@ -21,6 +21,24 @@ import { planKeyFromName } from "../../services/planLimits.service";
 // enum member instead — PENDING stands in for "payment trouble, not yet fully
 // lapsed" (past_due/unpaid/incomplete/paused), since there's no dedicated
 // PAST_DUE value without a schema migration.
+// A subscription can carry more than one line item — the base plan plus one
+// item per purchased agent seat (see stripeAgentSeatItemId on User). Reading
+// items.data[0] unconditionally assumes the base plan is always first, which
+// isn't guaranteed by Stripe; when a seat add-on happened to sort first, the
+// seat's price was misread as the plan price, producing a wrong amount (and
+// therefore a wrong upgrade/downgrade direction and email). Filter out any
+// item already claimed as an agent seat and use what's left.
+async function resolveBasePlanItem(items: any[]): Promise<any | undefined> {
+  if (items.length <= 1) return items[0];
+  const seatItemIds = (
+    await prisma.user.findMany({
+      where: { stripeAgentSeatItemId: { in: items.map((i) => i.id) } },
+      select: { stripeAgentSeatItemId: true },
+    })
+  ).map((u) => u.stripeAgentSeatItemId);
+  return items.find((i) => !seatItemIds.includes(i.id)) || items[0];
+}
+
 function mapStripeSubscriptionStatus(stripeStatus: string): "ACTIVE" | "CANCELLED" | "EXPIRED" | "PENDING" {
   switch (stripeStatus) {
     case "active":
@@ -424,7 +442,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
             if (stripeSubscriptionId) {
               const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
-              const item = stripeSub.items.data[0];
+              const item = await resolveBasePlanItem(stripeSub.items.data);
               const interval = item?.price?.recurring?.interval;
               billingCycle = interval === "year" ? "YEARLY" : "MONTHLY";
 
@@ -462,6 +480,28 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             });
 
             console.log(`[Stripe Webhook] Manual user ${email} subscription activated: plan=${planName}, cycle=${billingCycle} (customer: ${stripeCustomerId}).`);
+
+            // Manual provisioning is a separate code path from
+            // customer.subscription.updated's trialing->active transition, so
+            // it never fired subscriptionActivatedTemp on its own — confirmed
+            // missing during QA (email #14 silently no-op'd here). Send it
+            // directly off the newly-created UserSubscription instead of
+            // relying on invoice.paid, which can arrive before this record
+            // exists and has no retry once it does.
+            try {
+              await sendEmail(
+                existingUser.email,
+                "Your Slingvo subscription is now active",
+                subscriptionActivatedTemp(
+                  existingUser.fullName || "there",
+                  planName,
+                  `${envConfig.FRONTEND_URL}/admin/dashboard`,
+                ),
+                { userId: existingUser.id },
+              );
+            } catch (emailErr: any) {
+              console.error(`[Stripe Webhook] Failed to send subscription-activated email (manual provision):`, emailErr?.message);
+            }
           } else {
             console.log(`[Stripe Webhook] User ${email} already exists, skipping provisioning.`);
           }
@@ -722,7 +762,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
       const stripeCustomerId = subscription.customer;
       const stripeSubscriptionId = subscription.id as string;
       const status = subscription.status;
-      const item = subscription.items.data[0];
+      const item = (await resolveBasePlanItem(subscription.items.data))!;
       const priceId = item.price.id;
 
       console.log(`[Stripe Webhook] customer.subscription.updated: customer=${stripeCustomerId}, status=${status}, priceId=${priceId}`);
