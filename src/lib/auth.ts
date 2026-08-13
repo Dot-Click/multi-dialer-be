@@ -10,7 +10,7 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, emailChangeConfirmationTemp, memberAddedTemp, welcomeTemp, sendEmail } from "../utils/email";
+import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, emailChangeConfirmationTemp, memberAddedTemp, welcomeTemp, accountClosedTemp, sendEmail } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { ensureDncFolder } from "../routes/contact/service";
 import { initializeUserAccount, sendPaymentSetupEmail } from "../routes/user/service";
@@ -243,7 +243,7 @@ export const auth = betterAuth({
         if (targetUserId) {
           const targetUser = await prisma.user.findUnique({
             where: { id: targetUserId },
-            select: { role: true },
+            select: { role: true, email: true, fullName: true },
           });
           // Only ADMIN accounts own a Twilio sub-account of their own.
           if (targetUser?.role === "ADMIN") {
@@ -256,6 +256,21 @@ export const auth = betterAuth({
           await releaseR2ResourcesForUser(targetUserId).catch((err: any) =>
             console.error(`[Auth] R2 teardown failed for user ${targetUserId} before admin delete:`, err.message)
           );
+
+          // This is the super-admin "Delete" path — unlike the custom
+          // DELETE /user/:id route (deleteUserFromDb), Better Auth's own
+          // remove-user endpoint does a raw prisma.user.delete() with no
+          // app-level notification. QA caught this: account gone, deleted
+          // user never told. Send before the row is gone (not in an `after`
+          // hook — there'd be no user left to look up).
+          if (targetUser?.email) {
+            sendEmail(
+              targetUser.email,
+              "Your Slingvo account has been closed",
+              accountClosedTemp(targetUser.fullName || "there", "admin"),
+              { userId: targetUserId },
+            ).catch((err: any) => console.error(`[Auth] Failed to send account-closed email for ${targetUserId}:`, err?.message ?? err));
+          }
         }
       }
 
