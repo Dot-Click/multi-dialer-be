@@ -8,7 +8,7 @@ import { validatePurchasedAgentSeat } from "../../services/agentSeatBilling.serv
 import { subscriptionIdFromInvoice } from "../../services/billingLedger.service";
 import { DEFAULT_MISC_FIELDS } from "../systemSettings/miscFields/defaults";
 import { triggerZapierWebhook } from "../../lib/zapier";
-import { sendEmail, welcomeTemp, memberAddedTemp, roleChangedTemp, emailChangedByAdminTemp, accountClosedTemp } from "../../utils/email";
+import { sendEmail, welcomeWithPaymentSetupTemp, memberAddedTemp, roleChangedTemp, emailChangedByAdminTemp, accountClosedTemp } from "../../utils/email";
 import { emailShell, emailParagraph } from "../../utils/emailShell";
 import { envConfig } from "../../lib/config";
 import { buildSetPasswordUrl } from "../../utils/setPasswordLink";
@@ -237,16 +237,12 @@ export async function createUserInDb(payload: any) {
             })
             .catch(err => console.error("[UserService] Failed to fetch admin for invite emails:", err?.message ?? err));
     } else {
-        sendEmail(
-            newUser.email,
-            "Welcome to Slingvo - Set your password",
-            welcomeTemp(newUser.email, setPasswordUrl),
-            { userId: newUser.id },
-        ).catch(err => console.error("[UserService] Failed to send welcome email:", err?.message ?? err));
-
-        // Payment setup email only applies to ADMIN accounts, not agents
-        sendPaymentSetupEmail(newUser, planId ?? undefined).catch(err =>
-            console.error("[UserService] Failed to send payment setup email:", err?.message ?? err)
+        // Single merged email (set-password + payment CTA) instead of two
+        // separate sends — QA caught both firing a second apart with
+        // conflicting calls to action for an account the user can't use
+        // until they pay.
+        sendWelcomeWithPaymentSetupEmail(newUser, setPasswordUrl, planId ?? undefined).catch(err =>
+            console.error("[UserService] Failed to send welcome/payment-setup email:", err?.message ?? err)
         );
     }
 
@@ -254,10 +250,11 @@ export async function createUserInDb(payload: any) {
 }
 
 /**
- * Creates a Stripe checkout session for a manually provisioned user and sends
- * them an email with the payment link so they can enter their card details.
+ * Creates a Stripe checkout session for a manually provisioned user. Shared
+ * by sendPaymentSetupEmail (standalone) and the merged welcome+payment email
+ * sent at account creation.
  */
-export async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }, planId?: string) {
+async function createPaymentSetupSession(user: { id: string; email: string; fullName: string | null }, planId?: string) {
     // P0 billing finding: the previous "3. Auto-fetch the first active
     // Stripe price as last resort" step silently picked whatever product
     // Stripe's API happened to list first — which sent a user the admin
@@ -274,11 +271,11 @@ export async function sendPaymentSetupEmail(user: { id: string; email: string; f
 
     if (!resolvedPlanId) {
         throw new Error(
-            `sendPaymentSetupEmail: no planId provided for ${user.email} and no STRIPE_PRICE_BASIC/STRIPE_PRICE_STANDARD env default is configured — refusing to auto-select a Stripe price.`
+            `createPaymentSetupSession: no planId provided for ${user.email} and no STRIPE_PRICE_BASIC/STRIPE_PRICE_STANDARD env default is configured — refusing to auto-select a Stripe price.`
         );
     }
 
-    const session = await stripe.checkout.sessions.create({
+    return stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         customer_email: user.email,
         line_items: [{ price: resolvedPlanId, quantity: 1 }],
@@ -293,6 +290,15 @@ export async function sendPaymentSetupEmail(user: { id: string; email: string; f
             isManualProvision: "true",
         },
     });
+}
+
+/**
+ * Creates a Stripe checkout session for a manually provisioned user and sends
+ * them a standalone email with the payment link. Used when there's no
+ * welcome email to bundle it with (e.g. an existing user changing plans).
+ */
+export async function sendPaymentSetupEmail(user: { id: string; email: string; fullName: string | null }, planId?: string) {
+    const session = await createPaymentSetupSession(user, planId);
 
     if (!session.url) {
         console.warn("[UserService] Stripe session URL was empty. No payment email sent.");
@@ -319,6 +325,35 @@ export async function sendPaymentSetupEmail(user: { id: string; email: string; f
     );
 
     console.log(`[UserService] Payment setup email sent to ${user.email} (Stripe session: ${session.id})`);
+}
+
+/**
+ * Sends ONE combined email with both the set-password link and the payment
+ * checkout CTA. QA finding: sending welcomeTemp and sendPaymentSetupEmail
+ * separately fired two emails a second apart with conflicting calls to
+ * action — a "your account is ready" email for an account the user can't
+ * actually use until they pay. Used at account creation instead of the two
+ * separate sends.
+ */
+export async function sendWelcomeWithPaymentSetupEmail(
+    user: { id: string; email: string; fullName: string | null },
+    setPasswordUrl: string,
+    planId?: string,
+) {
+    const session = await createPaymentSetupSession(user, planId);
+    if (!session.url) {
+        console.warn("[UserService] Stripe session URL was empty. No welcome/payment email sent.");
+        return;
+    }
+
+    await sendEmail(
+        user.email,
+        "Welcome to Slingvo — set your password and complete setup",
+        welcomeWithPaymentSetupTemp(user.email, setPasswordUrl, session.url),
+        { userId: user.id },
+    );
+
+    console.log(`[UserService] Welcome+payment-setup email sent to ${user.email} (Stripe session: ${session.id})`);
 }
 
 /**

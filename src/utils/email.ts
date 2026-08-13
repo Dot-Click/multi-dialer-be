@@ -115,6 +115,25 @@ export const welcomeTemp = (email: string, setPasswordUrl: string) => emailShell
     footnote: "This link is single-use and stops working the moment you set your password. If you didn't expect this email, please ignore it.",
 })
 
+// Merged welcome + payment-setup email. QA finding: sending welcomeTemp and
+// the payment-setup email separately fired two emails a second apart with
+// conflicting calls to action, handing over account credentials for an
+// account the user couldn't use until they paid. One email, two ordered
+// steps, one primary button (set password first — that's the blocking step).
+export const welcomeWithPaymentSetupTemp = (email: string, setPasswordUrl: string, paymentUrl: string) => emailShell({
+    title: "Welcome to Slingvo",
+    preheader: "Set your password and complete payment setup to activate your account.",
+    badgeLabel: "Welcome aboard",
+    heading: "Two steps to activate your account.",
+    bodyHtml:
+        emailInfoBox([{ label: "Email", value: email }]) +
+        emailStep(1, "Set your password", "Click the button below to set your password and verify your account.") +
+        emailStep(2, "Complete payment setup", `Your account includes a <strong>30-day free trial</strong> — no charge until it ends. <a href="${paymentUrl}" style="color:#2D5BE3;font-weight:600;">Complete payment setup</a> to keep dialing after the trial.`),
+    buttonText: "Set Password",
+    buttonUrl: setPasswordUrl,
+    footnote: `The set-password link is single-use. If the payment link above doesn't work, copy and paste this into your browser: <a href="${paymentUrl}" style="color:#2D5BE3;word-break:break-all;">${paymentUrl}</a>`,
+})
+
 function leadSheetQABlock(question: string, answerHtml: string): string {
     return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px 0;background-color:#FFFBF3;border-left:4px solid #FACC15;border-radius:0 8px 8px 0;">
   <tr>

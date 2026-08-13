@@ -10,10 +10,10 @@ import bcrypt from "bcryptjs";
 import prisma from "./prisma";
 import { envConfig } from "./config";
 import { ac, admin, agent, owner } from "./permissions";
-import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, emailChangeConfirmationTemp, memberAddedTemp, welcomeTemp, accountClosedTemp, sendEmail } from "../utils/email";
+import { newUserSignupTemp, loginAlertTemp, emailVerificationTemp, emailChangeConfirmationTemp, memberAddedTemp, accountClosedTemp, sendEmail } from "../utils/email";
 import { ensureDefaultMiscFields } from "../routes/systemSettings/miscFields/service";
 import { ensureDncFolder } from "../routes/contact/service";
-import { initializeUserAccount, sendPaymentSetupEmail } from "../routes/user/service";
+import { initializeUserAccount, sendWelcomeWithPaymentSetupEmail } from "../routes/user/service";
 import { releaseTwilioResourcesForUser } from "../services/twilio-account.service";
 import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service";
 import { getUserPlanLimits } from "../services/planLimits.service";
@@ -469,17 +469,14 @@ export const auth = betterAuth({
               // link flips it as part of the flow. Better Auth's
               // requireEmailVerification then blocks direct password login until
               // the user has actually completed setup.
-              sendEmail(
-                newUser.email,
-                "Welcome to Slingvo - Set your password",
-                welcomeTemp(newUser.email, buildSetPasswordUrl(newUser.email, newUser.password)),
-                { userId: newUser.id },
-              ).catch((err: any) => console.error("[Auth] Failed to send welcome email:", err?.message ?? err));
-
+              // Single merged email (set-password + payment CTA) instead of
+              // two separate sends — see sendWelcomeWithPaymentSetupEmail.
               const planId = body?.data?.planId ?? body?.planId;
-              sendPaymentSetupEmail(newUser, planId ?? undefined).catch((err: any) =>
-                console.error("[Auth] Failed to send payment setup email:", err?.message ?? err)
-              );
+              sendWelcomeWithPaymentSetupEmail(
+                newUser,
+                buildSetPasswordUrl(newUser.email, newUser.password),
+                planId ?? undefined,
+              ).catch((err: any) => console.error("[Auth] Failed to send welcome/payment-setup email:", err?.message ?? err));
             }
           } catch (err: any) {
             console.error("[Auth] Failed to send welcome/payment-setup emails:", err?.message ?? err);
