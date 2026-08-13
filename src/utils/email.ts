@@ -2,6 +2,7 @@ import { envConfig } from "../lib/config";
 import { emailFooter } from "./emailFooter";
 import { emailShell, emailInfoBox, emailParagraph, emailStep } from "./emailShell";
 import { buildUnsubscribeUrl } from "./emailSuppression";
+import { htmlToPlainText } from "./htmlToText";
 export const otpTemp = (OTP: string) => `
 <!DOCTYPE html>
 <html lang="en">
@@ -565,11 +566,21 @@ export const sendEmail = async (
     }
 ) => {
     try {
+        // MailerSend dashboard-hosted templates ignore `html` entirely (it's
+        // rendered server-side from the template), so there's nothing local
+        // to derive text from there — keep the stub for that case only.
+        // Every other send builds its HTML from our own emailShell.ts
+        // helpers, so a real text alternative can be derived from it instead
+        // of the placeholder mail-tester flagged as a spam signal.
+        const text = tracking?.mailerSendTemplateId
+            ? "Please view this email in an HTML compatible client."
+            : (htmlToPlainText(html) || "Please view this email in an HTML compatible client.");
+
         return await trackedSendEmail({
             to,
             from: envConfig.MAILERSEND_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com",
             subject,
-            text: "Please view this email in an HTML compatible client.",
+            text,
             html,
             userId: tracking?.userId,
             contactId: tracking?.contactId,
