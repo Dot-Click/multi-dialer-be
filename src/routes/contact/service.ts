@@ -1,13 +1,11 @@
 import { PhoneType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { leadSheetEmailTemp, sendEmail } from "../../utils/email";
-import axios from "axios";
 import { uploadToR2, getPresignedUrlFromStoredUrl } from "../../utils/r2-uploader";
 import { randomUUID } from "crypto";
 import { createInternalNotification } from "../notification/controller";
 import { resolveTenantUserIds, resolveTenantRootId } from "../../utils/tenant";
 import { resolveCompanyContext } from "../../utils/resolveCompany";
-import { envConfig } from "@/lib/config";
 import { startOfTodayInTimezone } from "../../utils/timezone";
 import { ActionPlanService } from "../systemSettings/actionplan/service";
 
@@ -16,12 +14,42 @@ function throwHttp(statusCode: number, message: string): never {
   throw { message, statusCode };
 }
 
-const ZILLOW_API_BASE_URL = "https://zillow-com-live-data-scraper-api.p.rapidapi.com";
+// ---------------------------------------------------------------------------
+// ZILLOW PROPERTY LINK
+// ---------------------------------------------------------------------------
+//
+// This deliberately does NOT call the RapidAPI Zillow scraper.
+//
+// That provider's /bylocation endpoint is a *market search*, not an address
+// lookup: it expects a city/region slug (its own example is "seattle-wa")
+// together with listType/price/beds/sqft filters, and it returns homes that
+// are currently listed for sale. Handing it a full street address made it
+// fall back to a town-wide search, and the ranking pass below it then
+// returned the top-scoring row even when the street address had not matched
+// at all — city + state + zip alone were enough to win. That is why
+// "7 Hazelwood Pl, Huntington, NY 11743" opened
+// "23 Renwick Ave, Huntington, NY 11743": right town, wrong house.
+//
+// It could not have worked in general even with better ranking. Dialer
+// contacts are overwhelmingly owner-occupants whose homes are NOT for sale,
+// so they never appear in a for-sale search at all.
+//
+// Zillow's own canonical search path resolves a full address to that
+// property's page — listed or off-market — and redirects to
+// /homedetails/<slug>/<zpid>_zpid/. It is deterministic, costs nothing, has
+// no rate limit (the old path was returning 429s), and structurally cannot
+// return a different house than the one asked for.
+const ZILLOW_SEARCH_BASE_URL = "https://www.zillow.com/homes";
 
-function normalizeText(value: unknown): string {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+function buildZillowPropertyUrl(addressQuery: string): string {
+  // Zillow's slug is the address with spaces as hyphens, comma separators
+  // kept. Percent-encode first so unit markers ("#C", "Apt 2", "Unit 4B")
+  // and any other reserved character survive, then swap the encoded spaces
+  // for the hyphens Zillow expects.
+  const slug = encodeURIComponent(addressQuery.replace(/\s+/g, " ").trim())
+    .replace(/%20/g, "-");
+
+  return `${ZILLOW_SEARCH_BASE_URL}/${slug}_rb/`;
 }
 
 function buildContactAddress(contact: {
@@ -34,100 +62,6 @@ function buildContactAddress(contact: {
     .filter(Boolean)
     .join(", ")
     .trim();
-}
-
-// Zillow's bylocation response wraps its results in different possible
-// container keys depending on API/version — check the common ones rather
-// than assume one fixed shape. Falls back to treating the payload itself as
-// the results array if it's already one.
-function extractZillowResults(payload: any): Array<Record<string, any>> {
-  if (Array.isArray(payload)) return payload;
-  if (!payload || typeof payload !== "object") return [];
-
-  const candidates = payload.results ?? payload.data ?? payload.props ?? payload.homes ?? payload.listings;
-  return Array.isArray(candidates) ? candidates : [];
-}
-
-function scoreZillowResult(
-  result: Record<string, any>,
-  target: { address: string; city: string; state: string; zip: string }
-): number {
-  const resultBlob = normalizeText(JSON.stringify(result));
-  let score = 0;
-
-  if (target.address && resultBlob.includes(target.address)) score += 6;
-  if (target.city && resultBlob.includes(target.city)) score += 3;
-  if (target.state && resultBlob.includes(target.state)) score += 2;
-  if (target.zip && resultBlob.includes(target.zip)) score += 4;
-
-  return score;
-}
-
-function pickBestZillowResult(payload: any, contact: {
-  address?: string | null;
-  city?: string | null;
-  state?: string | null;
-  zip?: string | null;
-}): Record<string, any> | null {
-  const normalizedTarget = {
-    address: normalizeText(contact.address),
-    city: normalizeText(contact.city),
-    state: normalizeText(contact.state),
-    zip: normalizeText(contact.zip),
-  };
-
-  const results = extractZillowResults(payload);
-  if (results.length === 0) return null;
-
-  const ranked = results
-    .map((result) => ({ result, score: scoreZillowResult(result, normalizedTarget) }))
-    .sort((a, b) => b.score - a.score);
-
-  return ranked[0]?.result ?? null;
-}
-
-function looksLikeZillowUrl(value: string): boolean {
-  return value.includes("zillow.com/homedetails") || value.startsWith("/homedetails/");
-}
-
-function resolveZillowUrl(value: string): string | null {
-  if (value.startsWith("https://")) return value;
-  if (value.startsWith("http://")) return value.replace("http://", "https://");
-  if (value.startsWith("/")) return `https://www.zillow.com${value}`;
-  return `https://www.zillow.com/${value}`;
-}
-
-function extractZillowUrl(value: any): string | null {
-  if (typeof value === "string") {
-    return looksLikeZillowUrl(value) ? resolveZillowUrl(value) : null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nestedUrl = extractZillowUrl(item);
-      if (nestedUrl) return nestedUrl;
-    }
-    return null;
-  }
-
-  if (value && typeof value === "object") {
-    for (const [key, entryValue] of Object.entries(value)) {
-      const normalizedKey = key.toLowerCase();
-      if (
-        typeof entryValue === "string" &&
-        ["detailurl", "hdpurl", "url", "link"].includes(normalizedKey) &&
-        looksLikeZillowUrl(entryValue)
-      ) {
-        const resolvedUrl = resolveZillowUrl(entryValue);
-        if (resolvedUrl) return resolvedUrl;
-      }
-
-      const nestedUrl = extractZillowUrl(entryValue);
-      if (nestedUrl) return nestedUrl;
-    }
-  }
-
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,16 +280,6 @@ export async function getContactByIdFromDb(id: string) {
 }
 
 export async function getZillowLinkForContactInDb(contactId: string) {
-  console.log("[Zillow] Starting Zillow link fetch for contact:", contactId);
-
-  if (!envConfig.ZILLOW_RAPIDAPI_KEY) {
-    console.error("[Zillow] ZILLOW_RAPIDAPI_KEY is not configured");
-    throwHttp(500, "Zillow RapidAPI key is not configured on the server");
-  }
-
-  console.log("[Zillow] API Key present:", !!envConfig.ZILLOW_RAPIDAPI_KEY);
-  console.log("[Zillow] API Host:", envConfig.ZILLOW_RAPIDAPI_HOST);
-
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
     select: {
@@ -369,71 +293,30 @@ export async function getZillowLinkForContactInDb(contactId: string) {
   });
 
   if (!contact) {
-    console.error("[Zillow] Contact not found:", contactId);
     throwHttp(404, "Contact not found");
   }
 
   const addressQuery = buildContactAddress(contact);
-  console.log("[Zillow] Address query:", addressQuery);
 
-  if (!addressQuery) {
-    console.error("[Zillow] No property address for contact:", contactId);
+  if (!contact.address?.trim()) {
     throwHttp(400, "Contact does not have a property address");
   }
 
-  const rapidApiHeaders = {
-    "Content-Type": "application/json",
-    "x-rapidapi-host": envConfig.ZILLOW_RAPIDAPI_HOST || "zillow-com-live-data-scraper-api.p.rapidapi.com",
-    "x-rapidapi-key": envConfig.ZILLOW_RAPIDAPI_KEY,
-  };
+  // A street line on its own does not place the property — Zillow would land
+  // on a disambiguation page for whichever "7 Hazelwood Pl" it guesses first.
+  // Require a ZIP, or a city and state, before handing back a link.
+  const hasZip = !!contact.zip?.trim();
+  const hasCityAndState = !!contact.city?.trim() && !!contact.state?.trim();
 
-  let zillowUrl: string | null = null;
-
-  try {
-    console.log("[Zillow] Calling bylocation API...");
-    const listResponse = await axios.get(
-      `${ZILLOW_API_BASE_URL}/bylocation`,
-      {
-        params: { location: addressQuery, page: 1 },
-        headers: rapidApiHeaders,
-      }
+  if (!hasZip && !hasCityAndState) {
+    throwHttp(
+      400,
+      "Property address needs a ZIP code, or a city and state, to identify this home on Zillow",
     );
-    console.log("[Zillow] bylocation response received");
-    console.log(listResponse.data)
-
-    const bestResult = pickBestZillowResult(listResponse.data, contact);
-    console.log("[Zillow] Best matching result:", bestResult ? "found" : "none");
-
-    if (!bestResult) {
-      console.error("[Zillow] No property match found for:", addressQuery);
-      throwHttp(404, "No Zillow listing found for this address");
-    }
-
-    zillowUrl = extractZillowUrl(bestResult);
-    console.log("[Zillow] Zillow URL:", zillowUrl);
-
-    if (!zillowUrl) {
-      console.error("[Zillow] No URL in matched result");
-      throwHttp(404, "Could not extract Zillow URL from response");
-    }
-  } catch (error: any) {
-    console.error("[Zillow] Error occurred:", error?.message);
-    console.error("[Zillow] Error status:", error?.response?.status);
-    console.error("[Zillow] Error data:", error?.response?.data);
-
-    if (error?.statusCode) {
-      throw error;
-    }
-
-    const statusCode = error?.response?.status || 502;
-    const providerMessage =
-      error?.response?.data?.message ||
-      error?.response?.data?.error ||
-      error?.message ||
-      "Zillow API request failed";
-
-    throwHttp(statusCode, providerMessage);
   }
+
+  const zillowUrl = buildZillowPropertyUrl(addressQuery);
+  console.log(`[Zillow] contact ${contact.id}: ${addressQuery} -> ${zillowUrl}`);
 
   return {
     contactId: contact.id,
