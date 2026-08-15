@@ -982,7 +982,7 @@ export async function getAllContactFoldersFromDb(
       where: {
         OR: [
           { listIds: { hasSome: listIds } },
-          { userId: userId, isSystem: true } // Agents see their own system folders (DNC)
+          { userId: userId } // Agents also see every folder they personally own (system or not)
         ]
       },
       orderBy: { createdAt: "desc" },
