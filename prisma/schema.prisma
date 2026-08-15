@@ -254,32 +254,33 @@ model User {
   // All recordings uploaded by this admin — reusable across any settings
   recordings Recording[]
 
-  contactLists            ContactList[]
-  contactFolders          ContactFolder[]
-  contactGroups           ContactGroups[]
-  contacts                Contact[]
-  contactActivityLogs     ContactActivityLog[]
-  importContacts          ImportContact[]
-  exportContacts          ExportContact[]
-  backupContacts          BackupContacts[]
-  pushSubscriptions       PushSubscription[]
-  notifications           Notification[]
-  emailLogs               EmailLog[]
-  smsLogs                 SmsLog[]
-  myPlusLeadsConfigs      MyPlusLeadsConfig[]
-  a2pRegistration         A2P_Registration?
-  phoneNumberSubscription PhoneNumberSubscription?
-  agentSeatSubscription   AgentSeatSubscription?
-  dispositionLogs         ContactDispositionLog[]
-  currentDispositionsApplied ContactDisposition[]
-  dialListSessions        DialListSession[]
-  contactActionPlansAssignedTo ContactActionPlan[] @relation("ContactActionPlanAssignedTo")
-  contactActionPlansAssignedBy ContactActionPlan[] @relation("ContactActionPlanAssignedBy")
+  contactLists                 ContactList[]
+  contactFolders               ContactFolder[]
+  contactGroups                ContactGroups[]
+  contacts                     Contact[]
+  contactActivityLogs          ContactActivityLog[]
+  importContacts               ImportContact[]
+  exportContacts               ExportContact[]
+  backupContacts               BackupContacts[]
+  pushSubscriptions            PushSubscription[]
+  notifications                Notification[]
+  emailLogs                    EmailLog[]
+  smsLogs                      SmsLog[]
+  myPlusLeadsConfigs           MyPlusLeadsConfig[]
+  a2pRegistration              A2P_Registration?
+  phoneNumberSubscription      PhoneNumberSubscription?
+  agentSeatSubscription        AgentSeatSubscription?
+  dispositionLogs              ContactDispositionLog[]
+  currentDispositionsApplied   ContactDisposition[]
+  agentDispositionOrders       AgentDispositionOrder[]
+  dialListSessions             DialListSession[]
+  contactActionPlansAssignedTo ContactActionPlan[]      @relation("ContactActionPlanAssignedTo")
+  contactActionPlansAssignedBy ContactActionPlan[]      @relation("ContactActionPlanAssignedBy")
 
   // Paid overage agent-seat billing (self-service "buy extra seat" flow).
   // Non-null stripeAgentSeatItemId marks this agent as a PAID_ADDON seat —
   // set on the AGENT row itself, mirroring CallerId's inline billing fields.
-  stripeAgentSeatItemId     String?
+  stripeAgentSeatItemId      String?
   agentSeatMonthlyPriceCents Int?
 
   // Calendar & Task System
@@ -467,15 +468,15 @@ model Contact {
   // separate from `status` — lets the UI highlight the active disposition pill.
   disposition     String?
 
-  calendar        Calendar[]
-  callbacks       Callback[]
-  appointments    Appointment[]
-  tasks           Task[]
-  emailLogs       EmailLog[]
-  smsLogs         SmsLog[]
-  dispositionLogs ContactDispositionLog[]
-  currentDispositions ContactDisposition[]
-  activityLogs    ContactActivityLog[]
+  calendar              Calendar[]
+  callbacks             Callback[]
+  appointments          Appointment[]
+  tasks                 Task[]
+  emailLogs             EmailLog[]
+  smsLogs               SmsLog[]
+  dispositionLogs       ContactDispositionLog[]
+  currentDispositions   ContactDisposition[]
+  activityLogs          ContactActivityLog[]
   actionPlanAssignments ContactActionPlan[]
 
   folderIds String[] @default([])
@@ -784,14 +785,37 @@ model Disposition {
   systemSettingId String
   systemSetting   System_Setting @relation(fields: [systemSettingId], references: [id], onDelete: Cascade)
 
-  callRecords     CallRecord[]
-  dispositionLogs ContactDispositionLog[]
+  callRecords       CallRecord[]
+  dispositionLogs   ContactDispositionLog[]
   currentOnContacts ContactDisposition[]
+  agentOrders       AgentDispositionOrder[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("dispositions")
+}
+
+// Per-agent personal ordering override for the merged "Dispositions" list
+// (team dispositions + the agent's own). Lets an agent shuffle team-owned
+// rows around in their own view without touching Disposition.order itself,
+// which is the admin's canonical order shared by everyone else.
+model AgentDispositionOrder {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  dispositionId String
+  disposition   Disposition @relation(fields: [dispositionId], references: [id], onDelete: Cascade)
+
+  order Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, dispositionId])
+  @@map("agent_disposition_orders")
 }
 
 model RegulatorySetting {
@@ -970,15 +994,15 @@ model Billing {
 }
 
 model LeadStore {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   title       String
   description String
   price       Int
-  isActive    Boolean  @default(true)
+  isActive    Boolean @default(true)
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  billingId   String   @unique
-  billing     Billing  @relation(fields: [billingId], references: [id])
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  billingId   String  @unique
+  billing     Billing @relation(fields: [billingId], references: [id])
 
   serviceId String
   service   LeadStoreService @relation(fields: [serviceId], references: [id])
@@ -990,9 +1014,9 @@ model LeadStore {
 
   // Which MyPlusLeads data package (e.g. "Expired", "FSBO") on the linked
   // account this purchase is entitled to — one account can carry several.
-  assignedPackage   String?
-  lastSyncAt        DateTime?
-  syncErrorMessage  String?
+  assignedPackage  String?
+  lastSyncAt       DateTime?
+  syncErrorMessage String?
 
   stripeSubscriptionId     String?
   stripeSubscriptionItemId String?
@@ -1001,8 +1025,8 @@ model LeadStore {
   billingPaused  Boolean   @default(false)
   cancelledAt    DateTime?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("lead_stores")
 }
@@ -1624,8 +1648,8 @@ model ActionPlan {
 
   steps       ActionStep[]
   assignments ContactActionPlan[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
 
   @@map("action_plans")
 }
@@ -1649,7 +1673,7 @@ model ContactActionPlan {
   id String @id @default(uuid())
 
   contactId String
-  contact   Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   planId String
   plan   ActionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
@@ -1904,35 +1928,35 @@ enum EmailQueueStatus {
 }
 
 model EmailQueue {
-  id                 String           @id @default(uuid())
+  id String @id @default(uuid())
 
   // Email payload — everything needed to resend without the original caller
   to                 String
   from               String
   fromName           String?
   subject            String
-  text               String           @db.Text
-  html               String?          @db.Text
+  text               String  @db.Text
+  html               String? @db.Text
   replyToEmail       String?
-  includeUnsubscribe Boolean          @default(false)
+  includeUnsubscribe Boolean @default(false)
   companyId          String?
 
   // Tracking context (carried through so successful retries land in EmailLog)
-  userId             String?
-  contactId          String?
-  leadId             String?
-  templateId         String?
+  userId     String?
+  contactId  String?
+  leadId     String?
+  templateId String?
 
   // Queue state
-  status             EmailQueueStatus @default(PENDING)
-  attempts           Int              @default(0)
-  maxAttempts        Int              @default(3)
-  nextRetryAt        DateTime         @default(now())
-  lastError          String?          @db.Text
-  messageId          String?
+  status      EmailQueueStatus @default(PENDING)
+  attempts    Int              @default(0)
+  maxAttempts Int              @default(3)
+  nextRetryAt DateTime         @default(now())
+  lastError   String?          @db.Text
+  messageId   String?
 
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status, nextRetryAt])
   @@map("email_queue")
@@ -1953,9 +1977,9 @@ model EmailLog {
   // attempt succeeded — these track what happened to the message afterward.
   deliveredAt DateTime?
   openedAt    DateTime? // first open
-  openCount   Int        @default(0)
+  openCount   Int         @default(0)
   clickedAt   DateTime? // first click
-  clickCount  Int        @default(0)
+  clickCount  Int         @default(0)
   bounceType  BounceType?
 
   // Relations

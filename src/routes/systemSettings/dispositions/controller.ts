@@ -35,8 +35,14 @@ export const createDisposition: RequestHandler = async (req, res) => {
 
 export const updateDisposition: RequestHandler = async (req, res) => {
     try {
+        const userId = req.user?.id;
+        if (!userId) {
+            errorResponse(res, { message: "Unauthorized" }, 401);
+            return;
+        }
+
         const { id } = req.params;
-        const updated = await DispositionService.updateDisposition(id, req.body);
+        const updated = await DispositionService.updateDisposition(id, req.body, userId);
         successResponse(res, 200, "Disposition updated", updated);
     } catch (error: any) {
         errorResponse(res, { message: error.message });
@@ -45,8 +51,14 @@ export const updateDisposition: RequestHandler = async (req, res) => {
 
 export const deleteDisposition: RequestHandler = async (req, res) => {
     try {
+        const userId = req.user?.id;
+        if (!userId) {
+            errorResponse(res, { message: "Unauthorized" }, 401);
+            return;
+        }
+
         const { id } = req.params;
-        await DispositionService.deleteDisposition(id);
+        await DispositionService.deleteDisposition(id, userId);
         successResponse(res, 200, "Disposition deleted");
     } catch (error: any) {
         errorResponse(res, { message: error.message });
@@ -63,6 +75,21 @@ export const reorderDispositions: RequestHandler = async (req, res) => {
 
         const result = await DispositionService.reorderDispositions(userId, req.body.orderData);
         successResponse(res, 200, "Dispositions reordered", result);
+    } catch (error: any) {
+        errorResponse(res, { message: error.message });
+    }
+};
+
+export const setPersonalDispositionOrder: RequestHandler = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            errorResponse(res, { message: "Unauthorized" }, 401);
+            return;
+        }
+
+        const result = await DispositionService.setPersonalDispositionOrder(userId, req.body.orderData);
+        successResponse(res, 200, "Personal disposition order updated", result);
     } catch (error: any) {
         errorResponse(res, { message: error.message });
     }

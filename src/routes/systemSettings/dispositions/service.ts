@@ -194,23 +194,110 @@ export class DispositionService {
             include: { dispositions: { orderBy: { order: 'asc' } } }
         }) ?? systemSetting;
 
-        return systemSetting.dispositions;
+        const isAgent = user?.role === 'AGENT';
+        const teamDispositions = systemSetting.dispositions.map(d => ({ ...d, isOwn: !isAgent }));
+
+        // Non-agents (the team account itself) or an agent with no admin to
+        // fall back to (targetUserId === userId) — nothing more to merge in.
+        if (!isAgent || targetUserId === userId) {
+            return teamDispositions;
+        }
+
+        // Agents also get their own personal dispositions — a separate
+        // System_Setting keyed to their own userId (not seeded with any
+        // defaults; purely whatever the agent creates for themselves).
+        let personalSetting = await prisma.system_Setting.findFirst({
+            where: { userId },
+            include: { dispositions: { orderBy: { order: 'asc' } } }
+        });
+        if (!personalSetting) {
+            personalSetting = await prisma.system_Setting.create({
+                data: { userId },
+                include: { dispositions: { orderBy: { order: 'asc' } } }
+            });
+        }
+        const personalDispositions = personalSetting.dispositions.map(d => ({ ...d, isOwn: true }));
+
+        // Apply this agent's personal order overlay to every non-system row
+        // (Call Outcomes stay admin-ordered and non-draggable in the UI, so
+        // they're excluded here). Falls back to the row's own `order` field
+        // until the agent actually drags something.
+        const merged = [...teamDispositions, ...personalDispositions];
+        const nonSystemIds = merged.filter(d => !d.isSystem).map(d => d.id);
+        const overrides = await prisma.agentDispositionOrder.findMany({
+            where: { userId, dispositionId: { in: nonSystemIds } }
+        });
+        const overrideMap = new Map(overrides.map(o => [o.dispositionId, o.order]));
+
+        const withEffectiveOrder = merged.map(d => ({
+            ...d,
+            order: overrideMap.get(d.id) ?? d.order,
+        }));
+
+        // Re-sort by the now-patched order — a personal override should
+        // actually move the row, not just carry an updated `order` value
+        // while staying stuck in "team dispositions, then personal" array
+        // position. Sorted within isSystem groups separately since Call
+        // Outcomes and Dispositions are always rendered as separate sections
+        // by every consumer of this list.
+        return [
+            ...withEffectiveOrder.filter(d => d.isSystem).sort((a, b) => a.order - b.order),
+            ...withEffectiveOrder.filter(d => !d.isSystem).sort((a, b) => a.order - b.order),
+        ];
     }
 
-    static async createDisposition(userId: string, data: any) {
+    // Lets an agent personally reorder the merged "Dispositions" list (team
+    // dispositions + their own) without mutating the shared Disposition.order
+    // field other viewers see. Stored as a per-agent overlay, applied on read
+    // in getDispositions above.
+    static async setPersonalDispositionOrder(userId: string, orderData: { id: string, order: number }[]) {
         const user = await prisma.user.findUnique({
             where: { id: userId },
             select: { role: true, createdById: true }
         });
+        const teamUserId = (user?.role === 'AGENT' && user?.createdById) ? user.createdById : userId;
 
-        // If user is AGENT, use their admin's id
-        const targetUserId = (user?.role === 'AGENT' && user?.createdById) ? user.createdById : userId;
+        // Only allow overriding order for dispositions this agent can actually
+        // see: their team's shared set or their own personal ones.
+        const dispositionIds = orderData.map(item => item.id);
+        const visible = await prisma.disposition.findMany({
+            where: { id: { in: dispositionIds } },
+            select: { id: true, systemSetting: { select: { userId: true } } }
+        });
+        const visibleIds = new Set(
+            visible
+                .filter(d => d.systemSetting.userId === teamUserId || d.systemSetting.userId === userId)
+                .map(d => d.id)
+        );
+        const scoped = orderData.filter(item => visibleIds.has(item.id));
 
-        const systemSetting = await prisma.system_Setting.findFirst({
-            where: { userId: targetUserId }
+        await prisma.$transaction(
+            scoped.map(item =>
+                prisma.agentDispositionOrder.upsert({
+                    where: { userId_dispositionId: { userId, dispositionId: item.id } },
+                    update: { order: item.order },
+                    create: { userId, dispositionId: item.id, order: item.order },
+                })
+            )
+        );
+
+        return { success: true };
+    }
+
+    static async createDisposition(userId: string, data: any) {
+        // Always created under the caller's own account — for ADMIN/OWNER
+        // that's the shared team account; for AGENT it's their own personal
+        // System_Setting, making agent-created dispositions personal by
+        // construction. Team dispositions are managed exclusively via the
+        // admin's own Dispositions settings page (same endpoint, called by
+        // an admin instead).
+        let systemSetting = await prisma.system_Setting.findFirst({
+            where: { userId }
         });
 
-        if (!systemSetting) throw new Error("System settings not found");
+        if (!systemSetting) {
+            systemSetting = await prisma.system_Setting.create({ data: { userId } });
+        }
 
         const { autoCreateFolder, ...dispositionData } = data;
 
@@ -223,72 +310,72 @@ export class DispositionService {
                     name: dispositionData.label,
                     isSystem: false,
                     listIds: [],
-                    userId: targetUserId,
+                    userId,
                 }
             });
             targetFolderId = newFolder.id;
         }
 
-        return await prisma.disposition.create({
+        const created = await prisma.disposition.create({
             data: {
                 ...dispositionData,
                 targetFolderId,
                 systemSettingId: systemSetting.id
             }
         });
+
+        return { ...created, isOwn: true };
     }
 
-    static async updateDisposition(id: string, data: any) {
+    static async updateDisposition(id: string, data: any, userId: string) {
         const target = await prisma.disposition.findUnique({
             where: { id },
-            select: { value: true }
+            select: { value: true, label: true, targetFolderId: true, systemSetting: { select: { userId: true } } }
         });
-        if (isProtectedDispositionValue(target?.value)) {
+        if (!target) throw new Error("Disposition not found");
+        if (isProtectedDispositionValue(target.value)) {
             throw new Error("The default Trash disposition cannot be modified");
+        }
+        if (target.systemSetting.userId !== userId) {
+            throw new Error("You can only edit dispositions you own");
         }
 
         const { autoCreateFolder, ...updateData } = data;
 
-        if (autoCreateFolder) {
-            // Only create a new folder if one isn't already linked
-            const existing = await prisma.disposition.findUnique({
-                where: { id },
-                select: { targetFolderId: true, systemSettingId: true, label: true }
-            });
-
-            if (existing && !existing.targetFolderId) {
-                // Get the userId from the systemSetting
-                const systemSetting = await prisma.system_Setting.findUnique({
-                    where: { id: existing.systemSettingId },
-                    select: { userId: true }
-                });
-
-                if (systemSetting) {
-                    const newFolder = await prisma.contactFolder.create({
-                        data: {
-                            name: updateData.label || existing.label,
-                            isSystem: false,
-                            listIds: [],
-                            userId: systemSetting.userId,
-                        }
-                    });
-                    updateData.targetFolderId = newFolder.id;
+        // Only auto-create a folder if one isn't already linked
+        if (autoCreateFolder && !target.targetFolderId) {
+            const newFolder = await prisma.contactFolder.create({
+                data: {
+                    name: updateData.label || target.label,
+                    isSystem: false,
+                    listIds: [],
+                    userId: target.systemSetting.userId,
                 }
-            }
-            // If already linked, keep existing targetFolderId (don't overwrite)
+            });
+            updateData.targetFolderId = newFolder.id;
         }
+        // If already linked, keep existing targetFolderId (don't overwrite)
 
-        return await prisma.disposition.update({
+        const updated = await prisma.disposition.update({
             where: { id },
             data: updateData
         });
+
+        return { ...updated, isOwn: true };
     }
 
-    static async deleteDisposition(id: string) {
-        const disposition = await prisma.disposition.findUnique({ where: { id } });
-        if (disposition?.isSystem) throw new Error("Cannot delete system disposition");
-        if (isProtectedDispositionValue(disposition?.value)) {
+    static async deleteDisposition(id: string, userId: string) {
+        const disposition = await prisma.disposition.findUnique({
+            where: { id },
+            include: { systemSetting: { select: { userId: true } } }
+        });
+        if (!disposition) throw new Error("Disposition not found");
+        if (disposition.isSystem) throw new Error("Cannot delete system disposition");
+        if (isProtectedDispositionValue(disposition.value)) {
             throw new Error("The default Trash disposition cannot be deleted");
+        }
+        if (disposition.systemSetting.userId !== userId) {
+            throw new Error("You can only delete dispositions you own");
         }
 
         return await prisma.disposition.delete({
@@ -297,23 +384,26 @@ export class DispositionService {
     }
 
     static async reorderDispositions(userId: string, orderData: { id: string, order: number }[]) {
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { role: true, createdById: true }
-        });
-
-        // If user is AGENT, get their admin's id
-        const targetUserId = (user?.role === 'AGENT' && user?.createdById) ? user.createdById : userId;
-
-        // Verify the system setting exists and is associated with the target
+        // Reordering always operates on the caller's own account — for
+        // ADMIN/OWNER that's the shared team list, for AGENT it's their own
+        // personal dispositions. Verify every id actually belongs to the
+        // caller before touching it, so one tenant/agent can't reorder (or
+        // probe the existence of) another account's dispositions by id.
         const systemSetting = await prisma.system_Setting.findFirst({
-            where: { userId: targetUserId }
+            where: { userId }
         });
 
         if (!systemSetting) throw new Error("System settings not found");
 
+        const owned = await prisma.disposition.findMany({
+            where: { id: { in: orderData.map(item => item.id) }, systemSettingId: systemSetting.id },
+            select: { id: true }
+        });
+        const ownedIds = new Set(owned.map(d => d.id));
+        const scopedOrderData = orderData.filter(item => ownedIds.has(item.id));
+
         return await prisma.$transaction(
-            orderData.map(item =>
+            scopedOrderData.map(item =>
                 prisma.disposition.update({
                     where: { id: item.id },
                     data: { order: item.order }

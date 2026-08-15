@@ -5,6 +5,7 @@ import {
     updateDisposition,
     deleteDisposition,
     reorderDispositions,
+    setPersonalDispositionOrder,
     applyDisposition,
     getContactDispositions,
     setContactDispositions
@@ -18,6 +19,7 @@ router.post("/apply", applyDisposition as any);
 router.get("/contact/:contactId", getContactDispositions as any);
 router.put("/contact/:contactId", setContactDispositions as any);
 router.put("/reorder", reorderDispositions as any);
+router.put("/personal-order", setPersonalDispositionOrder as any);
 router.put("/:id", updateDisposition as any);
 router.delete("/:id", deleteDisposition as any);
 
