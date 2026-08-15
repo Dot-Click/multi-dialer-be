@@ -3,8 +3,8 @@ import prisma from "../lib/prisma";
 import { syncLeadsForLeadStore } from "../services/myPlusLeads.service";
 
 export function startMyPlusLeadsSyncWorker() {
-  // Runs at 2:00 AM and 6:00 AM US Central Time daily.
-  cron.schedule("0 2,6 * * *", async () => {
+  // Runs at 12:00 AM, 2:00 AM, and 6:00 AM US Central Time daily.
+  cron.schedule("0 0,2,6 * * *", async () => {
     console.log("[MyPlusLeads] Starting scheduled lead sync...");
 
     const leadStores = await prisma.leadStore.findMany({
