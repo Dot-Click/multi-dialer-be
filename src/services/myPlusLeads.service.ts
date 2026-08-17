@@ -313,7 +313,41 @@ export async function discoverAccountPackages(configId: string): Promise<{ packa
  * account with several active packages only ever feeds each customer the one
  * they're entitled to.
  */
+// Per-user sync mutex. Two overlapping sync calls for the same user (e.g. a
+// double-click on "Sync MPL", or the cron overlapping a manual sync) would
+// both `findFirst` the same MLS, both miss the dedup, and both `create` a
+// duplicate. Chain them instead: the second caller waits for the first to
+// finish, then re-runs — its own dedup pass will now see the fresh rows and
+// correctly skip.
+const userSyncQueue = new Map<string, Promise<unknown>>();
+
+async function withUserSyncLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = (userSyncQueue.get(userId) ?? Promise.resolve()) as Promise<unknown>;
+  const next = previous.catch(() => undefined).then(fn);
+  userSyncQueue.set(userId, next);
+  try {
+    return await next;
+  } finally {
+    if (userSyncQueue.get(userId) === next) userSyncQueue.delete(userId);
+  }
+}
+
 export async function syncLeadsForLeadStore(leadStoreId: string): Promise<MyPlusLeadsSyncResult> {
+  const leadStore = await prisma.leadStore.findUnique({ where: { id: leadStoreId } });
+  if (!leadStore) {
+    throw new MyPlusLeadsError("Lead Store purchase not found.", 404);
+  }
+  if (!leadStore.myPlusLeadsConfigId) {
+    throw new MyPlusLeadsError("No MyPlusLeads account is linked to this purchase.", 400);
+  }
+  if (!leadStore.assignedPackage) {
+    throw new MyPlusLeadsError("No data package has been assigned to this purchase.", 400);
+  }
+
+  return withUserSyncLock(leadStore.userId, () => syncLeadsForLeadStoreImpl(leadStore.id));
+}
+
+async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLeadsSyncResult> {
   const leadStore = await prisma.leadStore.findUnique({ where: { id: leadStoreId } });
   if (!leadStore) {
     throw new MyPlusLeadsError("Lead Store purchase not found.", 404);

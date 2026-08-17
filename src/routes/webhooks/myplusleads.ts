@@ -55,7 +55,32 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
     }
 
     const fullName = `${payload.FirstName || ""} ${payload.LastName || ""}`.trim() || "Unknown Lead";
-    
+
+    // Match the pull-sync's dedup key so a listing arriving via the push
+    // webhook AND the /listings API can't create two Contact rows for the
+    // same person. Prefer MLS number; fall back to any listing/lead id the
+    // payload carries; last-resort a stable hash of address + name so the
+    // webhook never falls back to a literal string like "MyPlusLeads".
+    const mls = payload.MLSNumber ?? payload.MLS ?? payload.mlsNumber;
+    const listingId = payload.ListingId ?? payload.listingId ?? payload.LeadId ?? payload.leadId;
+    const stableFallback = `${(payload.PropertyAddress ?? "").trim().toLowerCase()}|${fullName.toLowerCase()}`;
+    const source = mls != null ? String(mls)
+      : listingId != null ? String(listingId)
+      : stableFallback;
+
+    // Dedup against any prior import of this listing (webhook re-fires, or
+    // pull-sync already imported it).
+    const existing = await prisma.contact.findFirst({ where: { userId, source } });
+    if (existing) {
+      console.log(`[MyPlusLeads Webhook] Skipped: contact with source=${source} already exists (id=${existing.id}).`);
+      await prisma.myPlusLeadsConfig.update({
+        where: { id: config.id },
+        data: { lastSyncAt: new Date(), status: "CONNECTED" },
+      });
+      successResponse(res, 200, "Lead already imported; skipped.", { skipped: true, contactId: existing.id });
+      return;
+    }
+
     // 3. Ensure Folder exists (e.g., "MyPlusLeads - Expired")
     const folderName = `MyPlusLeads - ${leadType}`;
     let folder = await prisma.contactFolder.findFirst({
@@ -81,7 +106,7 @@ export const handleMyPlusLeadsWebhook = async (req: Request, res: Response): Pro
       mailingCity: payload.MailingCity || payload.PropertyCity || "",
       mailingState: payload.MailingState || payload.PropertyState || "",
       mailingZip: payload.MailingZip || payload.PropertyZip || "",
-      source: "MyPlusLeads",
+      source,
       tags: ["MyPlusLeads", leadType],
       notes: [`Imported from MyPlusLeads on ${new Date().toLocaleString()}`, `Lead Type: ${leadType}`],
       dataDialerId: "", // Not applicable here
