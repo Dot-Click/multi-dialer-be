@@ -27,19 +27,20 @@ function page(title: string, message: string): string {
 }
 
 /**
- * GET /api/user/verify-email?email=...&sig=...
+ * GET /api/user/verify-email?email=...&sig=...&t=...
  * Verifies the HMAC signature (same stateless pattern as the unsubscribe
- * link), marks the account emailVerified, then redirects to login. Used by
- * the "activate_url" variable in the agent-invite MailerSend template —
- * admin-created accounts (via Better Auth's /admin/create-user) never go
- * through Better Auth's own verification flow, so this is the only path
- * that sets emailVerified for them.
+ * link) plus expiry, marks the account emailVerified, then redirects to
+ * login. Used by the "activation_url" variable in the agent-invite
+ * MailerSend template — admin-created accounts (via Better Auth's
+ * /admin/create-user) never go through Better Auth's own verification
+ * flow, so this is the only path that sets emailVerified for them.
  */
 export const handleVerifyEmail = async (req: Request, res: Response): Promise<void> => {
   const email = String(req.query.email || "");
   const sig = String(req.query.sig || "");
+  const issuedAt = Number(req.query.t);
 
-  if (!isVerifyEmailSignatureValid(email, sig)) {
+  if (!isVerifyEmailSignatureValid(email, issuedAt, sig)) {
     res
       .status(400)
       .send(page("Invalid link", "This verification link is invalid or has expired."));

@@ -12,7 +12,7 @@ import { sendEmail, welcomeWithPaymentSetupTemp, memberAddedTemp, roleChangedTem
 import { emailShell, emailParagraph } from "../../utils/emailShell";
 import { envConfig } from "../../lib/config";
 import { buildSetPasswordUrl } from "../../utils/setPasswordLink";
-import { buildVerifyEmailUrl } from "../../utils/verifyEmailLink";
+import { buildVerifyEmailUrl, VERIFY_EMAIL_EXPIRY_HOURS } from "../../utils/verifyEmailLink";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
     apiVersion: "2026-04-22.dahlia",
@@ -204,8 +204,10 @@ export async function createUserInDb(payload: any) {
         ])
             .then(([admin, adminCompany]) => {
                 // Agent invite → MailerSend template "01 Welcome / Agent invite".
-                // Template expects a plaintext temp_password + an activate_url
-                // that flips emailVerified=true and redirects to login.
+                // Variable name confirmed against the template's real API
+                // snippet: {{activation_url}}, not the originally guessed
+                // activate_url — that mismatch was the entire "button
+                // doesn't work" bug.
                 sendEmail(
                     newUser.email,
                     `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
@@ -219,7 +221,8 @@ export async function createUserInDb(payload: any) {
                             email: newUser.email,
                             temp_password: password,
                             company_name: adminCompany?.companyName || "your workspace",
-                            activate_url: buildVerifyEmailUrl(newUser.email),
+                            activation_url: buildVerifyEmailUrl(newUser.email),
+                            expiry_hours: VERIFY_EMAIL_EXPIRY_HOURS,
                         },
                     },
                 ).catch(err => console.error("[UserService] Failed to send agent invite email:", err?.message ?? err));

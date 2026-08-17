@@ -18,7 +18,7 @@ import { releaseTwilioResourcesForUser } from "../services/twilio-account.servic
 import { releaseR2ResourcesForUser } from "../services/userAssetCleanup.service";
 import { getUserPlanLimits } from "../services/planLimits.service";
 import { validatePurchasedAgentSeat } from "../services/agentSeatBilling.service";
-import { buildVerifyEmailUrl } from "../utils/verifyEmailLink";
+import { buildVerifyEmailUrl, VERIFY_EMAIL_EXPIRY_HOURS } from "../utils/verifyEmailLink";
 import { buildSetPasswordUrl } from "../utils/setPasswordLink";
 
 // Define the User type to include your custom fields
@@ -417,9 +417,11 @@ export const auth = betterAuth({
             if (newUser && justCreated) {
               // Switched to MailerSend dashboard-hosted template
               // "01 Welcome / Agent invite" (client audit: use as-is).
-              // The template expects a plaintext temp_password + an
-              // activate_url that flips emailVerified=true and lands the
-              // user on the login page.
+              // Variable name confirmed against the template's real API
+              // snippet: {{activation_url}}, not the originally guessed
+              // activate_url — that mismatch was the entire "button doesn't
+              // work" bug (MailerSend just renders an unresolved/empty href
+              // for a variable it never received, no error surfaced).
               sendEmail(
                 newUser.email,
                 `You've been invited to Slingvo by ${admin?.fullName || "your admin"}`,
@@ -433,7 +435,8 @@ export const auth = betterAuth({
                     email: newUser.email,
                     temp_password: body.password || "",
                     company_name: adminCompany?.companyName || "your workspace",
-                    activate_url: buildVerifyEmailUrl(newUser.email),
+                    activation_url: buildVerifyEmailUrl(newUser.email),
+                    expiry_hours: VERIFY_EMAIL_EXPIRY_HOURS,
                   },
                 },
               ).catch((err: any) => console.error("[Auth] Failed to send agent invite email:", err?.message ?? err));
