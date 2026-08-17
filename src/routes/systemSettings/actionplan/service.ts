@@ -114,49 +114,60 @@ export class ActionPlanService {
         }
       });
 
-      // 3. Loop through steps. EMAIL, PHONE_CALL, and TASK steps are all
-      // queued as an ActionPlanStepExecution — actionPlanStep.job.ts fires
-      // each one on its due date (sending the email, or creating the
+      // 3. Build rows for every step. EMAIL, PHONE_CALL, and TASK steps are
+      // all queued as an ActionPlanStepExecution — actionPlanStep.job.ts
+      // fires each one on its due date (sending the email, or creating the
       // Callback/Task at that point) rather than the Calendar row appearing
       // immediately at assignment time. LETTER/MAILING_LABEL have no
       // dispatch mechanism yet, so they keep the old eager Calendar-row stub.
+      //
+      // Reproduced live: a plan with enough steps (e.g. an 8-week campaign)
+      // hit "Transaction already closed" because each create() was awaited
+      // one at a time inside this interactive transaction, and the combined
+      // round-trip time (worse over the DB's real network latency) blew past
+      // Prisma's 5s default transaction timeout. Batched via createMany
+      // instead of a sequential loop, with an explicit timeout as a margin
+      // for accounts with unusually long plans.
+      const stepExecutionRows: Prisma.ActionPlanStepExecutionCreateManyInput[] = [];
+      const calendarRows: Prisma.CalendarCreateManyInput[] = [];
+
       for (const step of plan.steps) {
-        let execDate = new Date(baseDate);
+        const execDate = new Date(baseDate);
         if (step.dayOffset) {
           execDate.setDate(execDate.getDate() + step.dayOffset);
         }
 
         if (step.actionType === 'EMAIL' || step.actionType === 'PHONE_CALL' || step.actionType === 'TASK') {
-          await tx.actionPlanStepExecution.create({
-            data: {
-              assignmentId: assignment.id,
-              stepId: step.id,
-              dueAt: execDate,
-              status: 'PENDING',
-            }
+          stepExecutionRows.push({
+            assignmentId: assignment.id,
+            stepId: step.id,
+            dueAt: execDate,
+            status: 'PENDING',
           });
           continue;
         }
 
         // LETTER / MAILING_LABEL — out of scope (no print/label generation
         // exists), so these remain a plain Calendar reminder for now.
-        const title = `${step.actionType}: ${plan.name} - Step ${step.order}`;
-        const description = step.contentValue || `Action Plan Step: ${step.actionType}`;
-
-        await tx.calendar.create({
-          data: {
-            title,
-            description,
-            color: '#8b5cf6',
-            eventType: 'START_ONLY',
-            category: 'TASK',
-            startDate: execDate,
-            assignToId: assignToId,
-            assignById: creatorId,
-            contactId: contactId,
-            status: 'SET'
-          }
+        calendarRows.push({
+          title: `${step.actionType}: ${plan.name} - Step ${step.order}`,
+          description: step.contentValue || `Action Plan Step: ${step.actionType}`,
+          color: '#8b5cf6',
+          eventType: 'START_ONLY',
+          category: 'TASK',
+          startDate: execDate,
+          assignToId: assignToId,
+          assignById: creatorId,
+          contactId: contactId,
+          status: 'SET'
         });
+      }
+
+      if (stepExecutionRows.length > 0) {
+        await tx.actionPlanStepExecution.createMany({ data: stepExecutionRows });
+      }
+      if (calendarRows.length > 0) {
+        await tx.calendar.createMany({ data: calendarRows });
       }
 
       // 4. Update Contact Status
@@ -166,7 +177,7 @@ export class ActionPlanService {
       });
 
       return { success: true, stepsCreated: plan.steps.length };
-    });
+    }, { timeout: 30000 });
   }
 
   /**
