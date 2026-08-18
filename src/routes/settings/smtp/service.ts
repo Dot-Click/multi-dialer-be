@@ -103,11 +103,18 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
       },
       // Nodemailer's defaults (2min connect, 10min socket) leave "Save &
       // Test" hanging that long when a host silently drops the connection
-      // instead of rejecting it cleanly (e.g. Gmail SMTP blocking cloud/
-      // datacenter IPs) — fail fast instead so the UI gets a quick answer.
+      // instead of rejecting it cleanly — fail fast instead so the UI gets
+      // a quick answer.
       connectionTimeout: 10000,
       greetingTimeout: 10000,
       socketTimeout: 15000,
+      // Force IPv4 at the socket layer. Railway has no outbound IPv6 route,
+      // and dns.setDefaultResultOrder("ipv4first") only reorders DNS results
+      // — if anything downstream still picks an IPv6 address (OS getaddrinfo
+      // quirks, nodemailer's own dns.lookup call, etc.) the connection fails
+      // instantly with ENETUNREACH. `family: 4` is passed straight through
+      // to net.createConnection and skips the AAAA lookup entirely.
+      family: 4,
     });
 
     await transporter.verify();

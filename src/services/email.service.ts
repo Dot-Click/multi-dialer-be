@@ -91,11 +91,14 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
         },
         // Same reasoning as the SMTP test-send transport (settings/smtp/service.ts):
         // nodemailer's defaults (2min connect, 10min socket) let a silently-dropped
-        // connection (e.g. Gmail SMTP blocking cloud/datacenter IPs) hang a real
-        // send for minutes instead of failing fast into the retry queue.
+        // connection hang a real send for minutes instead of failing fast
+        // into the retry queue. family: 4 forces IPv4 at the socket layer,
+        // since Railway has no outbound IPv6 route and reordering DNS results
+        // via dns.setDefaultResultOrder isn't enough on its own.
         connectionTimeout: 10000,
         greetingTimeout: 10000,
         socketTimeout: 15000,
+        family: 4,
       });
       return { kind: "smtp", transporter, fromEmail: smtpConfig.fromEmail, fromName: smtpConfig.fromName };
     }
