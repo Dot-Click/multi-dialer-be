@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { ensureTrashFolder, ensureDncFolder, moveToDncInDb } from "../../contact/service";
+import { stageForDispositionValue } from "../../tracker/stageDispositions";
 
 // Protected default dispositions: seeded for every account, shown in the user's
 // Dispositions list (NOT as system "Call Outcomes"), and cannot be edited or
@@ -166,6 +167,27 @@ export class DispositionService {
                     systemSettingId: systemSetting.id,
                 }
             });
+        }
+
+        // 2b-v. Ensure the four Prospecting Tracker funnel dispositions exist —
+        //       same tagging-only treatment as Appointment Set (no folder move on
+        //       apply, editable, not protected). "Lead" and "Appointment Set" above
+        //       already cover the first two funnel stages; these are the remaining
+        //       four. Applying one of these six writes a ProspectingStageEvent row
+        //       — see DispositionService.setContactDispositions.
+        const prospectingDefaults = [
+            { label: "Appointment Met", value: "APPOINTMENT_MET", color: "gray", icon: "CalendarCheck2", order: 8 },
+            { label: "Listing Taken", value: "LISTING_TAKEN", color: "gray", icon: "FileSignature", order: 9 },
+            { label: "Under Contract", value: "UNDER_CONTRACT", color: "gray", icon: "FileClock", order: 10 },
+            { label: "Closed", value: "CLOSED", color: "green", icon: "CheckCircle2", order: 11 },
+        ];
+        for (const def of prospectingDefaults) {
+            const existing = systemSetting.dispositions.find(d => d.value === def.value);
+            if (!existing) {
+                await prisma.disposition.create({
+                    data: { ...def, isSystem: false, isActive: true, systemSettingId: systemSetting.id }
+                });
+            }
         }
 
         // 2c. Link the two DNC call outcomes ("DNC - Contact", "DNC - Number") to the
@@ -528,21 +550,23 @@ export class DispositionService {
     }
 
     static async setContactDispositions(contactId: string, dispositionIds: string[], appliedById: string): Promise<string[]> {
-        return prisma.$transaction(async (tx) => {
-            const existing = await tx.contactDisposition.findMany({
-                where: { contactId },
-                select: { dispositionId: true },
-            });
-            const existingIds = new Set(existing.map(e => e.dispositionId));
-            const nextIds = new Set(dispositionIds);
+        // Diffing is read-only — done outside the transaction so the
+        // transaction body below only ever does the writes it actually needs.
+        const existing = await prisma.contactDisposition.findMany({
+            where: { contactId },
+            select: { dispositionId: true },
+        });
+        const existingIds = new Set(existing.map(e => e.dispositionId));
+        const nextIds = new Set(dispositionIds);
 
-            const toRemove = [...existingIds].filter(id => !nextIds.has(id));
-            const toAdd = dispositionIds.filter(id => !existingIds.has(id));
+        const toRemove = [...existingIds].filter(id => !nextIds.has(id));
+        const toAdd = dispositionIds.filter(id => !existingIds.has(id));
 
-            if (toRemove.length === 0 && toAdd.length === 0) {
-                return dispositionIds;
-            }
+        if (toRemove.length === 0 && toAdd.length === 0) {
+            return dispositionIds;
+        }
 
+        await prisma.$transaction(async (tx) => {
             if (toRemove.length > 0) {
                 await tx.contactDisposition.deleteMany({
                     where: { contactId, dispositionId: { in: toRemove } },
@@ -577,12 +601,64 @@ export class DispositionService {
                     },
                 });
             }
-
-            const result = await tx.contactDisposition.findMany({
-                where: { contactId },
-                select: { dispositionId: true },
-            });
-            return result.map(r => r.dispositionId);
         });
+
+        // Prospecting Tracker: six of these tag-style dispositions (Lead,
+        // Appointment Set/Met, Listing Taken, Under Contract, Closed) double
+        // as funnel stages. Applying one writes an immutable
+        // ProspectingStageEvent row — the funnel's source of truth. Untagging
+        // does NOT delete the event; correcting history is a deliberate
+        // DELETE /tracker/stage-event/:id, not an implicit side effect of
+        // removing a tag (see ProspectingStageEvent model comment).
+        //
+        // Deliberately OUTSIDE the transaction above: it's idempotent
+        // (upsert on contactId+stage) and doesn't need to be atomic with the
+        // tag write. Running it inside the transaction was tried first and
+        // pushed the interactive transaction's round-trip count past
+        // Prisma's default timeout against the remote DB (P2028, "Transaction
+        // already closed") — caught by testing against the live database
+        // before this shipped, not left for the client to find.
+        if (toAdd.length > 0) {
+            const addedDispositions = await prisma.disposition.findMany({
+                where: { id: { in: toAdd } },
+                select: { id: true, value: true },
+            });
+            const stageRows = addedDispositions
+                .map(d => stageForDispositionValue(d.value))
+                .filter((stage): stage is NonNullable<typeof stage> => stage !== null);
+
+            if (stageRows.length > 0) {
+                const contact = await prisma.contact.findUnique({
+                    where: { id: contactId },
+                    select: { source: true },
+                });
+                // Occurs "today" — see the Timezone open question in
+                // BUILD_SPEC.md §7. Using UTC-midnight until the tenant's
+                // Company.defaultTimeZone is threaded through every call site
+                // that can trigger a disposition change (calling controller,
+                // contact detail page, bulk actions).
+                const occurredOn = new Date(new Date().toISOString().slice(0, 10));
+
+                for (const stage of stageRows) {
+                    await prisma.prospectingStageEvent.upsert({
+                        where: { contactId_stage: { contactId, stage } },
+                        update: {},
+                        create: {
+                            contactId,
+                            userId: appliedById,
+                            stage,
+                            occurredOn,
+                            source: contact?.source ?? null,
+                        },
+                    });
+                }
+            }
+        }
+
+        const result = await prisma.contactDisposition.findMany({
+            where: { contactId },
+            select: { dispositionId: true },
+        });
+        return result.map(r => r.dispositionId);
     }
 }

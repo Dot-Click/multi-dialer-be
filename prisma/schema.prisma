@@ -292,6 +292,14 @@ model User {
   planChanges      SubscriptionPlanChange[]
   emailPreferences UserEmailPreferences?
 
+  // Prospecting Tracker
+  prospectingBusinessPlans   ProspectingBusinessPlan[]
+  prospectingStageEvents     ProspectingStageEvent[]
+  prospectingSessions        ProspectingSession[]
+  // Appearing on a tenant leaderboard is a choice, not a default — matches
+  // the client's own migration spec (`leaderboard_opt_in` defaults false).
+  prospectingLeaderboardOptIn Boolean @default(false)
+
   @@map("users")
 }
 
@@ -478,6 +486,9 @@ model Contact {
   currentDispositions   ContactDisposition[]
   activityLogs          ContactActivityLog[]
   actionPlanAssignments ContactActionPlan[]
+
+  // Prospecting Tracker funnel event trail — see ProspectingStageEvent.
+  prospectingStageEvents ProspectingStageEvent[]
 
   folderIds String[] @default([])
 
@@ -1109,6 +1120,21 @@ enum ExternalProvider {
 enum CalendarSyncProvider {
   GOOGLE
   OUTLOOK
+}
+
+// Prospecting Tracker funnel stages, in order. "LEAD" and "APPT_SET" overlap
+// in meaning with the pre-existing Disposition rows of the same name (seeded
+// by DispositionService) — applying either of those two Dispositions to a
+// contact is what writes the LEAD / APPT_SET row here (see
+// setContactDispositions in dispositions/service.ts). The other four stages
+// have no existing Disposition equivalent and are seeded fresh.
+enum ProspectingStage {
+  LEAD
+  APPT_SET
+  APPT_MET
+  LISTING_TAKEN
+  UNDER_CONTRACT
+  CLOSED
 }
 
 model Lead {
@@ -2178,4 +2204,151 @@ model UserEmailPreferences {
   updatedAt DateTime @updatedAt
 
   @@map("user_email_preferences")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROSPECTING TRACKER
+// Conversion funnel + business-plan module. Domain math (targets, KPIs,
+// streaks) lives in src/domain/prospecting — pure functions, no Prisma import,
+// carried over unchanged from the client-supplied spec (68 passing tests).
+// These three tables are this feature's only schema footprint:
+//   - business plan inputs (one row per agent per plan year)
+//   - the funnel event trail (one row per contact per stage reached)
+//   - manual override / historical backfill (rare; corrects or backfills
+//     what the dialer + funnel events would otherwise derive)
+// Hours and Contacts are NOT stored here — they're read live from
+// AgentSession.duration and ContactDispositionLog (value "CONTACT") by the
+// tracker service layer, matching how Reports already computes Connection
+// Rate. See BUILD_SPEC.md / INTEGRATION.md in the client handoff for the
+// full contract.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ProspectingBusinessPlan {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  planYear Int
+
+  // Goal inputs
+  netIncomeGoal        Decimal @db.Decimal(14, 2)
+  avgCommissionRatePct Decimal @default(2.9) @db.Decimal(6, 3)
+  avgPricePoint        Decimal @default(400000) @db.Decimal(14, 2)
+  profitMarginPct      Decimal @default(70) @db.Decimal(6, 3)
+
+  // Conversion assumptions. Whole numbers: 70 means 70%, matching
+  // BusinessPlanInputs in the domain layer.
+  contactsPerHour   Decimal @default(7) @db.Decimal(8, 3)
+  contactToLeadPct  Decimal @default(10) @db.Decimal(6, 3)
+  leadToSetPct      Decimal @default(20) @db.Decimal(6, 3)
+  setToMetPct       Decimal @default(50) @db.Decimal(6, 3)
+  metToTakenPct     Decimal @default(50) @db.Decimal(6, 3)
+
+  // 8-stage mode (Saleslytics-identical)
+  takenToClosedPct Decimal @default(70) @db.Decimal(6, 3)
+  // 9-stage mode (Slingvo default) — 85 x 82.4 composes to ~70%
+  takenToUnderContractPct  Decimal @default(85) @db.Decimal(6, 3)
+  underContractToClosedPct Decimal @default(82.4) @db.Decimal(6, 3)
+  includeUnderContract     Boolean @default(true)
+
+  // 50 x 5 reproduces Saleslytics' /50 weekly and /250 daily divisors.
+  workingWeeksPerYear Int @default(50)
+  workingDaysPerWeek  Int @default(5)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, planYear])
+  @@map("prospecting_business_plans")
+}
+
+// One row each time a contact reaches a funnel stage. Immutable history —
+// correcting a mistake means deleting the row (DELETE /tracker/stage-event/:id),
+// not mutating a counter. Written automatically by
+// DispositionService.setContactDispositions/applyDisposition when a funnel
+// Disposition is applied (see ProspectingStage enum comment), and directly by
+// POST /tracker/stage-event for cases the CRM flow doesn't cover.
+model ProspectingStageEvent {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  stage ProspectingStage
+
+  // The DAY the stage was reached, in the agent's timezone (Company.defaultTimeZone
+  // — see resolveCompanyContext). Not a timestamp: a stage belongs to a calendar
+  // day, and storing an instant creates off-by-one-day bugs the first time
+  // someone works late or travels.
+  occurredOn DateTime @db.Date
+
+  // Only meaningful when stage = CLOSED. Kept on the event so a closing's
+  // commission travels with the fact that produced it, rather than living on
+  // Contact (which would be overwritten by the next closing on a re-listed
+  // property).
+  gci Decimal @default(0) @db.Decimal(14, 2)
+
+  // Calling list / channel at the time of the event (Expireds, FSBO, …).
+  // Denormalised deliberately: retagging a contact later must not silently
+  // rewrite last quarter's channel attribution.
+  source String?
+  note   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // A contact reaches each stage once. Re-entering (a fell-through listing
+  // that relists) is a new contact record or a deliberate delete + reinsert.
+  @@unique([contactId, stage])
+  @@index([userId, occurredOn])
+  @@index([userId, stage, occurredOn])
+  @@index([userId, source])
+  @@map("prospecting_stage_events")
+}
+
+// Manual override + historical backfill. This is NOT the primary source for
+// Hours/Contacts/funnel stages — those are derived live from AgentSession,
+// ContactDispositionLog and ProspectingStageEvent. A row here exists only for:
+//   (a) Jason's 42 historical days, imported once with isOverride = true, and
+//   (b) an agent correcting what the system inferred for a specific day.
+// Resolution rule (implement in the API, not here, so it's testable): for
+// each (user, day, source), if a ProspectingSession row exists, it WINS for
+// the columns it sets; otherwise use the derived daily rollup.
+model ProspectingSession {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // A DATE, never a timestamp — see ProspectingStageEvent.occurredOn comment.
+  loggedOn DateTime @db.Date
+
+  // Channel: Expireds, FSBO, Circle Prospecting, SOI, Open House, ...
+  source String?
+
+  // Provenance, so the UI can show an "edited" marker and never leave anyone
+  // wondering why a figure differs from the dialer.
+  isOverride Boolean @default(true)
+
+  hours         Decimal @default(0) @db.Decimal(6, 2)
+  contacts      Int     @default(0)
+  leads         Int     @default(0)
+  apptsSet      Int     @default(0)
+  apptsMet      Int     @default(0)
+  listingsTaken Int     @default(0)
+  underContract Int     @default(0)
+  closed        Int     @default(0)
+  gci           Decimal @default(0) @db.Decimal(14, 2)
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One row per agent per day per channel. Logging a second Expireds block on
+  // the same day must UPDATE this row (upsert), not insert a duplicate that
+  // silently double-counts.
+  @@unique([userId, loggedOn, source])
+  @@index([userId, loggedOn])
+  @@map("prospecting_sessions")
 }
