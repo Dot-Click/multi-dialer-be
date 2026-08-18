@@ -101,6 +101,13 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
         user: config.username,
         pass: decryptSmtpPassword(config.password),
       },
+      // Nodemailer's defaults (2min connect, 10min socket) leave "Save &
+      // Test" hanging that long when a host silently drops the connection
+      // instead of rejecting it cleanly (e.g. Gmail SMTP blocking cloud/
+      // datacenter IPs) — fail fast instead so the UI gets a quick answer.
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
 
     await transporter.verify();
