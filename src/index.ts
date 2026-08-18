@@ -1,3 +1,13 @@
+import dns from "dns";
+// Railway's containers have no outbound IPv6 route. Hosts that publish both
+// A and AAAA records (e.g. smtp.gmail.com) can still resolve to an IPv6
+// address by default, which then fails instantly with ENETUNREACH instead of
+// falling back to IPv4 — Node only falls back on a *timeout*, not on a
+// same-family unreachable error. Forcing IPv4-first here (process-wide, so
+// it covers nodemailer's SMTP connections along with everything else) avoids
+// ever attempting the unreachable IPv6 address in the first place.
+dns.setDefaultResultOrder("ipv4first");
+
 import express, { Request, Response } from "express";
 import morgan from "morgan";
 import cors from "cors";
