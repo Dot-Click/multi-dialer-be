@@ -2,6 +2,10 @@ import prisma from "@/lib/prisma";
 import { ensureTrashFolder, ensureDncFolder, moveToDncInDb } from "../../contact/service";
 import { stageForDispositionValue } from "../../tracker/stageDispositions";
 
+function throwHttp(statusCode: number, message: string): never {
+    throw { message, statusCode };
+}
+
 // Protected default dispositions: seeded for every account, shown in the user's
 // Dispositions list (NOT as system "Call Outcomes"), and cannot be edited or
 // deleted. Matched by their `value`.
@@ -442,6 +446,20 @@ export class DispositionService {
         source: 'CALL' | 'MANUAL';
     }) {
         const { contactId, dispositionId, appliedById, overrideFolderId, callRecordId, source } = params;
+
+        // Guard against a stale frontend still holding a contact that's since
+        // been merged (mergeContactsInDb) or hard-deleted as an orphan
+        // (bulkDeleteContactsInDb's purgeOrphans) — without this check, the
+        // first sign of trouble was a raw Prisma FK-violation stack trace out
+        // of contactDispositionLog.create() below, since nothing here
+        // verified the contact still existed before writing to it.
+        const contactExists = await prisma.contact.findUnique({
+            where: { id: contactId },
+            select: { id: true }
+        });
+        if (!contactExists) {
+            throwHttp(404, "This contact no longer exists — it may have been merged or deleted. Please refresh and try again.");
+        }
 
         // 1. Fetch disposition to get its default targetFolderId
         const disposition = await prisma.disposition.findUniqueOrThrow({

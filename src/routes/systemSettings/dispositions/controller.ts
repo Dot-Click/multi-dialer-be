@@ -121,7 +121,7 @@ export const applyDisposition: RequestHandler = async (req, res) => {
 
         successResponse(res, 200, "Disposition applied successfully", result);
     } catch (error: any) {
-        errorResponse(res, { message: error.message });
+        errorResponse(res, { message: error.message }, error?.statusCode || 500);
     }
 };
 

@@ -91,7 +91,7 @@ router.use("/settings/smtp", protectRoute, checkRole(["ADMIN", "OWNER"]), smtpSe
 router.use("/contact", protectRoute, contactRoutes)
 router.use("/contact-list", protectRoute, contactListRoutes)
 router.use("/user", protectRoute, userRoutes)
-router.use("/company", protectRoute, checkRole(["OWNER"]), companyRoutes)
+router.use("/company", protectRoute, checkRole(["ADMIN", "OWNER"]), companyRoutes)
 router.use("/reports", protectRoute, reportRoutes)
 router.use("/tracker", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), trackerRoutes)
 
