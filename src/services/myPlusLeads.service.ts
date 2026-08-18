@@ -481,11 +481,16 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
       const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
       const existing = await prisma.contact.findFirst({
         where: { userId, source },
-        select: { id: true, miscValues: true, description: true, tags: true },
+        select: { id: true, miscValues: true, description: true },
       });
       if (existing) {
         // Backfill fields that were empty for contacts imported before the
-        // full property-detail mapping shipped.
+        // full property-detail mapping shipped. Deliberately do NOT touch
+        // tags or list membership here — once a contact is imported, list
+        // membership belongs to the user (they may have called it, moved it,
+        // or removed it on purpose), and re-adding it on every sync would
+        // undo their workflow. If the user wants automatic realignment they
+        // can trigger it explicitly via the repair action.
         const currentMisc = (existing.miscValues as Record<string, string> | null) ?? null;
         const hasNoMisc = !currentMisc || Object.keys(currentMisc).length === 0;
         const hasNoDescription = !existing.description || existing.description.trim() === "";
@@ -497,33 +502,8 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
         if (hasNoDescription && listing.propertyDetails?.remarks) {
           patch.description = listing.propertyDetails.remarks;
         }
-        // Keep the MyPlusLeads status tag in sync with the current MPL state —
-        // a listing tagged Expired here may now be Withdrawn there. Strip any
-        // prior status tag and stamp today's, without touching user-added tags.
-        const KNOWN_STATUSES = new Set(["Expired", "Withdrawn", "Canceled", "FSBO", "FRBO", "PreForclosure", "PreForeclosure"]);
-        const keptTags = existing.tags.filter((t) => !KNOWN_STATUSES.has(t));
-        const desiredTags = ["MyPlusLeads", ...keptTags.filter((t) => t !== "MyPlusLeads"), currentStatus];
-        const tagsChanged =
-          desiredTags.length !== existing.tags.length ||
-          desiredTags.some((t, i) => t !== existing.tags[i]);
-        if (tagsChanged) patch.tags = desiredTags;
         if (Object.keys(patch).length > 0) {
           await prisma.contact.update({ where: { id: existing.id }, data: patch });
-        }
-        // Heal list membership: if the contact isn't in the correct status
-        // list right now (maybe removed manually, or landed in a different
-        // list under an old naming scheme), add it back.
-        const targetList = await getOrCreateList(currentStatus);
-        const listWithMembers = await prisma.contactList.findUnique({
-          where: { id: targetList.id },
-          select: { contactIds: true },
-        });
-        const memberIds = new Set((listWithMembers?.contactIds ?? []) as string[]);
-        if (!memberIds.has(existing.id)) {
-          await prisma.contactList.update({
-            where: { id: targetList.id },
-            data: { contactIds: { push: existing.id } },
-          });
         }
         skipped++;
         continue;
@@ -637,6 +617,64 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
     imported,
     skipped,
   };
+}
+
+/**
+ * Manual repair — for each MPL-tagged contact this user owns, put it back
+ * into the top-level ContactList named after its status tag (creating the
+ * list if missing). Intended for the admin "Repair MPL Lists" action, NEVER
+ * called from the automatic sync — because after a lead is imported, list
+ * membership belongs to the user (they may have removed it on purpose).
+ * Additive: nothing is removed from any other list.
+ */
+export type MyPlusLeadsRepairResult = { status: string; tagged: number; added: number; alreadyIn: number }[];
+
+export async function repairListMembershipForUser(userId: string): Promise<MyPlusLeadsRepairResult> {
+  const STATUS_TAGS = ["Expired", "Withdrawn", "Canceled", "FSBO", "FRBO", "PreForclosure", "PreForeclosure"];
+  const result: MyPlusLeadsRepairResult = [];
+  const cache = new Map<string, { id: string; contactIds: string[] }>();
+
+  const getList = async (name: string) => {
+    if (cache.has(name)) return cache.get(name)!;
+    let list = await prisma.contactList.findFirst({
+      where: { userId, name, folderId: null },
+      select: { id: true, contactIds: true },
+    });
+    if (!list) {
+      list = await prisma.contactList.create({
+        data: { name, userId, contactIds: [] },
+        select: { id: true, contactIds: true },
+      });
+    }
+    const entry = { id: list.id, contactIds: [...(list.contactIds as string[])] };
+    cache.set(name, entry);
+    return entry;
+  };
+
+  for (const status of STATUS_TAGS) {
+    const tagged = await prisma.contact.findMany({
+      where: { userId, tags: { has: status } },
+      select: { id: true },
+    });
+    if (tagged.length === 0) continue;
+    const list = await getList(status);
+    const memberSet = new Set(list.contactIds);
+    const toAdd: string[] = [];
+    let alreadyIn = 0;
+    for (const c of tagged) {
+      if (memberSet.has(c.id)) alreadyIn++;
+      else toAdd.push(c.id);
+    }
+    if (toAdd.length > 0) {
+      await prisma.contactList.update({
+        where: { id: list.id },
+        data: { contactIds: { push: toAdd } },
+      });
+      for (const id of toAdd) list.contactIds.push(id);
+    }
+    result.push({ status, tagged: tagged.length, added: toAdd.length, alreadyIn });
+  }
+  return result;
 }
 
 /**

@@ -38,7 +38,7 @@ import notificationRoutes from "./notification"
 import emailHistoryRoutes from "./email-history"
 import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
 import a2pRoutes from "./a2p";
-import { getMyPlusLeadsConfig, syncMyPlusLeads } from "./integrations/myplusleads.controller";
+import { getMyPlusLeadsConfig, syncMyPlusLeads, repairMyPlusLeadsLists } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import superAdminCallerIdRoutes from "./super-admin/caller-ids"
 import { checkFeatureLocked } from "../middlewares/featureLock.middleware";
@@ -51,6 +51,7 @@ import agentSeatsRoutes from "./agentSeats";
 import smtpSettingsRoutes from "./settings/smtp";
 import emailAnalyticsRoutes from "./email-analytics";
 import emailPreferencesRoutes from "./email-preferences";
+import trackerRoutes from "./tracker";
 
 const router = Router()
 
@@ -92,6 +93,7 @@ router.use("/contact-list", protectRoute, contactListRoutes)
 router.use("/user", protectRoute, userRoutes)
 router.use("/company", protectRoute, checkRole(["OWNER"]), companyRoutes)
 router.use("/reports", protectRoute, reportRoutes)
+router.use("/tracker", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), trackerRoutes)
 
 
 router.use("/calling", callingRoutes)
@@ -114,6 +116,7 @@ router.use("/a2p", a2pRoutes)
 router.post("/webhooks/myplusleads/:userId", handleMyPlusLeadsWebhook);
 router.get("/integrations/myplusleads", protectRoute, getMyPlusLeadsConfig);
 router.post("/integrations/myplusleads/sync", protectRoute, syncMyPlusLeads);
+router.post("/integrations/myplusleads/repair", protectRoute, repairMyPlusLeadsLists);
 
 // Lead Store (customer-facing billing)
 router.use("/lead-store", leadStoreRoutes);
