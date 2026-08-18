@@ -1,6 +1,7 @@
 // import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { MailerSend, EmailParams, Sender, Recipient } from "mailersend";
 import nodemailer from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import { envConfig } from "../lib/config";
 import prisma from "../lib/prisma";
 import { EmailStatus } from "@prisma/client";
@@ -79,6 +80,9 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
     const smtpConfig = await prisma.smtpConfig.findUnique({ where: { companyId } });
     if (smtpConfig) {
       const smtpSecure = smtpConfig.port === 465 ? true : false;
+      // `family: 4` is accepted by nodemailer at runtime (forwarded to
+      // net.createConnection) but not declared on SMTPTransport.Options —
+      // see the matching cast in settings/smtp/service.ts for details.
       const transporter = nodemailer.createTransport({
         host: smtpConfig.host,
         port: smtpConfig.port,
@@ -99,7 +103,7 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
         greetingTimeout: 10000,
         socketTimeout: 15000,
         family: 4,
-      });
+      } as SMTPTransport.Options);
       return { kind: "smtp", transporter, fromEmail: smtpConfig.fromEmail, fromName: smtpConfig.fromName };
     }
   }

@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import prisma from "../../../lib/prisma";
 import { encryptSmtpPassword, decryptSmtpPassword } from "../../../utils/encryption";
 
@@ -91,6 +92,12 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
 
   try {
     const smtpSecure = config.port === 465 ? true : false;
+    // `family: 4` is accepted by nodemailer at runtime (forwarded to
+    // net.createConnection) but is not declared on SMTPTransport.Options,
+    // so we cast to bypass the excess-property check. Without this cast
+    // TypeScript falls through to the generic TransportOptions overload
+    // and complains about `host` not existing — misleading, since the
+    // real mismatch is `family`.
     const transporter = nodemailer.createTransport({
       host: config.host,
       port: config.port,
@@ -115,7 +122,7 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
       // instantly with ENETUNREACH. `family: 4` is passed straight through
       // to net.createConnection and skips the AAAA lookup entirely.
       family: 4,
-    });
+    } as SMTPTransport.Options);
 
     await transporter.verify();
 
