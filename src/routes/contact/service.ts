@@ -2621,7 +2621,7 @@ export const getDuplicateContactsFromDb = async (userId: string, listId?: string
   ]);
 
   // ── 3. Tag with Reason and Locations ───────────────────────────────────────────
-  return contacts.map(c => {
+  const tagged = contacts.map(c => {
     const reasons: string[] = [];
     if (c.phones.some(p => dupPhoneNumbers.includes(p.number))) reasons.push("Phone Match");
     if (c.emails.some(e => dupEmailAddresses.includes(e.email))) reasons.push("Email Match");
@@ -2654,6 +2654,88 @@ export const getDuplicateContactsFromDb = async (userId: string, listId?: string
       listNames,
     };
   });
+
+  // ── 4. Group matched contacts into clusters (union-find) so the pairs/
+  // groups that actually match each other come back ADJACENT in the list,
+  // instead of scattered across an alphabetically-sorted flat array. Two
+  // contacts are unioned into the same cluster whenever they share a
+  // flagged phone, email, property address, or mailing address — and this
+  // is transitive (A↔B by phone, B↔C by address ⇒ A, B, C are one cluster),
+  // so the whole "family" of a duplicate ends up grouped together, not just
+  // exact pairs. This is what makes it possible for the frontend to render
+  // matches "coupled right near one another."
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    const p = parent.get(x);
+    if (p === undefined) {
+      parent.set(x, x);
+      return x;
+    }
+    if (p === x) return x;
+    const root = find(p);
+    parent.set(x, root);
+    return root;
+  };
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  const unionBySharedKey = (keyFn: (c: (typeof tagged)[number]) => string | null) => {
+    const byKey = new Map<string, string[]>();
+    for (const c of tagged) {
+      const key = keyFn(c);
+      if (!key) continue;
+      const ids = byKey.get(key) ?? [];
+      ids.push(c.id);
+      byKey.set(key, ids);
+    }
+    for (const ids of byKey.values()) {
+      for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
+    }
+  };
+
+  unionBySharedKey(c => {
+    const match = c.phones.find(p => dupPhoneNumbers.includes(p.number));
+    return match ? `phone:${match.number}` : null;
+  });
+  unionBySharedKey(c => {
+    const match = c.emails.find(e => dupEmailAddresses.includes(e.email));
+    return match ? `email:${match.email}` : null;
+  });
+  unionBySharedKey(c =>
+    dupPropAddresses.some(addr => addr.address === c.address && addr.city === c.city && addr.state === c.state && addr.zip === c.zip)
+      ? `propAddr:${c.address}|${c.city}|${c.state}|${c.zip}`
+      : null
+  );
+  unionBySharedKey(c =>
+    dupMailAddresses.some(addr => addr.mailingAddress === c.mailingAddress && addr.mailingCity === c.mailingCity && addr.mailingState === c.mailingState && addr.mailingZip === c.mailingZip)
+      ? `mailAddr:${c.mailingAddress}|${c.mailingCity}|${c.mailingState}|${c.mailingZip}`
+      : null
+  );
+
+  const grouped = tagged.map(c => ({ ...c, duplicateGroupId: find(c.id) }));
+
+  // Cluster size (for a "Group of N" badge) and a stable per-cluster sort
+  // key (earliest fullName in the cluster) so clusters are ordered
+  // predictably and every member of a cluster lands on consecutive rows.
+  const groupSizes = new Map<string, number>();
+  const groupSortKey = new Map<string, string>();
+  for (const c of grouped) {
+    groupSizes.set(c.duplicateGroupId, (groupSizes.get(c.duplicateGroupId) ?? 0) + 1);
+    const name = (c.fullName || "").toLowerCase();
+    const existing = groupSortKey.get(c.duplicateGroupId);
+    if (existing === undefined || name < existing) groupSortKey.set(c.duplicateGroupId, name);
+  }
+
+  return grouped
+    .map(c => ({ ...c, duplicateGroupSize: groupSizes.get(c.duplicateGroupId) ?? 1 }))
+    .sort((a, b) => {
+      const groupCompare = groupSortKey.get(a.duplicateGroupId)!.localeCompare(groupSortKey.get(b.duplicateGroupId)!);
+      if (groupCompare !== 0) return groupCompare;
+      if (a.duplicateGroupId !== b.duplicateGroupId) return a.duplicateGroupId.localeCompare(b.duplicateGroupId);
+      return (a.fullName || "").toLowerCase().localeCompare((b.fullName || "").toLowerCase());
+    });
 };
 
 // ---------------------------------------------------------------------------
