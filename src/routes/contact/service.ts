@@ -8,6 +8,7 @@ import { resolveTenantUserIds, resolveTenantRootId } from "../../utils/tenant";
 import { resolveCompanyContext } from "../../utils/resolveCompany";
 import { startOfTodayInTimezone } from "../../utils/timezone";
 import { ActionPlanService } from "../systemSettings/actionplan/service";
+import { tombstoneMplContacts } from "../../services/mplTombstone.service";
 
 
 function throwHttp(statusCode: number, message: string): never {
@@ -516,7 +517,11 @@ export async function deleteContactFromDb(id: string, userId: string) {
       },
     });
 
-    // 5. Delete the contact from the Contact table
+    // 5. Tombstone if this was an MPL-tagged import, so the sync does not
+    //    re-create it on the next cron run.
+    await tombstoneMplContacts(tx, [id]);
+
+    // 6. Delete the contact from the Contact table
     await tx.contact.delete({ where: { id } });
   });
 
@@ -2717,6 +2722,7 @@ export async function bulkDeleteContactsInDb(
         data: { contactIds: g.contactIds.filter(id => !ids.includes(id)) }
       })));
 
+      await tombstoneMplContacts(tx, ids);
       await tx.contact.deleteMany({ where: { id: { in: ids } } });
 
       await tx.auditLog.create({
@@ -2899,6 +2905,7 @@ export async function bulkDeleteContactsInDb(
     })));
 
     // 5. Delete all contact records
+    await tombstoneMplContacts(tx, contactIds);
     await tx.contact.deleteMany({
       where: { id: { in: contactIds } }
     });

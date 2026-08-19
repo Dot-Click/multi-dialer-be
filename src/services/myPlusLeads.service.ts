@@ -469,6 +469,14 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
     return values;
   };
 
+  // Tombstoned sources: MLS numbers the user has hard-deleted from Contacts.
+  // We refuse to re-import them below. Loaded once per sync run.
+  const tombstoned = await prisma.myPlusLeadsDeletedSource.findMany({
+    where: { userId },
+    select: { source: true },
+  });
+  const tombstonedSources = new Set(tombstoned.map((t) => t.source));
+
   for (const listingChunk of chunkArray(listings, 50)) {
     for (const listing of listingChunk) {
       const contact1 = listing.contact1;
@@ -505,6 +513,14 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
         if (Object.keys(patch).length > 0) {
           await prisma.contact.update({ where: { id: existing.id }, data: patch });
         }
+        skipped++;
+        continue;
+      }
+
+      // Skip listings the user has deliberately deleted before. Without this,
+      // sync would silently re-create the contact from scratch on the next
+      // cron run because findFirst above returned null.
+      if (tombstonedSources.has(source)) {
         skipped++;
         continue;
       }

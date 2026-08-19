@@ -267,6 +267,7 @@ model User {
   emailLogs                    EmailLog[]
   smsLogs                      SmsLog[]
   myPlusLeadsConfigs           MyPlusLeadsConfig[]
+  myPlusLeadsDeletedSources    MyPlusLeadsDeletedSource[]
   a2pRegistration              A2P_Registration?
   phoneNumberSubscription      PhoneNumberSubscription?
   agentSeatSubscription        AgentSeatSubscription?
@@ -2088,6 +2089,23 @@ model MyPlusLeadsConfig {
   updatedAt DateTime @updatedAt
 
   @@map("my_plus_leads_configs")
+}
+
+// Tombstone: an MPL listing (identified by MLS number stored in Contact.source)
+// that the user has hard-deleted. The sync consults this before importing a new
+// contact — if the (userId, source) pair is here, the listing is skipped so
+// deleted leads do not reappear on the next cron run. Only rows for contacts
+// tagged "MyPlusLeads" are written here.
+model MyPlusLeadsDeletedSource {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source    String
+  deletedAt DateTime @default(now())
+
+  @@unique([userId, source])
+  @@index([userId])
+  @@map("my_plus_leads_deleted_sources")
 }
 
 model ContactDispositionLog {
