@@ -787,7 +787,7 @@ export async function assignContactToListInDb(
 
     const newList = await tx.contactList.findUnique({
       where: { id: listId },
-      select: { id: true, name: true, contactIds: true },
+      select: { id: true, name: true, contactIds: true, folderId: true },
     });
     if (!newList) throwHttp(404, "Target List not found");
 
@@ -813,9 +813,47 @@ export async function assignContactToListInDb(
       });
     }
 
+    // MOVE (not copy) semantics: sync folder membership to match the target
+    // list. If the list lives inside a folder, the contact ends up in exactly
+    // that folder; if the list has no parent folder, the contact's folder
+    // membership is cleared. Without this, Contact.folderIds retained the
+    // source folder and the contact showed up in BOTH the list view and its
+    // old folder view — the "copy" bug.
+    const containingFolderId = newList.folderId ?? null;
+    const newFolderIds = containingFolderId ? [containingFolderId] : [];
+
+    // Scrub the redundant ContactFolder.contactIds mirror on every folder
+    // except the containing one — same reasoning bulkAssignContactsToFolder
+    // uses when moving in the reverse direction.
+    const staleFolders = await tx.contactFolder.findMany({
+      where: {
+        contactIds: { has: contactId },
+        ...(containingFolderId ? { id: { not: containingFolderId } } : {}),
+      },
+      select: { id: true, contactIds: true },
+    });
+    for (const f of staleFolders) {
+      await tx.contactFolder.update({
+        where: { id: f.id },
+        data: { contactIds: f.contactIds.filter((id) => id !== contactId) },
+      });
+    }
+    if (containingFolderId) {
+      const folder = await tx.contactFolder.findUnique({
+        where: { id: containingFolderId },
+        select: { contactIds: true },
+      });
+      if (folder && !folder.contactIds.includes(contactId)) {
+        await tx.contactFolder.update({
+          where: { id: containingFolderId },
+          data: { contactIds: { push: contactId } },
+        });
+      }
+    }
+
     return tx.contact.update({
       where: { id: contactId },
-      data: { source: newList.name },
+      data: { source: newList.name, folderIds: newFolderIds },
       include: { emails: true, phones: true },
     });
   });
@@ -1386,7 +1424,7 @@ export async function bulkAssignContactsToListInDb(
   return prisma.$transaction(async (tx) => {
     const newList = await tx.contactList.findUnique({
       where: { id: listId },
-      select: { id: true, name: true, contactIds: true },
+      select: { id: true, name: true, contactIds: true, folderId: true },
     });
     if (!newList) throwHttp(404, "Target List not found");
 
@@ -1413,10 +1451,45 @@ export async function bulkAssignContactsToListInDb(
       data: { contactIds: mergedTarget },
     });
 
-    // Stamp the source on the moved contacts.
+    // MOVE (not copy) semantics: sync folder membership to match the target
+    // list. See assignContactToListInDb above for the rationale — without
+    // this, Contact.folderIds retained the source folder and the contacts
+    // showed up in BOTH the list view and their old folder view.
+    const containingFolderId = newList.folderId ?? null;
+    const newFolderIds = containingFolderId ? [containingFolderId] : [];
+
+    const staleFolders = await tx.contactFolder.findMany({
+      where: {
+        contactIds: { hasSome: contactIds },
+        ...(containingFolderId ? { id: { not: containingFolderId } } : {}),
+      },
+      select: { id: true, contactIds: true },
+    });
+    for (const f of staleFolders) {
+      await tx.contactFolder.update({
+        where: { id: f.id },
+        data: { contactIds: f.contactIds.filter((id) => !movedSet.has(id)) },
+      });
+    }
+    if (containingFolderId) {
+      const folder = await tx.contactFolder.findUnique({
+        where: { id: containingFolderId },
+        select: { contactIds: true },
+      });
+      if (folder) {
+        const mergedFolderIds = Array.from(new Set([...folder.contactIds, ...contactIds]));
+        await tx.contactFolder.update({
+          where: { id: containingFolderId },
+          data: { contactIds: mergedFolderIds },
+        });
+      }
+    }
+
+    // Stamp the source on the moved contacts, and sync their folderIds to the
+    // target list's containing folder (see block above).
     await tx.contact.updateMany({
       where: { id: { in: contactIds } },
-      data: { source: newList.name },
+      data: { source: newList.name, folderIds: newFolderIds },
     });
 
     return { success: true, listName: newList.name };
