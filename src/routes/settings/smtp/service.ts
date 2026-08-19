@@ -11,14 +11,46 @@ const MASKED_PASSWORD = "••••••";
 
 // Resolves the company for the acting user — agents use their creating
 // admin/owner's company, mirroring the pattern used for other integrations.
-export async function resolveCompanyIdForUser(userId: string, role: string, createdById: string | null | undefined) {
+// Read-only: returns null (rather than throwing) when the account has no
+// Company row yet. SMTP setup does not require a Company profile to exist —
+// callers that need to persist a config should use
+// resolveOrCreateCompanyIdForUser instead.
+export async function resolveCompanyIdForUser(
+  userId: string,
+  role: string,
+  createdById: string | null | undefined
+): Promise<string | null> {
   const targetUserId = role === "AGENT" && createdById ? createdById : userId;
   const company = await prisma.company.findFirst({
     where: { userId: targetUserId },
     select: { id: true },
   });
-  if (!company) throwHttp(404, "No company found for this account. Please set up your company first.");
-  return company.id;
+  return company?.id ?? null;
+}
+
+// Same target-user resolution as resolveCompanyIdForUser, but transparently
+// creates a minimal Company row (just the userId — every other column has a
+// schema default) when one doesn't exist yet, instead of rejecting the
+// request. SmtpConfig.companyId is a required, unique foreign key, so a
+// company row has to exist for a config to be saved against — but the user
+// should never have to fill out a Company profile just to send email.
+export async function resolveOrCreateCompanyIdForUser(
+  userId: string,
+  role: string,
+  createdById: string | null | undefined
+): Promise<string> {
+  const targetUserId = role === "AGENT" && createdById ? createdById : userId;
+  const existing = await prisma.company.findFirst({
+    where: { userId: targetUserId },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.company.create({
+    data: { userId: targetUserId },
+    select: { id: true },
+  });
+  return created.id;
 }
 
 export async function getSmtpConfigFromDb(companyId: string) {
