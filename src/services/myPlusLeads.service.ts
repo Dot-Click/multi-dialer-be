@@ -479,14 +479,32 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
 
   for (const listingChunk of chunkArray(listings, 50)) {
     for (const listing of listingChunk) {
+      const currentStatus = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
+      const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
+
+      // Resolve a display name for this listing. MPL sometimes returns
+      // listings (Expired / Withdrawn / FRBO) with no contact1 populated —
+      // the owner block still has one. Fall back through contact2 and owner
+      // before dropping the listing, and log the skip with enough info to
+      // debug rather than silently dropping.
       const contact1 = listing.contact1;
-      if (!contact1?.name) {
+      const owner = listing.owner;
+      const ownerFullName = owner
+        ? owner.name?.trim() || [owner.firstName, owner.lastName].filter(Boolean).join(" ").trim() || undefined
+        : undefined;
+      const resolvedName =
+        contact1?.name?.trim() ||
+        listing.contact2?.name?.trim() ||
+        ownerFullName ||
+        undefined;
+
+      if (!resolvedName) {
+        console.warn(
+          `[MyPlusLeads] Skipped listing (no name on contact1/contact2/owner) user=${userId} mls=${source} status=${currentStatus}`,
+        );
         skipped++;
         continue;
       }
-
-      const currentStatus = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
-      const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
       const existing = await prisma.contact.findFirst({
         where: { userId, source },
         select: { id: true, miscValues: true, description: true },
@@ -527,13 +545,12 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
 
       const status = currentStatus;
       const prop = listing.propertyAddress;
-      const owner = listing.owner;
       const list = await getOrCreateList(status);
 
       const miscValues = buildMiscValues(listing);
       const newContact = await prisma.contact.create({
         data: {
-          fullName: contact1.name,
+          fullName: resolvedName,
           userId,
           address: prop?.streetAddress ?? null,
           city: prop?.city ?? null,
@@ -571,8 +588,8 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
         }
       };
 
-      addPhone(contact1.phone1);
-      addPhone(contact1.phone2);
+      addPhone(contact1?.phone1);
+      addPhone(contact1?.phone2);
       addPhone(listing.contact2?.phone1);
       addPhone(listing.contact2?.phone2);
 
@@ -601,7 +618,7 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
         }
       };
 
-      addEmail(contact1.email);
+      addEmail(contact1?.email);
       addEmail(listing.contact2?.email);
       for (const aug of [listing.augmentedData1, listing.augmentedData2, listing.augmentedData3, listing.augmentedData4, listing.augmentedData5]) {
         if (!aug) continue;
