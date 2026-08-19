@@ -180,9 +180,23 @@ export async function getAllContactsFromDb(userId: string, role: string, page: n
     },
   };
 
+  // Trash folders are the system "deleted" bucket. Any contact whose
+  // folderIds references one of these has been soft-deleted by the user and
+  // must not appear in the All Contacts view. Trash folders are per-user, so
+  // fetch every "Trash" system folder in the DB and exclude any contact
+  // whose folderIds intersects that set.
+  const trashFolders = await prisma.contactFolder.findMany({
+    where: { isSystem: true, name: "Trash" },
+    select: { id: true },
+  });
+  const trashFolderIds = trashFolders.map((f) => f.id);
+  const notInTrash = trashFolderIds.length > 0
+    ? { NOT: { folderIds: { hasSome: trashFolderIds } } }
+    : {};
+
   // OWNER — sees everything, no filter needed
   if (role === "OWNER") {
-    const where = { status: { not: "DO_NOT_CALL" as const } };
+    const where = { AND: [{ status: { not: "DO_NOT_CALL" as const } }, notInTrash] };
     const [data, total] = await prisma.$transaction([
       prisma.contact.findMany({ where, include, orderBy: { createdAt: "desc" }, skip, take: limit }),
       prisma.contact.count({ where }),
@@ -203,6 +217,7 @@ export async function getAllContactsFromDb(userId: string, role: string, page: n
       AND: [
         { OR: [{ userId: { in: poolUserIds } }, { id: { in: listContactIds } }] },
         { status: { not: "DO_NOT_CALL" as const } },
+        notInTrash,
       ],
     };
     const [data, total] = await prisma.$transaction([
@@ -225,6 +240,7 @@ export async function getAllContactsFromDb(userId: string, role: string, page: n
       AND: [
         { OR: [{ id: { in: assignedContactIds } }, { userId }] },
         { status: { not: "DO_NOT_CALL" as const } },
+        notInTrash,
       ],
     };
     const [data, total] = await prisma.$transaction([
@@ -235,7 +251,7 @@ export async function getAllContactsFromDb(userId: string, role: string, page: n
   }
 
   // Fallback — own contacts only
-  const where = { userId, status: { not: "DO_NOT_CALL" as const } };
+  const where = { AND: [{ userId }, { status: { not: "DO_NOT_CALL" as const } }, notInTrash] };
   const [data, total] = await prisma.$transaction([
     prisma.contact.findMany({ where, include, orderBy: { createdAt: "desc" }, skip, take: limit }),
     prisma.contact.count({ where }),
