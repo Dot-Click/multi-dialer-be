@@ -482,25 +482,36 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
       const currentStatus = listing.propertyDetails?.normalizedStatus ?? listing.propertyDetails?.status ?? "Expired";
       const source = listing.propertyDetails?.mlsNumber ?? String(listing.listingId);
 
-      // Resolve a display name for this listing. MPL sometimes returns
-      // listings (Expired / Withdrawn / FRBO) with no contact1 populated —
-      // the owner block still has one. Fall back through contact2 and owner
-      // before dropping the listing, and log the skip with enough info to
-      // debug rather than silently dropping.
+      // Resolve a display name for this listing by scanning every name
+      // surface MPL exposes: contact1, contact2, owner (name / name2 /
+      // firstName+lastName), and all five augmentedData blocks. Only skip
+      // when every single surface is empty. When we do skip, log the MLS
+      // and status so the drop is visible in Railway.
       const contact1 = listing.contact1;
       const owner = listing.owner;
       const ownerFullName = owner
-        ? owner.name?.trim() || [owner.firstName, owner.lastName].filter(Boolean).join(" ").trim() || undefined
+        ? owner.name?.trim() ||
+          owner.name2?.trim() ||
+          [owner.firstName, owner.lastName].filter(Boolean).join(" ").trim() ||
+          undefined
         : undefined;
+      const augmentedName =
+        listing.augmentedData1?.augmentedName1?.trim() ||
+        listing.augmentedData2?.augmentedName1?.trim() ||
+        listing.augmentedData3?.augmentedName1?.trim() ||
+        listing.augmentedData4?.augmentedName1?.trim() ||
+        listing.augmentedData5?.augmentedName1?.trim() ||
+        undefined;
       const resolvedName =
         contact1?.name?.trim() ||
         listing.contact2?.name?.trim() ||
         ownerFullName ||
+        augmentedName ||
         undefined;
 
       if (!resolvedName) {
         console.warn(
-          `[MyPlusLeads] Skipped listing (no name on contact1/contact2/owner) user=${userId} mls=${source} status=${currentStatus}`,
+          `[MyPlusLeads] Skipped listing (no name anywhere) user=${userId} mls=${source} status=${currentStatus}`,
         );
         skipped++;
         continue;
