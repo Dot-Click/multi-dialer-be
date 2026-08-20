@@ -25,8 +25,8 @@ import {
 /**
  * Slingvo's own default is Under Contract ON (9 stages) — the client's
  * SALESLYTICS_DEFAULTS in the domain layer intentionally ships with it OFF
- * (8 stages, Saleslytics-identical) since that constant exists to prove
- * parity. This is the default a brand-new plan actually starts from.
+ * (8 stages) since that constant exists to prove parity. This is the default
+ * a brand-new plan actually starts from.
  */
 const DEFAULT_PLAN_INPUTS: BusinessPlanInputs = {
   netIncomeGoal: 180_000,
@@ -51,7 +51,7 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export type DashboardPeriod = "this_week" | "this_month" | "this_year" | "all_time";
+export type DashboardPeriod = "today" | "this_week" | "this_month" | "this_year" | "all_time";
 
 /** Inclusive [from, to] ISO date range for a dashboard period, plus the
  * matching domain PeriodKey used to scale annual targets down for comparison. */
@@ -59,6 +59,12 @@ function resolvePeriodRange(period: DashboardPeriod): { from: string; to: string
   const now = new Date();
   const to = todayIso();
 
+  if (period === "today") {
+    // Single day. "daily" scales annual targets by the WORKING calendar
+    // divisor (weeks x days, typically 250) — not 365, which would quietly
+    // understate the daily number by a third.
+    return { from: to, to, periodKey: "daily" };
+  }
   if (period === "this_week") {
     // ISO week: Monday start.
     const dow = now.getUTCDay(); // 0 Sun .. 6 Sat
@@ -225,6 +231,15 @@ export class TrackerService {
       range: { from, to, source: source ?? null },
       stages: stages.map((id) => ({ id, value: totals[stageToTotalsKey(id)] })),
       steps: steps.map((s) => ({ ...s, value: kpis[s.kpiKey] })),
+      // Headline composite: Lead disposition -> Listing Taken disposition,
+      // spanning appointment set and met. Answers "how many of my leads
+      // actually become listings", which no single adjacent step shows.
+      //
+      // Cumulative (total / total), unclamped, and null rather than 0 when
+      // there are no leads — a rate with no denominator is not computable,
+      // which is a different statement from "you converted none of them".
+      leadToTaken:
+        totals.leads > 0 ? (totals.listingsTaken / totals.leads) * 100 : null,
     };
   }
 

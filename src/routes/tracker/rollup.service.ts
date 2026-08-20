@@ -16,10 +16,10 @@ import { ProspectingStage } from "@prisma/client";
  *   - Source   <- AgentSession.listId for dialer-derived rows (BUILD_SPEC's
  *                 contract calls this "calling list / campaign", which is
  *                 exactly what listId already is).
- *   - Contacts <- ContactDispositionLog rows where disposition.value = "CONTACT",
- *                 grouped by day. This is the SAME definition Reports already
- *                 uses for "Connection Rate" (reports/controller.ts) — reusing
- *                 it rather than inventing a second meaning of "connected".
+ *   - Contacts <- CallRecord.dispositionId where the disposition is "CONTACT",
+ *                 i.e. the Contacted outcome pushed on an actual call.
+ *                 See the block comment below — this deliberately does NOT
+ *                 use ContactDispositionLog.
  *   - Funnel stages (leads..closed) + GCI <- ProspectingStageEvent, which is
  *                 itself written whenever one of the six funnel Dispositions
  *                 is applied (see systemSettings/dispositions/service.ts).
@@ -30,6 +30,9 @@ import { ProspectingStage } from "@prisma/client";
  */
 
 const DAY_MS = 86_400_000;
+
+/** Disposition.value that means "I actually spoke to this person". */
+const CONTACTED_DISPOSITION_VALUE = "CONTACT";
 
 function toIsoDay(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -108,19 +111,40 @@ export async function getDailyRows(
     row.hours += (s.duration ?? 0) / 3600;
   }
 
-  // ---- Contacts, from "Contacted" disposition applications -----------
-  const contactLogs = await prisma.contactDispositionLog.findMany({
+  // ---- Contacts, from the Contacted outcome on an actual call ---------
+  //
+  // Deliberately CallRecord, not ContactDispositionLog.
+  //
+  // ContactDispositionLog records every application of a disposition to a
+  // contact, whatever the route: bulk list actions, imports, manual
+  // re-tagging from the contact detail screen. On live that produced 3,133
+  // "contacts" against 22.6 hours — 138 per hour, one every 26 seconds,
+  // which is not a conversation rate. It made every downstream ratio
+  // meaningless: contact->lead read 0.0% purely because the denominator was
+  // inflated by an order of magnitude.
+  //
+  // CallRecord.dispositionId is only written when a disposition is chosen as
+  // the outcome of a real call, which is exactly the contract: a contact is
+  // counted when the Contacted outcome is pushed on the dialer, or when the
+  // agent enters one by hand in the Log activity form (handled by the
+  // override merge at the bottom of this function).
+  const contactCalls = await prisma.callRecord.findMany({
     where: {
-      appliedById: userId,
+      userId,
       createdAt: range,
-      disposition: { value: "CONTACT" },
+      dispositionRef: { value: CONTACTED_DISPOSITION_VALUE },
     },
-    select: { createdAt: true },
+    select: {
+      createdAt: true,
+      session: { select: { listId: true } },
+    },
   });
-  for (const log of contactLogs) {
-    // No source on the log row itself (see file header) — bucketed under the
-    // null-source key, same as hours from sessions with no listId.
-    const row = getOrCreate(toIsoDay(log.createdAt), null);
+  for (const call of contactCalls) {
+    // Attribute to the calling list the call belonged to, so contacts land in
+    // the same channel bucket as the hours that produced them. Calls with no
+    // session (rare — manual dials outside a session) fall to null source,
+    // same as before.
+    const row = getOrCreate(toIsoDay(call.createdAt), call.session?.listId ?? null);
     row.contacts += 1;
   }
 
