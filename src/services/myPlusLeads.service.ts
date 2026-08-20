@@ -108,14 +108,12 @@ export type MyPlusLeadsSyncResult = {
   skipped: number;
 };
 
-// MyPlusLeads' raw per-listing status is finer-grained than the products we
-// sell — e.g. "Expired Data" is sold as one product but MPL tags listings
-// that fell out of the market as "Expired", "Withdrawn", or "Canceled"
-// separately. Group those under one canonical package so an assignment of
-// "Expired" pulls all three, instead of only literally-"Expired" listings.
-const PACKAGE_GROUPS: Record<string, string[]> = {
-  Expired: ["Expired", "Withdrawn", "Canceled"],
-};
+// Package name → the raw MPL status(es) it maps to. Historically Expired
+// bundled Expired/Withdrawn/Canceled into one product, but as of 2026-08-21
+// Withdrawn and Canceled are sold as separate products — each raw status is
+// now its own package. Left as a map (not identity) so future bundles can be
+// reintroduced by editing this one place.
+const PACKAGE_GROUPS: Record<string, string[]> = {};
 
 const RAW_STATUS_TO_PACKAGE = new Map<string, string>();
 for (const [pkg, rawStatuses] of Object.entries(PACKAGE_GROUPS)) {
