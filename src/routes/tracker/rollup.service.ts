@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { SessionRow } from "../../domain/prospecting";
 import { ProspectingStage } from "@prisma/client";
+import { isoDayInTimeZone, startOfDayInTimeZone, endOfDayExclusiveInTimeZone } from "../../utils/timezone";
 
 /**
  * This file is the application-layer equivalent of BUILD_SPEC.md's
@@ -25,12 +26,11 @@ import { ProspectingStage } from "@prisma/client";
  *                 itself written whenever one of the six funnel Dispositions
  *                 is applied (see systemSettings/dispositions/service.ts).
  *
- * Day boundaries are UTC-midnight pending the Timezone open question in
- * BUILD_SPEC.md §7 (Company.defaultTimeZone is settable as of the compliance
- * timezone change, but is not yet threaded through the day bucketing here).
+ * Days are bucketed in the TENANT'S timezone (Company.defaultTimeZone — the
+ * same value TCPA windows are evaluated against), not UTC. See the two range
+ * kinds in getDailyRows: TIMESTAMP and DATE columns need different treatment
+ * and mixing them up puts activity on the wrong day.
  */
-
-const DAY_MS = 86_400_000;
 
 /** Disposition.value that means "I actually spoke to this person". */
 const CONTACTED_DISPOSITION_VALUE = "CONTACT";
@@ -54,16 +54,16 @@ const CONTACTED_DISPOSITION_VALUE = "CONTACT";
  */
 export const CONTACTS_COUNTED_FROM = "2026-08-21";
 
-function toIsoDay(d: Date): string {
+/**
+ * The calendar day a DATE column already represents.
+ *
+ * Prisma hands back a @db.Date as a Date pinned to UTC midnight. It carries no
+ * time and no zone — it IS the day. Passing it through a zone-aware reader
+ * would resolve UTC midnight to the previous evening somewhere west of
+ * Greenwich and report the day before. Read the UTC parts and stop.
+ */
+function toIsoDayUTC(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-
-/** Inclusive day range as UTC instants, for Prisma `gte`/`lt` filters. */
-function dayRangeFilter(fromIso: string, toIso: string): { gte: Date; lt: Date } {
-  return {
-    gte: new Date(fromIso + "T00:00:00.000Z"),
-    lt: new Date(new Date(toIso + "T00:00:00.000Z").getTime() + DAY_MS),
-  };
 }
 
 function emptyRow(loggedOn: string, source: string | null): SessionRow {
@@ -102,13 +102,30 @@ function bucketKey(loggedOn: string, source: string | null): string {
  * winning wholesale for the (day, source) buckets it covers. Feed the result
  * into the domain layer's aggregateSessions/computeActualKpis/computeStreak —
  * it has no opinion on where the numbers came from.
+ *
+ * `timeZone` is the tenant's IANA zone. Callers resolve it once and pass it
+ * down rather than each query looking it up.
  */
 export async function getDailyRows(
   userId: string,
   fromIso: string,
   toIso: string,
+  timeZone: string,
 ): Promise<SessionRow[]> {
-  const range = dayRangeFilter(fromIso, toIso);
+  // TIMESTAMP columns: the UTC instants at which the local day starts and the
+  // local day after the range ends starts.
+  const instantRange = {
+    gte: startOfDayInTimeZone(fromIso, timeZone),
+    lt: endOfDayExclusiveInTimeZone(toIso, timeZone),
+  };
+
+  // DATE columns: no time, no zone, already a calendar day. Plain UTC midnight
+  // bounds — shifting these by an offset would move the day.
+  const dateRange = {
+    gte: new Date(`${fromIso}T00:00:00.000Z`),
+    lt: new Date(new Date(`${toIso}T00:00:00.000Z`).getTime() + 86_400_000),
+  };
+
   const derived = new Map<string, SessionRow>();
 
   const getOrCreate = (loggedOn: string, source: string | null): SessionRow => {
@@ -122,12 +139,13 @@ export async function getDailyRows(
   };
 
   // ---- Hours, from dialer sessions -----------------------------------
+  // startTime is a TIMESTAMP, so the day it belongs to depends on the zone.
   const agentSessions = await prisma.agentSession.findMany({
-    where: { userId, startTime: range },
+    where: { userId, startTime: instantRange },
     select: { startTime: true, duration: true, listId: true },
   });
   for (const s of agentSessions) {
-    const row = getOrCreate(toIsoDay(s.startTime), s.listId ?? null);
+    const row = getOrCreate(isoDayInTimeZone(s.startTime, timeZone), s.listId ?? null);
     row.hours += (s.duration ?? 0) / 3600;
   }
 
@@ -156,15 +174,20 @@ export async function getDailyRows(
   // Floored at CONTACTS_COUNTED_FROM so the old, unauditable history is not
   // carried forward. See that constant.
   //
+  // AT TIME ZONE twice is not a typo. Prisma maps DateTime to timestamp(3)
+  // WITHOUT time zone, so the first call declares "this naive value is UTC"
+  // and the second converts it to the tenant's wall clock. One call alone
+  // would read the stored value as already-local and be wrong by the offset.
+  //
   // Bucketed to a null source: a contact can be recorded with no dialer
   // session running, so there is no calling list to attribute it to.
-  const contactsFloor = new Date(CONTACTS_COUNTED_FROM + "T00:00:00.000Z");
-  const contactsFrom = range.gte > contactsFloor ? range.gte : contactsFloor;
+  const contactsFloor = startOfDayInTimeZone(CONTACTS_COUNTED_FROM, timeZone);
+  const contactsFrom = instantRange.gte > contactsFloor ? instantRange.gte : contactsFloor;
 
-  if (contactsFrom < range.lt) {
+  if (contactsFrom < instantRange.lt) {
     const contactDays = await prisma.$queryRaw<Array<{ day: string; contacts: number }>>`
-      SELECT to_char(f.first_at::date, 'YYYY-MM-DD') AS day,
-             COUNT(*)::int                           AS contacts
+      SELECT to_char((f.first_at AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone})::date, 'YYYY-MM-DD') AS day,
+             COUNT(*)::int AS contacts
       FROM (
         SELECT l."contactId", MIN(l."createdAt") AS first_at
         FROM contact_disposition_logs l
@@ -173,7 +196,7 @@ export async function getDailyRows(
           AND d.value = ${CONTACTED_DISPOSITION_VALUE}
         GROUP BY l."contactId"
       ) f
-      WHERE f.first_at >= ${contactsFrom} AND f.first_at < ${range.lt}
+      WHERE f.first_at >= ${contactsFrom} AND f.first_at < ${instantRange.lt}
       GROUP BY 1 ORDER BY 1`;
     for (const r of contactDays) {
       getOrCreate(r.day, null).contacts += Number(r.contacts);
@@ -181,12 +204,13 @@ export async function getDailyRows(
   }
 
   // ---- Funnel stages + GCI, from stage events -------------------------
+  // occurredOn is a DATE — already the calendar day the stage was reached.
   const stageEvents = await prisma.prospectingStageEvent.findMany({
-    where: { userId, occurredOn: range },
+    where: { userId, occurredOn: dateRange },
     select: { occurredOn: true, source: true, stage: true, gci: true },
   });
   for (const ev of stageEvents) {
-    const row = getOrCreate(toIsoDay(ev.occurredOn), ev.source ?? null);
+    const row = getOrCreate(toIsoDayUTC(ev.occurredOn), ev.source ?? null);
     const field = STAGE_FIELD[ev.stage];
     (row[field] as number) += 1;
     if (ev.stage === "CLOSED") {
@@ -194,14 +218,14 @@ export async function getDailyRows(
     }
   }
 
-  // ---- Manual overrides — win wholesale per (day, source) -------------
+  // ---- Manual entries — also a DATE column ----------------------------
   const overrides = await prisma.prospectingSession.findMany({
-    where: { userId, loggedOn: range },
+    where: { userId, loggedOn: dateRange },
   });
 
   const merged = new Map<string, SessionRow>(derived);
   for (const o of overrides) {
-    const loggedOn = toIsoDay(o.loggedOn);
+    const loggedOn = toIsoDayUTC(o.loggedOn);
     merged.set(bucketKey(loggedOn, o.source), {
       loggedOn,
       source: o.source,

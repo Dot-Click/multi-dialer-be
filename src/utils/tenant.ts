@@ -37,3 +37,38 @@ export async function resolveTenantUserIds(userId: string): Promise<string[] | n
   });
   return [rootId, ...agents.map((a) => a.id)];
 }
+
+/**
+ * The tenant's timezone — Company.defaultTimeZone, the same value TCPA
+ * calling windows are evaluated against. Agents inherit their admin's.
+ *
+ * Falls back to UTC rather than throwing when the stored value is unusable.
+ * That column may still hold a legacy abbreviation like "CST" (an offset with
+ * no daylight saving, so an hour wrong for half the year) written before the
+ * Compliance picker existed. A dashboard that 500s on a bad settings value is
+ * worse than one that reads UTC and can be corrected in two clicks — but it
+ * is logged, because silently reading UTC is how this went unnoticed for so
+ * long in the first place.
+ */
+export async function resolveTenantTimeZone(userId: string): Promise<string> {
+  const rootId = await resolveTenantRootId(userId);
+  const company = await prisma.company.findFirst({
+    where: { userId: rootId },
+    select: { defaultTimeZone: true },
+  });
+
+  const timeZone = company?.defaultTimeZone;
+  if (!timeZone) return "UTC";
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return timeZone;
+  } catch {
+    console.warn(
+      `[tenant] Company.defaultTimeZone for tenant ${rootId} is "${timeZone}", ` +
+      `which is not a usable IANA zone. Falling back to UTC — set a real zone ` +
+      `in Compliance & DNC. Day boundaries and TCPA windows are wrong until then.`,
+    );
+    return "UTC";
+  }
+}

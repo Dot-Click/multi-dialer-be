@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { Prisma, ProspectingStage } from "@prisma/client";
-import { resolveTenantUserIds } from "../../utils/tenant";
+import { resolveTenantUserIds, resolveTenantTimeZone } from "../../utils/tenant";
+import { todayIsoInTimeZone } from "../../utils/timezone";
 import { getDailyRows } from "./rollup.service";
 import {
   aggregateSessions,
@@ -47,10 +48,6 @@ const DEFAULT_PLAN_INPUTS: BusinessPlanInputs = {
 
 const DAY_MS = 86_400_000;
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -80,11 +77,25 @@ interface PeriodRange {
   periodKey: PeriodKey;
 }
 
-/** Inclusive [from, to] ISO date range for a dashboard period, plus the
- * period's true end date and the matching domain PeriodKey. */
-function resolvePeriodRange(period: DashboardPeriod): PeriodRange {
-  const now = new Date();
-  const to = todayIso();
+/**
+ * Inclusive [from, to] ISO date range for a dashboard period, plus the
+ * period's true end date and the matching domain PeriodKey.
+ *
+ * Every boundary is derived from the TENANT's calendar date, not the server's.
+ * A Chicago agent asking for "today" at 8pm was previously handed tomorrow's
+ * date, because the container runs on UTC: the range came back empty and the
+ * evening's calls appeared to belong to a day that had not started yet.
+ *
+ * The local date is re-tagged as UTC and all arithmetic runs in UTC from
+ * there. That is deliberate, not a shortcut — these are calendar dates, not
+ * instants, and UTC is the only zone with no DST discontinuity to trip over
+ * when stepping day to day. The zone has already done its job by the time we
+ * know which date "today" is.
+ */
+function resolvePeriodRange(period: DashboardPeriod, timeZone: string): PeriodRange {
+  const to = todayIsoInTimeZone(timeZone);
+  const [y, m, d] = to.split("-").map(Number);
+  const anchor = new Date(Date.UTC(y, m - 1, d));
 
   if (period === "today") {
     // Single day. "daily" scales annual targets by the WORKING calendar
@@ -94,21 +105,21 @@ function resolvePeriodRange(period: DashboardPeriod): PeriodRange {
   }
   if (period === "this_week") {
     // ISO week: Monday start, Sunday end.
-    const dow = now.getUTCDay(); // 0 Sun .. 6 Sat
+    const dow = anchor.getUTCDay(); // 0 Sun .. 6 Sat
     const daysSinceMonday = (dow + 6) % 7;
-    const monday = new Date(now.getTime() - daysSinceMonday * DAY_MS);
+    const monday = new Date(anchor.getTime() - daysSinceMonday * DAY_MS);
     const sunday = new Date(monday.getTime() + 6 * DAY_MS);
     return { from: iso(monday), to, periodEnd: iso(sunday), periodKey: "weekly" };
   }
   if (period === "this_month") {
-    const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const first = new Date(Date.UTC(y, m - 1, 1));
     // Day 0 of next month is the last day of this one — handles 28/29/30/31.
-    const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+    const last = new Date(Date.UTC(y, m, 0));
     return { from: iso(first), to, periodEnd: iso(last), periodKey: "monthly" };
   }
   if (period === "this_year") {
-    const first = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
-    const last = new Date(Date.UTC(now.getUTCFullYear(), 11, 31));
+    const first = new Date(Date.UTC(y, 0, 1));
+    const last = new Date(Date.UTC(y, 11, 31));
     return { from: iso(first), to, periodEnd: iso(last), periodKey: "yearly" };
   }
   // all_time — no natural end, so periodEnd is today and the elapsed fraction
@@ -202,11 +213,14 @@ export class TrackerService {
   // ── Dashboard ────────────────────────────────────────────────────────────
 
   static async getDashboard(userId: string, period: DashboardPeriod) {
-    const { from, to, periodEnd, periodKey } = resolvePeriodRange(period);
-    const year = new Date(to).getUTCFullYear();
+    const timeZone = await resolveTenantTimeZone(userId);
+    const { from, to, periodEnd, periodKey } = resolvePeriodRange(period, timeZone);
+    // `to` is already the tenant's local date, so the year comes off the
+    // string rather than re-parsing it into an instant and asking UTC again.
+    const year = Number(to.slice(0, 4));
 
     const [rows, { inputs: plan }] = await Promise.all([
-      getDailyRows(userId, from, to),
+      getDailyRows(userId, from, to, timeZone),
       this.getPlan(userId, year),
     ]);
 
@@ -218,17 +232,21 @@ export class TrackerService {
     const attainment = computeAttainment(totals, targets, stages);
 
     const loggedDates = [...new Set(rows.filter((r) => r.hours > 0 || r.contacts > 0).map((r) => r.loggedOn))];
-    const streak = computeStreak(loggedDates, todayIso());
-    const coverage = coverageWindow(loggedDates, todayIso());
+    // Streak and coverage compare logged days against "today". Both sides of
+    // that comparison have to be the same calendar — the rows are bucketed by
+    // the tenant's local day now, so today must be too, or a streak breaks at
+    // 6pm Central every day the server's UTC date runs ahead.
+    const streak = computeStreak(loggedDates, to);
+    const coverage = coverageWindow(loggedDates, to);
 
     // Measured against the period's END, not the query cutoff. Using `to`
     // here made this 1.0 on every request, which turned the projection into
     // a relabelled GCI-to-date and made onPace read BEHIND all period.
-    const elapsed = elapsedFractionOfPeriod(from, periodEnd, todayIso());
+    const elapsed = elapsedFractionOfPeriod(from, periodEnd, to);
     const projected = projectedGci(totals.gci, elapsed);
 
     return {
-      period: { key: period, from, to, periodEnd },
+      period: { key: period, from, to, periodEnd, timeZone },
       totals,
       kpis,
       targets,
@@ -253,17 +271,18 @@ export class TrackerService {
   // ── Funnel ───────────────────────────────────────────────────────────────
 
   static async getFunnel(userId: string, from: string, to: string, source?: string) {
-    const rows = await getDailyRows(userId, from, to);
+    const timeZone = await resolveTenantTimeZone(userId);
+    const rows = await getDailyRows(userId, from, to, timeZone);
     const filtered = source ? rows.filter((r) => r.source === source) : rows;
     const totals = aggregateSessions(filtered);
     const kpis = computeActualKpis(totals);
 
-    const { inputs: plan } = await this.getPlan(userId, new Date(to).getUTCFullYear());
+    const { inputs: plan } = await this.getPlan(userId, Number(to.slice(0, 4)));
     const stages = stagesFor(plan.includeUnderContract);
     const steps = stepsFor(plan.includeUnderContract);
 
     return {
-      range: { from, to, source: source ?? null },
+      range: { from, to, source: source ?? null, timeZone },
       stages: stages.map((id) => ({ id, value: totals[stageToTotalsKey(id)] })),
       steps: steps.map((s) => ({ ...s, value: kpis[s.kpiKey] })),
       // Headline composite: Lead disposition -> Listing Taken disposition,
@@ -285,7 +304,8 @@ export class TrackerService {
   // ── Channels ─────────────────────────────────────────────────────────────
 
   static async getChannels(userId: string, from: string, to: string) {
-    const rows = await getDailyRows(userId, from, to);
+    const timeZone = await resolveTenantTimeZone(userId);
+    const rows = await getDailyRows(userId, from, to, timeZone);
     const bySource = new Map<string, SessionRow[]>();
     for (const r of rows) {
       const key = r.source ?? "Untagged";
@@ -307,7 +327,7 @@ export class TrackerService {
       return b.kpis.gciPerHour - a.kpis.gciPerHour;
     });
 
-    return { range: { from, to }, channels };
+    return { range: { from, to, timeZone }, channels };
   }
 
   // ── Stage events (manual, for cases the CRM disposition flow doesn't cover) ─
@@ -432,6 +452,12 @@ export class TrackerService {
 
   static async getLeaderboard(userId: string, from: string, to: string) {
     const scopedIds = await resolveTenantUserIds(userId);
+    // One zone for the whole board, resolved from the CALLER. Everyone on a
+    // leaderboard is in the same tenant, so this is the same value each of
+    // them would resolve for themselves — and resolving it per row would let
+    // two agents' "today" mean different spans, which is exactly the kind of
+    // quiet asymmetry a ranked list must not have.
+    const timeZone = await resolveTenantTimeZone(userId);
 
     const optedIn = await prisma.user.findMany({
       where: {
@@ -443,7 +469,7 @@ export class TrackerService {
 
     const rows = await Promise.all(
       optedIn.map(async (u) => {
-        const dailyRows = await getDailyRows(u.id, from, to);
+        const dailyRows = await getDailyRows(u.id, from, to, timeZone);
         const totals = aggregateSessions(dailyRows);
         return {
           userId: u.id,
@@ -457,7 +483,7 @@ export class TrackerService {
     );
 
     rows.sort((a, b) => b.gci - a.gci);
-    return { range: { from, to }, leaderboard: rows };
+    return { range: { from, to, timeZone }, leaderboard: rows };
   }
 }
 
