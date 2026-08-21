@@ -105,6 +105,7 @@ enum PhoneType {
 
 enum IntegrationProvider {
   TWILIO
+  TWILIO_VOICE_INTEGRITY
   GOOGLE_MAPS
   REALTOR_DOT_COM
   BOMB_BOMB
@@ -1278,6 +1279,13 @@ model CallerId {
   reputationStatus    String?
   reputationScore     Int?
   lastReputationCheck DateTime?
+
+  // Twilio Voice Integrity — Trust Hub enrolment. Populated on number
+  // purchase when the owning admin has an approved Voice Integrity trust
+  // product; null means the number isn't (yet) registered with the carrier
+  // analytics engines. The assignment SID is what we DELETE to unassign.
+  voiceIntegrityAssignmentSid String?
+  voiceIntegrityRegistered    Boolean @default(false)
 
   // Paid add-on billing (numbers bought via the super-admin "buy on behalf" flow)
   billingSource            CallerIdBillingSource @default(PLAN_INCLUDED)

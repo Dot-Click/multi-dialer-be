@@ -1468,7 +1468,7 @@ async function buyNumberOnBehalfOfUser(
     );
 
     try {
-      await transferNumberToSubAccount(purchased.sid, subAccountSid);
+      await transferNumberToSubAccount(purchased.sid, subAccountSid, targetUserId);
     } catch (transferErr: any) {
       await removeAddonSubscriptionItem(stripeSubscriptionItemId);
       throw transferErr;

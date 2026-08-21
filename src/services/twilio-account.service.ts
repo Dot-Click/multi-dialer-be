@@ -3,6 +3,7 @@ import { client as masterClient } from "../lib/config";
 import prisma from "../lib/prisma";
 import { envConfig } from "../lib/config";
 import { removeAddonSubscriptionItem, cancelAddonSubscriptionForUser } from "./phoneNumberBilling.service";
+import { assignNumber as viAssignNumber, unassignNumber as viUnassignNumber } from "./voiceIntegrity.service";
 
 /**
  * Creates a Twilio Sub-Account for a user.
@@ -114,8 +115,17 @@ export async function getUserTwilioSubAccountSid(userId: string): Promise<string
  * Subaccounts" mechanism — an update call authenticated as the CURRENT owner
  * (master), specifying the target sub-account's SID.
  */
-export async function transferNumberToSubAccount(twilioSid: string, subAccountSid: string) {
+export async function transferNumberToSubAccount(twilioSid: string, subAccountSid: string, adminUserId?: string) {
     await masterClient.incomingPhoneNumbers(twilioSid).update({ accountSid: subAccountSid });
+
+    // If we know which admin this transfer is for, register the number with
+    // their Voice Integrity Trust Product (silent no-op if they haven't
+    // onboarded — assignNumber never throws to the caller).
+    if (adminUserId) {
+        await viAssignNumber(adminUserId, twilioSid).catch((err: any) =>
+            console.warn(`[TwilioService] Voice Integrity assign for ${twilioSid} failed:`, err?.message)
+        );
+    }
 }
 
 /**
@@ -125,6 +135,24 @@ export async function transferNumberToSubAccount(twilioSid: string, subAccountSi
  * transferred to them.
  */
 export async function releaseNumber(twilioSid: string, ownerClient: ReturnType<typeof twilio> = masterClient) {
+    // Unassign from the owning admin's Voice Integrity Trust Product BEFORE
+    // releasing the number itself. Twilio requires the trust-product
+    // assignment be removed while the number still exists; releasing first
+    // orphans the assignment and blocks the trust product from re-verifying.
+    // Look up the admin via the local CallerId row (no assumption that the
+    // caller knows it).
+    try {
+        const cid = await prisma.callerId.findFirst({
+            where: { twillioSid: twilioSid },
+            select: { systemSetting: { select: { userId: true } } },
+        });
+        if (cid?.systemSetting.userId) {
+            await viUnassignNumber(cid.systemSetting.userId, twilioSid).catch(() => undefined);
+        }
+    } catch (err: any) {
+        console.warn(`[TwilioService] Voice Integrity unassign for ${twilioSid} skipped:`, err?.message);
+    }
+
     try {
         await ownerClient.incomingPhoneNumbers(twilioSid).remove();
     } catch (error: any) {
