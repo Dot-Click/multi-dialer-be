@@ -1,6 +1,8 @@
 import prisma from "@/lib/prisma";
 import { ensureTrashFolder, ensureDncFolder, moveToDncInDb } from "../../contact/service";
 import { stageForDispositionValue } from "../../tracker/stageDispositions";
+import { resolveTenantTimeZone } from "../../../utils/tenant";
+import { todayIsoInTimeZone } from "../../../utils/timezone";
 
 function throwHttp(statusCode: number, message: string): never {
     throw { message, statusCode };
@@ -650,12 +652,27 @@ export class DispositionService {
                     where: { id: contactId },
                     select: { source: true },
                 });
-                // Occurs "today" — see the Timezone open question in
-                // BUILD_SPEC.md §7. Using UTC-midnight until the tenant's
-                // Company.defaultTimeZone is threaded through every call site
-                // that can trigger a disposition change (calling controller,
-                // contact detail page, bulk actions).
-                const occurredOn = new Date(new Date().toISOString().slice(0, 10));
+
+                // Occurs "today" — in the TENANT'S calendar, not the server's.
+                //
+                // occurredOn is a DATE column: what gets stored is a day with
+                // no time and no zone. The only question is WHICH day, and the
+                // answer has to be the one the agent is living in. This server
+                // runs on UTC, so tagging a Lead at 8pm Central wrote
+                // tomorrow's date — the funnel then looked for it on the right
+                // local day and did not find it, and the number showed up a
+                // day late.
+                //
+                // Same source as the tracker's day bucketing and the TCPA
+                // calling windows: Company.defaultTimeZone. One control, one
+                // answer. Unset falls back to UTC, which is the behaviour this
+                // line had before.
+                //
+                // Resolved once, outside the loop below — tagging a contact
+                // with four funnel dispositions at once is one settings lookup
+                // and four stage rows, not four lookups.
+                const timeZone = await resolveTenantTimeZone(appliedById);
+                const occurredOn = new Date(`${todayIsoInTimeZone(timeZone)}T00:00:00.000Z`);
 
                 for (const stage of stageRows) {
                     await prisma.prospectingStageEvent.upsert({
