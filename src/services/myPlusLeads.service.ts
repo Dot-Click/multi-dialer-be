@@ -223,7 +223,27 @@ export async function authenticateSubAccount(email: string, password: string): P
   return authToken;
 }
 
-export async function fetchListings(subEmail: string, subPassword: string): Promise<MyPlusLead[]> {
+// MPL wants `dateFrom` / `dateTo` in "yyyy-MM-dd HH:mm:ss" (per their docs
+// example on /neighborhoodbatches). Format in server-local time — since MPL
+// doesn't specify a timezone, we lean on a wide safety window at the call
+// site instead of guessing zones.
+function formatMplDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+export interface FetchListingsOptions {
+  // When set, uses MPL's dateFrom+isForUser mode so we only pull listings
+  // added since `since`. When absent, walks the default oldest-first feed —
+  // used for account discovery and first-time backfill.
+  since?: Date;
+}
+
+export async function fetchListings(
+  subEmail: string,
+  subPassword: string,
+  opts: FetchListingsOptions = {},
+): Promise<MyPlusLead[]> {
   // Fetch a single page using a freshly-obtained token. MPL's paging tokens
   // seem to be single-use in some sessions, so we re-auth per page to avoid 401.
   const fetchPage = async (url: string): Promise<any> => {
@@ -238,14 +258,24 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
   };
 
   const token = await authenticateSubAccount(subEmail, subPassword);
-  const firstUrl = `${BASE_URL}/listings?authToken=${encodeURIComponent(token)}`;
+  const params = new URLSearchParams({ authToken: token });
+  if (opts.since) {
+    // dateFrom + isForUser=true is MPL's documented path for "listings added
+    // since X". Their default /listings feed is oldest-first and capped, so
+    // new leads at the tail can fall off the pagination window — the very
+    // bug that made auto-sync miss same-day leads.
+    params.set("dateFrom", formatMplDate(opts.since));
+    params.set("isForUser", "true");
+  }
+  const firstUrl = `${BASE_URL}/listings?${params.toString()}`;
+  const mode = opts.since ? `since=${formatMplDate(opts.since)}` : "full";
   const firstRes = await fetchWithTimeout(firstUrl);
   if (!firstRes.ok) {
-    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed: ${await responseErrorMessage(firstRes)}`, 502);
+    throw new MyPlusLeadsError(`MyPlusLeads listings fetch failed (${mode}): ${await responseErrorMessage(firstRes)}`, 502);
   }
   const firstData = await firstRes.json();
   const listings: MyPlusLead[] = firstData.listings ?? [];
-  console.log(`[MyPlusLeads] Page 1: fetched ${listings.length} listings`);
+  console.log(`[MyPlusLeads] Page 1 (${mode}): fetched ${listings.length} listings`);
 
   // Follow paging.next, re-authenticating for each subsequent page.
   const MAX_PAGES = 20;
@@ -264,12 +294,12 @@ export async function fetchListings(subEmail: string, subPassword: string): Prom
           listings.push(pl);
         }
       }
-      console.log(`[MyPlusLeads] Page ${page + 1}: fetched ${pageListings.length} listings (total: ${listings.length})`);
+      console.log(`[MyPlusLeads] Page ${page + 1} (${mode}): fetched ${pageListings.length} listings (total: ${listings.length})`);
 
       nextUrl = pageData.paging?.next;
       page++;
     } catch (e: any) {
-      console.warn(`[MyPlusLeads] Page ${page + 1} fetch failed, continuing with ${listings.length} listings:`, e?.message ?? e);
+      console.warn(`[MyPlusLeads] Page ${page + 1} (${mode}) fetch failed, continuing with ${listings.length} listings:`, e?.message ?? e);
       break;
     }
   }
@@ -375,7 +405,15 @@ async function syncLeadsForLeadStoreImpl(leadStoreId: string): Promise<MyPlusLea
 
   const password = decrypt(config.subAccountPassword);
 
-  const allListings = await fetchListings(config.subAccountEmail, password);
+  // Incremental sync: pull only listings MPL added since our last successful
+  // sync, minus a 48h safety buffer to absorb any clock/timezone skew. Client-
+  // side dedup by MLS handles the overlap. First-ever sync (lastSyncAt=null)
+  // falls back to the full-account walk so backfill still gets everything.
+  const lastSyncAt = leadStore.lastSyncAt ?? config.lastSyncAt;
+  const since = lastSyncAt
+    ? new Date(lastSyncAt.getTime() - 48 * 60 * 60 * 1000)
+    : undefined;
+  const allListings = await fetchListings(config.subAccountEmail, password, { since });
   const listings = allListings.filter((l) => {
     const rawStatus = l.propertyDetails?.normalizedStatus ?? l.propertyDetails?.status ?? "Expired";
     return resolveCanonicalPackage(rawStatus) === assignedPackage;

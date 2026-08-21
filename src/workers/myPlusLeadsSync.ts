@@ -3,8 +3,13 @@ import prisma from "../lib/prisma";
 import { syncLeadsForLeadStore } from "../services/myPlusLeads.service";
 
 export function startMyPlusLeadsSyncWorker() {
-  // Runs at 12:00 AM, 2:00 AM, and 6:00 AM US Central Time daily.
-  cron.schedule("0 0,2,6 * * *", async () => {
+  // Runs at the top of every hour, US Central Time. MPL keeps adding new
+  // leads throughout the US business day; the old 12/2/6 AM schedule left a
+  // ~17-hour gap where same-day leads only landed the next morning. Hourly
+  // sync + MPL's dateFrom/isForUser filter (see fetchListings) keeps the
+  // window ≤1h without hammering the API — each run only pulls listings
+  // added since lastSyncAt-48h, and dedup by MLS makes overlap free.
+  cron.schedule("0 * * * *", async () => {
     console.log("[MyPlusLeads] Starting scheduled lead sync...");
 
     const leadStores = await prisma.leadStore.findMany({
