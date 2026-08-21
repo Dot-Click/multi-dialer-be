@@ -16,23 +16,43 @@ import { ProspectingStage } from "@prisma/client";
  *   - Source   <- AgentSession.listId for dialer-derived rows (BUILD_SPEC's
  *                 contract calls this "calling list / campaign", which is
  *                 exactly what listId already is).
- *   - Contacts <- CallRecord.dispositionId where the disposition is "CONTACT",
- *                 i.e. the Contacted outcome pushed on an actual call.
- *                 See the block comment below — this deliberately does NOT
- *                 use ContactDispositionLog.
+ *   - Contacts <- the FIRST application of the "CONTACT" disposition to each
+ *                 contact, on or after CONTACTS_COUNTED_FROM. One press, one
+ *                 contact, once ever. See the block comment below — this
+ *                 counts distinct contacts, not log rows, and deliberately
+ *                 does NOT use CallRecord.
  *   - Funnel stages (leads..closed) + GCI <- ProspectingStageEvent, which is
  *                 itself written whenever one of the six funnel Dispositions
  *                 is applied (see systemSettings/dispositions/service.ts).
  *
  * Day boundaries are UTC-midnight pending the Timezone open question in
- * BUILD_SPEC.md §7 (Company.defaultTimeZone exists but isn't yet threaded
- * through every write path that can produce a day bucket).
+ * BUILD_SPEC.md §7 (Company.defaultTimeZone is settable as of the compliance
+ * timezone change, but is not yet threaded through the day bucketing here).
  */
 
 const DAY_MS = 86_400_000;
 
 /** Disposition.value that means "I actually spoke to this person". */
 const CONTACTED_DISPOSITION_VALUE = "CONTACT";
+
+/**
+ * Contacts are counted from this date forward and no earlier.
+ *
+ * ContactDispositionLog cannot distinguish a Contacted button press from a
+ * bulk list action, an import, or a re-tag — they all write the same row.
+ * That ambiguity is what produced 3,133 "contacts" against 22.6 hours before
+ * this was reworked. Counting first-press-per-contact fixes the rate going
+ * forward, but walking the same log backwards still inherits whatever those
+ * bulk operations left behind, spread across dates nobody can audit.
+ *
+ * So the history is not carried. Days before this read zero contacts, which
+ * is at least a statement the page can explain, rather than a plausible
+ * number that is quietly wrong.
+ *
+ * Exported so the API can disclose it: a zero because nothing was measured
+ * and a zero because nothing happened must never render the same.
+ */
+export const CONTACTS_COUNTED_FROM = "2026-08-21";
 
 function toIsoDay(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -111,41 +131,53 @@ export async function getDailyRows(
     row.hours += (s.duration ?? 0) / 3600;
   }
 
-  // ---- Contacts, from the Contacted outcome on an actual call ---------
+  // ---- Contacts: first press of Contacted, per contact, once ever -----
   //
-  // Deliberately CallRecord, not ContactDispositionLog.
+  // The rule: one press of the Contacted button on a contact is one contact.
+  // Inside or outside a dialer session, no distinction. However many times
+  // that person is called, still one. Once ever — reaching them again next
+  // month does not count again. Identical semantics to Lead.
   //
-  // ContactDispositionLog records every application of a disposition to a
-  // contact, whatever the route: bulk list actions, imports, manual
-  // re-tagging from the contact detail screen. On live that produced 3,133
-  // "contacts" against 22.6 hours — 138 per hour, one every 26 seconds,
-  // which is not a conversation rate. It made every downstream ratio
-  // meaningless: contact->lead read 0.0% purely because the denominator was
-  // inflated by an order of magnitude.
+  // Counting the FIRST application per contact rather than log rows is what
+  // makes that true. ContactDispositionLog writes a row on every application,
+  // by every route — bulk list actions, imports, manual re-tagging, and the
+  // dialer pressing the same button twice on one call (which the live logs
+  // show happening routinely). Counting rows gave 3,133 contacts against 22.6
+  // hours: 138 an hour, one every 26 seconds, which is not a conversation
+  // rate, and it dragged contact->lead down to 0.0% purely by inflating the
+  // denominator. Collapsing to MIN(createdAt) per contact removes all of it —
+  // a second application of the same tag can never add to the count.
   //
-  // CallRecord.dispositionId is only written when a disposition is chosen as
-  // the outcome of a real call, which is exactly the contract: a contact is
-  // counted when the Contacted outcome is pushed on the dialer, or when the
-  // agent enters one by hand in the Log activity form (handled by the
-  // override merge at the bottom of this function).
-  const contactCalls = await prisma.callRecord.findMany({
-    where: {
-      userId,
-      createdAt: range,
-      dispositionRef: { value: CONTACTED_DISPOSITION_VALUE },
-    },
-    select: {
-      createdAt: true,
-      session: { select: { listId: true } },
-    },
-  });
-  for (const call of contactCalls) {
-    // Attribute to the calling list the call belonged to, so contacts land in
-    // the same channel bucket as the hours that produced them. Calls with no
-    // session (rare — manual dials outside a session) fall to null source,
-    // same as before.
-    const row = getOrCreate(toIsoDay(call.createdAt), call.session?.listId ?? null);
-    row.contacts += 1;
+  // Deliberately NOT CallRecord.dispositionId, which the previous fix used.
+  // That column is only written when applyDisposition is called with a
+  // callRecordId, and the frontend has never sent one — the identifier does
+  // not appear anywhere in slingvo-fe. It read as near-zero.
+  //
+  // Floored at CONTACTS_COUNTED_FROM so the old, unauditable history is not
+  // carried forward. See that constant.
+  //
+  // Bucketed to a null source: a contact can be recorded with no dialer
+  // session running, so there is no calling list to attribute it to.
+  const contactsFloor = new Date(CONTACTS_COUNTED_FROM + "T00:00:00.000Z");
+  const contactsFrom = range.gte > contactsFloor ? range.gte : contactsFloor;
+
+  if (contactsFrom < range.lt) {
+    const contactDays = await prisma.$queryRaw<Array<{ day: string; contacts: number }>>`
+      SELECT to_char(f.first_at::date, 'YYYY-MM-DD') AS day,
+             COUNT(*)::int                           AS contacts
+      FROM (
+        SELECT l."contactId", MIN(l."createdAt") AS first_at
+        FROM contact_disposition_logs l
+        JOIN dispositions d ON d.id = l."dispositionId"
+        WHERE l."appliedById" = ${userId}
+          AND d.value = ${CONTACTED_DISPOSITION_VALUE}
+        GROUP BY l."contactId"
+      ) f
+      WHERE f.first_at >= ${contactsFrom} AND f.first_at < ${range.lt}
+      GROUP BY 1 ORDER BY 1`;
+    for (const r of contactDays) {
+      getOrCreate(r.day, null).contacts += Number(r.contacts);
+    }
   }
 
   // ---- Funnel stages + GCI, from stage events -------------------------
