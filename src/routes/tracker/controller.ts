@@ -1,10 +1,16 @@
 import { RequestHandler } from "express";
 import { ProspectingStage } from "@prisma/client";
 import { successResponse, errorResponse } from "@/utils/handler";
-import { TrackerService, type DashboardPeriod } from "./service";
+import { TrackerService, DASHBOARD_PERIODS, type DashboardPeriod } from "./service";
 import type { BusinessPlanInputs, SessionRow } from "../../domain/prospecting";
 
-const VALID_PERIODS: readonly DashboardPeriod[] = ["this_week", "this_month", "this_year", "all_time"];
+// Derived from the single source of truth in service.ts rather than re-listed
+// here. The previous hand-written copy silently fell out of sync when "today"
+// was added to DashboardPeriod: the type accepted it, this runtime guard did
+// not, and every Today request 400'd. A readonly DashboardPeriod[] annotation
+// cannot catch a MISSING member, only an invalid one — so the compiler was
+// never going to flag it. Keep this as a reference, never a second literal.
+const VALID_PERIODS = DASHBOARD_PERIODS;
 const VALID_PLAN_PERIODS = ["yearly", "monthly", "weekly", "daily"] as const;
 const VALID_STAGES = Object.values(ProspectingStage);
 

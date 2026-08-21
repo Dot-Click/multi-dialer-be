@@ -51,7 +51,15 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export type DashboardPeriod = "today" | "this_week" | "this_month" | "this_year" | "all_time";
+/**
+ * The single source of truth for dashboard periods. The controller's runtime
+ * guard is derived from this array — do NOT re-declare the list there. A
+ * `readonly DashboardPeriod[]` annotation only rejects invalid members, it
+ * cannot detect a missing one, so a second hand-written copy drifts silently.
+ */
+export const DASHBOARD_PERIODS = ["today", "this_week", "this_month", "this_year", "all_time"] as const;
+
+export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
 
 /** Inclusive [from, to] ISO date range for a dashboard period, plus the
  * matching domain PeriodKey used to scale annual targets down for comparison. */
@@ -235,11 +243,15 @@ export class TrackerService {
       // spanning appointment set and met. Answers "how many of my leads
       // actually become listings", which no single adjacent step shows.
       //
+      // A FRACTION (0.25 = 25%), matching every other ratio in ActualKpis and
+      // the contract prospectingFormat.formatPct expects on the frontend —
+      // it multiplies by 100 itself. Returning a pre-multiplied percentage
+      // here rendered this as "2500.0%".
+      //
       // Cumulative (total / total), unclamped, and null rather than 0 when
       // there are no leads — a rate with no denominator is not computable,
       // which is a different statement from "you converted none of them".
-      leadToTaken:
-        totals.leads > 0 ? (totals.listingsTaken / totals.leads) * 100 : null,
+      leadToTaken: totals.leads > 0 ? totals.listingsTaken / totals.leads : null,
     };
   }
 
