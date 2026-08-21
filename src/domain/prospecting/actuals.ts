@@ -196,6 +196,41 @@ export function elapsedFraction(
   return Math.min(1, Math.max(0, raw));
 }
 
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * What fraction of a CALENDAR PERIOD has been used up, counting both end days.
+ *
+ * Deliberately separate from `elapsedFraction` above, which measures progress
+ * across an arbitrary [start, end] window and is used with those semantics
+ * elsewhere. The difference is the inclusive day count, and it matters:
+ *
+ *   - Day 1 of a 31-day month is 1/31 elapsed, not 0/30. An agent who logs a
+ *     sale on the 1st is not "0% through the month".
+ *   - A single-day period (from === end) is 1.0, not a divide-by-zero. The
+ *     run-rate projection for one day is simply that day's own total.
+ *   - The final day of the period is exactly 1.0.
+ *
+ * Clamped to [0, 1]: a date before the period reads 0, after it reads 1.
+ * Returns null only when an argument does not parse.
+ */
+export function elapsedFractionOfPeriod(
+  periodStartIso: string,
+  periodEndIso: string,
+  todayIso: string,
+): number | null {
+  const start = Date.parse(periodStartIso + 'T00:00:00Z');
+  const end = Date.parse(periodEndIso + 'T00:00:00Z');
+  const today = Date.parse(todayIso + 'T00:00:00Z');
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(today)) return null;
+
+  const totalDays = (end - start) / MS_PER_DAY + 1;
+  if (totalDays <= 0) return null;
+
+  const elapsedDays = (today - start) / MS_PER_DAY + 1;
+  return Math.min(1, Math.max(0, elapsedDays / totalDays));
+}
+
 /**
  * Projected end-of-period GCI at the current run rate.
  * Returns null before any time has elapsed, rather than dividing by zero.

@@ -39,6 +39,7 @@ export {
   computeActualKpis,
   computeAttainment,
   elapsedFraction,
+  elapsedFractionOfPeriod,
   filterByDateRange,
   projectedGci,
   ratio,

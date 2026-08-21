@@ -10,7 +10,7 @@ import {
   computeAttainment,
   computeStreak,
   coverageWindow,
-  elapsedFraction,
+  elapsedFractionOfPeriod,
   planForPeriod,
   projectedGci,
   roundTargets,
@@ -51,6 +51,10 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function iso(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * The single source of truth for dashboard periods. The controller's runtime
  * guard is derived from this array — do NOT re-declare the list there. A
@@ -61,9 +65,24 @@ export const DASHBOARD_PERIODS = ["today", "this_week", "this_month", "this_year
 
 export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
 
+interface PeriodRange {
+  /** First day of the period. */
+  from: string;
+  /** Last day to QUERY — always today; there is no data in the future. */
+  to: string;
+  /**
+   * Last day the period actually covers. Distinct from `to`: pace is
+   * "how far through the month am I", which needs the 31st, not today.
+   * Conflating the two makes the elapsed fraction 1.0 on every request.
+   */
+  periodEnd: string;
+  /** Divisor used to scale annual targets down for comparison. */
+  periodKey: PeriodKey;
+}
+
 /** Inclusive [from, to] ISO date range for a dashboard period, plus the
- * matching domain PeriodKey used to scale annual targets down for comparison. */
-function resolvePeriodRange(period: DashboardPeriod): { from: string; to: string; periodKey: PeriodKey } {
+ * period's true end date and the matching domain PeriodKey. */
+function resolvePeriodRange(period: DashboardPeriod): PeriodRange {
   const now = new Date();
   const to = todayIso();
 
@@ -71,26 +90,31 @@ function resolvePeriodRange(period: DashboardPeriod): { from: string; to: string
     // Single day. "daily" scales annual targets by the WORKING calendar
     // divisor (weeks x days, typically 250) — not 365, which would quietly
     // understate the daily number by a third.
-    return { from: to, to, periodKey: "daily" };
+    return { from: to, to, periodEnd: to, periodKey: "daily" };
   }
   if (period === "this_week") {
-    // ISO week: Monday start.
+    // ISO week: Monday start, Sunday end.
     const dow = now.getUTCDay(); // 0 Sun .. 6 Sat
     const daysSinceMonday = (dow + 6) % 7;
     const monday = new Date(now.getTime() - daysSinceMonday * DAY_MS);
-    return { from: monday.toISOString().slice(0, 10), to, periodKey: "weekly" };
+    const sunday = new Date(monday.getTime() + 6 * DAY_MS);
+    return { from: iso(monday), to, periodEnd: iso(sunday), periodKey: "weekly" };
   }
   if (period === "this_month") {
     const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    return { from: first.toISOString().slice(0, 10), to, periodKey: "monthly" };
+    // Day 0 of next month is the last day of this one — handles 28/29/30/31.
+    const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+    return { from: iso(first), to, periodEnd: iso(last), periodKey: "monthly" };
   }
   if (period === "this_year") {
     const first = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
-    return { from: first.toISOString().slice(0, 10), to, periodKey: "yearly" };
+    const last = new Date(Date.UTC(now.getUTCFullYear(), 11, 31));
+    return { from: iso(first), to, periodEnd: iso(last), periodKey: "yearly" };
   }
-  // all_time — no natural divisor; targets are shown at the yearly scale as
-  // the least-misleading reference point (see getDashboard's pace comment).
-  return { from: "2000-01-01", to, periodKey: "yearly" };
+  // all_time — no natural end, so periodEnd is today and the elapsed fraction
+  // resolves to 1.0. Targets are shown at the yearly scale as the
+  // least-misleading reference point. Unchanged behaviour, now explicit.
+  return { from: "2000-01-01", to, periodEnd: to, periodKey: "yearly" };
 }
 
 function toBusinessPlanInputs(row: {
@@ -178,7 +202,7 @@ export class TrackerService {
   // ── Dashboard ────────────────────────────────────────────────────────────
 
   static async getDashboard(userId: string, period: DashboardPeriod) {
-    const { from, to, periodKey } = resolvePeriodRange(period);
+    const { from, to, periodEnd, periodKey } = resolvePeriodRange(period);
     const year = new Date(to).getUTCFullYear();
 
     const [rows, { inputs: plan }] = await Promise.all([
@@ -197,11 +221,14 @@ export class TrackerService {
     const streak = computeStreak(loggedDates, todayIso());
     const coverage = coverageWindow(loggedDates, todayIso());
 
-    const elapsed = elapsedFraction(from, to, todayIso());
+    // Measured against the period's END, not the query cutoff. Using `to`
+    // here made this 1.0 on every request, which turned the projection into
+    // a relabelled GCI-to-date and made onPace read BEHIND all period.
+    const elapsed = elapsedFractionOfPeriod(from, periodEnd, todayIso());
     const projected = projectedGci(totals.gci, elapsed);
 
     return {
-      period: { key: period, from, to },
+      period: { key: period, from, to, periodEnd },
       totals,
       kpis,
       targets,
