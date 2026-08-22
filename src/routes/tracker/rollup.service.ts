@@ -18,7 +18,7 @@ import { isoDayInTimeZone, startOfDayInTimeZone, endOfDayExclusiveInTimeZone } f
  *                 contract calls this "calling list / campaign", which is
  *                 exactly what listId already is).
  *   - Contacts <- the FIRST application of the "CONTACT" disposition to each
- *                 contact, on or after CONTACTS_COUNTED_FROM. One press, one
+ *                 contact since CONTACTS_COUNTED_FROM. One press, one
  *                 contact, once ever. See the block comment below — this
  *                 counts distinct contacts, not log rows, and deliberately
  *                 does NOT use CallRecord.
@@ -36,23 +36,27 @@ import { isoDayInTimeZone, startOfDayInTimeZone, endOfDayExclusiveInTimeZone } f
 const CONTACTED_DISPOSITION_VALUE = "CONTACT";
 
 /**
- * Contacts are counted from this date forward and no earlier.
+ * Contacts are counted from this INSTANT forward and no earlier.
  *
- * ContactDispositionLog cannot distinguish a Contacted button press from a
- * bulk list action, an import, or a re-tag — they all write the same row.
- * That ambiguity is what produced 3,133 "contacts" against 22.6 hours before
- * this was reworked. Counting first-press-per-contact fixes the rate going
- * forward, but walking the same log backwards still inherits whatever those
- * bulk operations left behind, spread across dates nobody can audit.
+ * Until 2026-08-22 the dialer auto-applied this disposition on every call
+ * that reached Twilio's "completed" status — an uncaught voicemail, a
+ * two-second wrong number, a pickup and an immediate hangup. Those rows are
+ * identical in every column to an agent pressing the Contacted button, so
+ * there is no way to tell them apart after the fact. They are the reason the
+ * tracker read 3,133 contacts against 22.6 hours, and 68 on a day nobody
+ * pressed the button 68 times.
  *
- * So the history is not carried. Days before this read zero contacts, which
- * is at least a statement the page can explain, rather than a plausible
- * number that is quietly wrong.
+ * applyDisposition now refuses automatic CONTACT applications, so everything
+ * written after this instant is a person's judgement. Everything before it is
+ * unauditable and is not carried.
+ *
+ * An instant rather than a date on purpose: the rows this excludes were
+ * written earlier the SAME calendar day as the presses it must include.
  *
  * Exported so the API can disclose it: a zero because nothing was measured
  * and a zero because nothing happened must never render the same.
  */
-export const CONTACTS_COUNTED_FROM = "2026-08-21";
+export const CONTACTS_COUNTED_FROM = "2026-08-22T13:00:00.000Z";
 
 /**
  * The calendar day a DATE column already represents.
@@ -158,21 +162,23 @@ export async function getDailyRows(
   //
   // Counting the FIRST application per contact rather than log rows is what
   // makes that true. ContactDispositionLog writes a row on every application,
-  // by every route — bulk list actions, imports, manual re-tagging, and the
-  // dialer pressing the same button twice on one call (which the live logs
-  // show happening routinely). Counting rows gave 3,133 contacts against 22.6
-  // hours: 138 an hour, one every 26 seconds, which is not a conversation
-  // rate, and it dragged contact->lead down to 0.0% purely by inflating the
-  // denominator. Collapsing to MIN(createdAt) per contact removes all of it —
-  // a second application of the same tag can never add to the count.
+  // by every route, and collapsing to MIN(createdAt) per contact means a
+  // second application can never add to the count.
   //
-  // Deliberately NOT CallRecord.dispositionId, which the previous fix used.
-  // That column is only written when applyDisposition is called with a
-  // callRecordId, and the frontend has never sent one — the identifier does
-  // not appear anywhere in slingvo-fe. It read as near-zero.
+  // Deliberately NOT CallRecord.dispositionId. That column is only written
+  // when applyDisposition is called WITH a callRecordId, which is now exactly
+  // the automatic path this tracker must ignore — and the frontend has never
+  // sent one, so it never reflected a button press at all.
   //
-  // Floored at CONTACTS_COUNTED_FROM so the old, unauditable history is not
-  // carried forward. See that constant.
+  // The floor is applied INSIDE the subquery, before the grouping. That is
+  // the difference between "first press since the cutover" and "first press
+  // ever, if that happened to fall after the cutover". The dialer spent
+  // months auto-marking every completed call, so under the second reading
+  // most of the database is permanently burned: press Contacted on one of
+  // those people tomorrow and they still would not count, because their
+  // first-ever row predates the cutover. Filtering before the group asks the
+  // honest question instead — we distrust everything written before the
+  // cutover, and within the window the once-ever rule is unchanged.
   //
   // AT TIME ZONE twice is not a typo. Prisma maps DateTime to timestamp(3)
   // WITHOUT time zone, so the first call declares "this naive value is UTC"
@@ -181,10 +187,9 @@ export async function getDailyRows(
   //
   // Bucketed to a null source: a contact can be recorded with no dialer
   // session running, so there is no calling list to attribute it to.
-  const contactsFloor = startOfDayInTimeZone(CONTACTS_COUNTED_FROM, timeZone);
-  const contactsFrom = instantRange.gte > contactsFloor ? instantRange.gte : contactsFloor;
+  const contactsFloor = new Date(CONTACTS_COUNTED_FROM);
 
-  if (contactsFrom < instantRange.lt) {
+  if (instantRange.lt > contactsFloor) {
     const contactDays = await prisma.$queryRaw<Array<{ day: string; contacts: number }>>`
       SELECT to_char((f.first_at AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone})::date, 'YYYY-MM-DD') AS day,
              COUNT(*)::int AS contacts
@@ -194,9 +199,10 @@ export async function getDailyRows(
         JOIN dispositions d ON d.id = l."dispositionId"
         WHERE l."appliedById" = ${userId}
           AND d.value = ${CONTACTED_DISPOSITION_VALUE}
+          AND l."createdAt" >= ${contactsFloor}
         GROUP BY l."contactId"
       ) f
-      WHERE f.first_at >= ${contactsFrom} AND f.first_at < ${instantRange.lt}
+      WHERE f.first_at >= ${instantRange.gte} AND f.first_at < ${instantRange.lt}
       GROUP BY 1 ORDER BY 1`;
     for (const r of contactDays) {
       getOrCreate(r.day, null).contacts += Number(r.contacts);

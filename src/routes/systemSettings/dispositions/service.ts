@@ -13,6 +13,10 @@ function throwHttp(statusCode: number, message: string): never {
 // deleted. Matched by their `value`.
 const PROTECTED_DEFAULT_VALUES = ["TRASH", "LEAD", "NOT_INTERESTED"];
 
+// The disposition that means "I actually spoke to this person". Never applied
+// automatically — see the guard in applyDisposition.
+const CONTACTED_DISPOSITION_VALUE = "CONTACT";
+
 export function isProtectedDispositionValue(value?: string | null) {
     return !!value && PROTECTED_DEFAULT_VALUES.includes(value.toUpperCase());
 }
@@ -467,6 +471,40 @@ export class DispositionService {
         const disposition = await prisma.disposition.findUniqueOrThrow({
             where: { id: dispositionId }
         });
+
+        // 1b. A Contact is a human judgement. Only a person can record one.
+        //
+        // calling/services.ts auto-applies a disposition when a call reaches a
+        // terminal Twilio status, and maps "completed" to CONTACT. Twilio calls
+        // a call "completed" whenever anything answered it and hung up — an
+        // uncaught voicemail, a two-second wrong number, a pickup and an
+        // immediate hangup. None of those is a conversation, but each one wrote
+        // a ContactDispositionLog row identical in every column to an agent
+        // pressing the Contacted button.
+        //
+        // That is what put 3,133 "contacts" against 22.6 hours on the
+        // Prospecting Tracker, and 68 on a day nobody pressed the button 68
+        // times. Counting one row per contact capped the inflation; it did not
+        // remove it, because the inflation was one bogus row per person.
+        //
+        // Refused here rather than at the call handler on purpose: this is the
+        // chokepoint every CONTACT row is written through, so the rule survives
+        // another automatic path being added later. Nothing about the Twilio
+        // connection, the call flow, CallRecord writes, redials or the dial
+        // queue is touched.
+        //
+        // callRecordId is what identifies an automatic application. The call
+        // handler is the only caller that passes it — the frontend has never
+        // sent one, and the identifier appears nowhere in slingvo-fe. If that
+        // ever stops being true this guard needs an explicit flag instead.
+        //
+        // NO_ANSWER and VOICEMAIL keep auto-applying, folder actions included.
+        // Those are statements about what the phone did, which the system
+        // genuinely knows. CONTACT is a statement about what a person heard.
+        if (callRecordId && disposition.value === CONTACTED_DISPOSITION_VALUE) {
+            console.log(`[applyDisposition] Refused automatic ${disposition.label} for contact=${contactId} callRecord=${callRecordId} — Contacted is only ever recorded when a person applies it.`);
+            return { success: true, folderId: null };
+        }
 
         // 2. Resolve which folder to drop contact into
         let resolvedFolderId: string | null;
