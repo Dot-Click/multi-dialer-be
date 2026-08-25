@@ -23,11 +23,17 @@ router.post("/submit", protectRoute, async (req: any, res) => {
 
 /**
  * GET /api/a2p/status
- * Returns current A2P status for the logged-in user.
+ * Returns current A2P status for the logged-in user. Kicks off a Twilio
+ * status sync first so the UI never shows stale "pending" when Twilio has
+ * already made a decision (customer profile or brand rejection). Sync is
+ * best-effort — if Twilio is unreachable we still return the DB state.
  */
 router.get("/status", protectRoute, async (req: any, res) => {
     try {
         const userId = req.user.id;
+        await a2pRegistrationService.checkA2PStatus(userId).catch((err: any) =>
+            console.warn(`[A2P] checkA2PStatus for ${userId} failed:`, err?.message)
+        );
         const registration = await prisma.a2P_Registration.findUnique({
             where: { userId },
             select: { status: true, rejectionReason: true }

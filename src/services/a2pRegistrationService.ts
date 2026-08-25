@@ -19,6 +19,49 @@ export interface A2PBusinessDetails {
     contactPhone: string;
 }
 
+/**
+ * Twilio's evaluation results list every failed field individually, which
+ * produces a wall of text ("Business Name: missing | First Name: missing |
+ * Last Name: missing | …" 12+ items long). Collapse them into 2-4 human
+ * categories so the UI shows something the user can act on.
+ */
+const summarizeRejectionFields = (fields: string[]): string => {
+    if (!fields.length) return "";
+    const lower = fields.map(f => f.toLowerCase());
+    const has = (kw: string) => lower.some(f => f.includes(kw));
+
+    const buckets: string[] = [];
+    if (has("business name") || has("registration number") || has("business classification") || has("website") || has("industry")) {
+        buckets.push("Business info incomplete (name, registration number, website, classification)");
+    }
+    if (has("first name") || has("last name") || has("email") || has("authorized representative")) {
+        buckets.push("Authorized representative details missing (name, email)");
+    }
+    if (has("address") || has("street") || has("city") || has("postal") || has("zip")) {
+        buckets.push("Business address missing or does not match registry");
+    }
+    if (has("end customer") || has("assigned")) {
+        buckets.push("End-customer assignment not specified");
+    }
+
+    // Anything that didn't fit a bucket becomes a small "other" tail.
+    const unmatched = fields.filter(f => {
+        const l = f.toLowerCase();
+        return !(
+            l.includes("business name") || l.includes("registration number") || l.includes("website") ||
+            l.includes("classification") || l.includes("industry") ||
+            l.includes("first name") || l.includes("last name") || l.includes("email") || l.includes("authorized representative") ||
+            l.includes("address") || l.includes("street") || l.includes("city") || l.includes("postal") || l.includes("zip") ||
+            l.includes("end customer") || l.includes("assigned")
+        );
+    });
+    if (unmatched.length > 0 && buckets.length < 4) {
+        buckets.push(`Other: ${unmatched.slice(0, 2).join(", ")}${unmatched.length > 2 ? "…" : ""}`);
+    }
+
+    return buckets.length ? `Business Profile rejected — ${buckets.join("; ")}.` : "Business Profile was rejected by Twilio.";
+};
+
 const getUsAppToPersonUsecase = (businessType: string) => {
     switch(businessType) {
         case 'Sole Proprietor':
@@ -208,49 +251,92 @@ export class A2PRegistrationService {
     }
 
     /**
-     * Polls Twilio for status updates and triggers Phase 2 when Brand is approved.
+     * Polls Twilio for status updates and mirrors them onto the local A2P row.
+     *
+     * A2P has two independent Twilio resources that can be rejected:
+     *   - Customer Profile (Business Profile, BU… SID) — vetted by Twilio itself.
+     *   - Brand Registration (BN… SID) — vetted against TCR by the carriers.
+     *
+     * Either rejection means the local status should flip to REJECTED so the
+     * UI stops showing "under review" indefinitely. We check the customer
+     * profile first because it's the upstream artifact (a rejected profile
+     * makes brand progression moot).
      */
     async checkA2PStatus(userId: string) {
         const reg = await prisma.a2P_Registration.findUnique({ where: { userId } });
-        if (!reg || !reg.brandSid) return reg?.status || "NOT_STARTED";
+        if (!reg) return "NOT_STARTED";
+        // APPROVED is truly terminal — skip the network round-trip.
+        // REJECTED is NOT — we want to keep the rejection message fresh so
+        // improvements to the summarizer, or updates to Twilio's evaluation
+        // results, actually surface on the next status fetch.
+        if (reg.status === "APPROVED") return "APPROVED";
 
-        // If Phase 2 hasn't run yet, check brand status to trigger it
-        if (reg.status === "PENDING" && !reg.campaignSid) {
-            try {
-                const integration = await prisma.integration.findFirst({
-                    where: { 
-                        systemSetting: { userId },
-                        provider: "TWILIO"
-                    }
-                });
+        const integration = await prisma.integration.findFirst({
+            where: { systemSetting: { userId }, provider: "TWILIO" }
+        });
+        if (!integration?.credentials) return reg.status;
 
-                if (integration && integration.credentials) {
-                    const creds = integration.credentials as any;
-                    const subClient = twilio(creds.accountSid, creds.authToken);
+        const creds = integration.credentials as any;
+        const subClient = twilio(creds.accountSid, creds.authToken);
 
-                    console.log(`[A2P Service] Checking brand status for user: ${userId}`);
-                    const brand = await subClient.messaging.v1.brandRegistrations(reg.brandSid).fetch();
-                    
-                    console.log(`[A2P Service] Brand status: ${brand.status}`);
+        try {
+            // 1) Check Customer Profile — the Business Profile that everything
+            //    else attaches to. A twilio-rejected profile is terminal for
+            //    this whole A2P attempt.
+            if (reg.customerProfileSid) {
+                const profile = await subClient.trusthub.v1
+                    .customerProfiles(reg.customerProfileSid)
+                    .fetch();
+                console.log(`[A2P Service] Customer Profile ${reg.customerProfileSid} status: ${profile.status}`);
 
-                    if (brand.status === "APPROVED") {
-                        await this.executePhase2(userId, reg, subClient);
-                    } else if (brand.status === "FAILED") {
-                        await prisma.a2P_Registration.update({
-                            where: { userId },
-                            data: {
-                                status: "REJECTED",
-                                rejectionReason: `Twilio Brand Rejection: ${brand.status}`
-                            }
-                        });
-                    }
+                if (profile.status === "twilio-rejected") {
+                    let detail = "Business Profile was rejected by Twilio.";
+                    try {
+                        const evals = await subClient.trusthub.v1
+                            .customerProfiles(reg.customerProfileSid)
+                            .customerProfilesEvaluations.list({ limit: 3 });
+                        const latest = evals.find(e => e.status === "noncompliant") || evals[0];
+                        if (latest && (latest as any).results) {
+                            const failedFields = (latest as any).results
+                                .flatMap((r: any) => r.fields || [])
+                                .filter((f: any) => f.passed === false)
+                                .map((f: any) => (f.friendly_name || f.object_field || "").toString());
+                            const summary = summarizeRejectionFields(failedFields);
+                            if (summary) detail = summary;
+                        }
+                    } catch { /* best-effort */ }
+
+                    await prisma.a2P_Registration.update({
+                        where: { userId },
+                        data: { status: "REJECTED", rejectionReason: detail },
+                    });
+                    return "REJECTED";
                 }
-            } catch (error: any) {
-                console.error("[A2P Service] Status check error:", error.message);
             }
+
+            // 2) Check Brand — only relevant if the profile isn't rejected and a
+            //    brand has been submitted. Brand approval triggers Phase 2
+            //    (Messaging Service + Campaign creation).
+            if (reg.brandSid && reg.status === "PENDING" && !reg.campaignSid) {
+                console.log(`[A2P Service] Checking brand status for user: ${userId}`);
+                const brand = await subClient.messaging.v1.brandRegistrations(reg.brandSid).fetch();
+                console.log(`[A2P Service] Brand status: ${brand.status}`);
+
+                if (brand.status === "APPROVED") {
+                    await this.executePhase2(userId, reg, subClient);
+                } else if (brand.status === "FAILED") {
+                    const detail = (brand as any).failureReason || (brand as any).errorDetail || "Brand registration failed";
+                    await prisma.a2P_Registration.update({
+                        where: { userId },
+                        data: { status: "REJECTED", rejectionReason: `Brand rejected: ${detail}` },
+                    });
+                    return "REJECTED";
+                }
+            }
+        } catch (error: any) {
+            console.error("[A2P Service] Status check error:", error.message);
         }
 
-        // Return current DB status
         const updatedReg = await prisma.a2P_Registration.findUnique({ where: { userId } });
         return updatedReg?.status || "PENDING";
     }

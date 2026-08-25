@@ -39,6 +39,7 @@ import emailHistoryRoutes from "./email-history"
 import { handleMyPlusLeadsWebhook } from "./webhooks/myplusleads";
 import a2pRoutes from "./a2p";
 import voiceIntegrityRoutes from "./voice-integrity";
+import cnamRoutes from "./cnam";
 import { getMyPlusLeadsConfig, syncMyPlusLeads, repairMyPlusLeadsLists } from "./integrations/myplusleads.controller";
 import { checkRole, protectRoute } from "../middlewares/auth.middleware"
 import superAdminCallerIdRoutes from "./super-admin/caller-ids"
@@ -113,6 +114,7 @@ router.use("/payment", paymentRoutes)
 router.use("/calendar-sync", calendarSyncRoutes)
 router.use("/a2p", a2pRoutes)
 router.use("/voice-integrity", voiceIntegrityRoutes)
+router.use("/cnam", cnamRoutes)
 
 // Integrations & Webhooks
 router.post("/webhooks/myplusleads/:userId", handleMyPlusLeadsWebhook);

@@ -1,6 +1,7 @@
 import prisma from "../lib/prisma";
 import { client as masterClient } from "../lib/config";
 import twilio from "twilio";
+import { getUserPlanLimits } from "./planLimits.service";
 
 /**
  * Twilio Voice Integrity — Trust Hub enrolment for outbound caller-IDs.
@@ -32,7 +33,18 @@ export type VoiceIntegrityStatus =
   | "draft"
   | "pending-review"
   | "twilio-approved"
-  | "twilio-rejected";
+  | "twilio-rejected"
+  // Admin has no TWILIO subaccount yet — the prerequisite for Voice Integrity.
+  // We surface this as a distinct status so the frontend can skip the modal
+  // for these admins instead of nagging them with a flow they can't complete.
+  | "blocked-no-twilio"
+  // Admin has a subaccount but no approved Business Profile yet — Voice
+  // Integrity needs one to attach the trust product to. Frontend skips the
+  // modal; the existing A2P flow drives the profile creation.
+  | "blocked-no-business-profile"
+  // Admin's plan doesn't include the advanced deliverability suite. Frontend
+  // skips the modal entirely; the settings panel disables the "Set up" button.
+  | "blocked-plan-not-eligible";
 
 export interface VoiceIntegrityCredentials {
   customerProfileSid?: string;
@@ -62,6 +74,42 @@ async function getIntegration(adminUserId: string) {
   });
 }
 
+/**
+ * Resolve which Twilio account context this admin belongs to.
+ *
+ * Normal admins have their own subaccount (Integration row with credentials).
+ * Legacy / master-account admins (like the client's own account) have no
+ * subaccount — their numbers live directly on the platform master. We detect
+ * them heuristically: no TWILIO integration row + at least one CallerId
+ * already provisioned. A brand-new admin with neither is treated as
+ * unconfigured and gets blocked-no-twilio.
+ *
+ * Returns null when the admin can't do VI at all (no context to attach to).
+ */
+export async function resolveTwilioContext(
+  adminUserId: string
+): Promise<{ client: any; onMaster: boolean } | null> {
+  const twilioInt = await prisma.integration.findFirst({
+    where: { provider: "TWILIO", systemSetting: { userId: adminUserId } },
+    select: { credentials: true },
+  });
+  const creds = twilioInt?.credentials as any;
+  if (creds?.accountSid) {
+    return { client: twilio(creds.accountSid, creds.authToken), onMaster: false };
+  }
+
+  // No subaccount — check if this admin has numbers on the master account.
+  const anyCallerId = await prisma.callerId.findFirst({
+    where: { systemSetting: { userId: adminUserId }, twillioSid: { not: null } },
+    select: { id: true },
+  });
+  if (anyCallerId) {
+    return { client: masterClient, onMaster: true };
+  }
+
+  return null;
+}
+
 async function getSystemSettingId(adminUserId: string): Promise<string> {
   const ss = await prisma.system_Setting.findFirst({
     where: { userId: adminUserId },
@@ -76,11 +124,65 @@ async function getSystemSettingId(adminUserId: string): Promise<string> {
  * for admins who haven't onboarded.
  */
 export async function getStatus(adminUserId: string): Promise<VoiceIntegrityCredentials> {
+  // Gate 0 (cheapest first — no network I/O): plan flag. Non-eligible plans
+  // don't get the VI modal at all. Matches CNAM's behavior.
+  const limits = await getUserPlanLimits(adminUserId).catch(() => null);
+  if (!limits?.advancedDeliverabilityEnabled) {
+    return { status: "blocked-plan-not-eligible" };
+  }
+
+  // Gate 1: the admin needs a Twilio context — either their own subaccount
+  // or (for legacy master-account admins) at least one number provisioned
+  // on master. Otherwise there's nothing for VI to attach to.
+  const ctx = await resolveTwilioContext(adminUserId);
+  if (!ctx) {
+    return { status: "blocked-no-twilio" };
+  }
+
+  // Gate 2: an approved Business Profile is required.
+  //   - Subaccount admins: use their local a2p_registrations.customerProfileSid.
+  //   - Master-account admins: query the master account for an approved profile
+  //     directly (A2P was completed outside our per-admin flow — it lives on
+  //     the master account, e.g. the client's own "Lumina Bridge" profile).
+  if (ctx.onMaster) {
+    const approvedProfile = await hasApprovedProfileOnClient(ctx.client);
+    if (!approvedProfile) {
+      return { status: "blocked-no-business-profile" };
+    }
+  } else {
+    // Subaccount admins: only APPROVED A2P is good enough. NOT_STARTED,
+    // PENDING and REJECTED all block — Twilio would refuse to link VI to a
+    // non-approved customer profile anyway, so we surface it here as a
+    // clear "finish A2P first" prompt instead of a Twilio API error later.
+    const a2p = await prisma.a2P_Registration.findUnique({
+      where: { userId: adminUserId },
+      select: { status: true, customerProfileSid: true },
+    });
+    if (a2p?.status !== "APPROVED" || !a2p?.customerProfileSid) {
+      return { status: "blocked-no-business-profile" };
+    }
+  }
+
   const integration = await getIntegration(adminUserId);
   if (!integration || !integration.credentials) {
     return { status: "not-started" };
   }
   return integration.credentials as unknown as VoiceIntegrityCredentials;
+}
+
+/**
+ * Best-effort check: does this client's account have any twilio-approved
+ * Customer Profile? Used to gate master-account admins who did A2P outside
+ * of our multi-tenant flow.
+ */
+async function hasApprovedProfileOnClient(client: any): Promise<boolean> {
+  try {
+    const profiles = await client.trusthub.v1.customerProfiles.list({ limit: 20 });
+    return profiles.some((p: any) => p.status === "twilio-approved");
+  } catch (err: any) {
+    console.warn("[VoiceIntegrity] hasApprovedProfileOnClient failed:", err?.message);
+    return false;
+  }
 }
 
 /**
@@ -107,29 +209,42 @@ export async function submitOnboarding(
 ): Promise<VoiceIntegrityCredentials> {
   const systemSettingId = await getSystemSettingId(adminUserId);
 
-  // Voice Integrity onboarding happens against the master account (that's
-  // the account the Twilio ISV model expects to own the trust products for
-  // its sub-accounts). The subaccount client is only used to *list* the
-  // numbers we'll assign.
-  const twilioIntegration = await prisma.integration.findFirst({
-    where: { provider: "TWILIO", systemSetting: { userId: adminUserId } },
-  });
-  const twilioCreds = twilioIntegration?.credentials as any;
-  if (!twilioCreds?.accountSid) {
-    throw new Error("Admin has no Twilio subaccount — set up TWILIO integration first.");
+  // Resolve the correct Twilio context for this admin:
+  //   - subaccount client  → normal ISV admins (their own tenancy)
+  //   - master client      → legacy master-account admins whose numbers live
+  //                          directly on the client's master account (e.g. jason)
+  const ctx = await resolveTwilioContext(adminUserId);
+  if (!ctx) {
+    throw new Error("Admin has no Twilio context — set up TWILIO integration or provision numbers first.");
   }
-  const subAccountSid = twilioCreds.accountSid as string;
-  const subClient = twilio(subAccountSid, twilioCreds.authToken);
 
-  // 1. Find the admin's primary Business Profile on the subaccount.
-  const profiles = await subClient.trusthub.v1.customerProfiles.list({ limit: 20 });
-  const primary = profiles.find(p => p.status === "twilio-approved") ?? profiles[0];
+  // 1. Find the primary Business Profile in the correct account context. For
+  //    master-account admins this is the client's own approved profile
+  //    (e.g. "Lumina Bridge"); for subaccount admins it's the one their A2P
+  //    onboarding produced.
+  const profiles = await ctx.client.trusthub.v1.customerProfiles.list({ limit: 20 });
+  const primary =
+    profiles.find((p: any) => p.status === "twilio-approved") ?? profiles[0];
   if (!primary) {
     throw new Error(
-      "No primary Business Profile found for this admin — complete A2P/Business Profile onboarding first."
+      "No primary Business Profile found — complete A2P/Business Profile onboarding first."
     );
   }
   const customerProfileSid = primary.sid;
+
+  // Numbers to enrol: for subaccount admins we can list from Twilio directly
+  // (the subaccount only owns their numbers). For master-account admins,
+  // Twilio's list would include numbers belonging to OTHER master-account
+  // admins too — so we scope to this admin's locally-tracked CallerIds.
+  const ownedSids: string[] = ctx.onMaster
+    ? (await prisma.callerId.findMany({
+        where: {
+          systemSetting: { userId: adminUserId },
+          twillioSid: { not: null },
+        },
+        select: { twillioSid: true },
+      })).map(c => c.twillioSid!).filter(Boolean)
+    : (await ctx.client.incomingPhoneNumbers.list({ limit: 1000 })).map((n: any) => n.sid);
 
   // Seed the integration row up-front so partial failures leave a resumable record.
   await prisma.integration.upsert({
@@ -146,34 +261,37 @@ export async function submitOnboarding(
     },
   });
 
+  // All Trust Hub writes go against the SAME account that owns the Business
+  // Profile — subaccount for ISV admins, master for master-account admins.
+  const hubClient = ctx.client;
+
   try {
     // 2. Attach every owned number to the business profile (idempotent per-number).
-    const owned = await subClient.incomingPhoneNumbers.list({ limit: 1000 });
-    for (const n of owned) {
+    for (const sid of ownedSids) {
       try {
-        await masterClient.trusthub.v1
+        await hubClient.trusthub.v1
           .customerProfiles(customerProfileSid)
           .customerProfilesChannelEndpointAssignment.create({
             channelEndpointType: "phone-number",
-            channelEndpointSid: n.sid,
+            channelEndpointSid: sid,
           });
       } catch (err: any) {
         // 409 / already-attached is fine.
         if (!/already/i.test(err.message || "")) {
-          console.warn(`[VoiceIntegrity] attach profile skip ${n.phoneNumber}: ${err.message}`);
+          console.warn(`[VoiceIntegrity] attach profile skip ${sid}: ${err.message}`);
         }
       }
     }
 
     // 3. Create Voice Integrity Trust Product.
-    const trustProduct = await masterClient.trusthub.v1.trustProducts.create({
+    const trustProduct = await hubClient.trusthub.v1.trustProducts.create({
       friendlyName: `Voice Integrity — ${adminUserId}`,
       email: primary.email || "support@slingvo.com",
       policySid: VOICE_INTEGRITY_POLICY_SID,
     });
 
     // 4. Create End User of type voice_integrity_information.
-    const endUser = await masterClient.trusthub.v1.endUsers.create({
+    const endUser = await hubClient.trusthub.v1.endUsers.create({
       friendlyName: `Voice Integrity End User — ${adminUserId}`,
       type: "voice_integrity_information",
       attributes: {
@@ -185,36 +303,36 @@ export async function submitOnboarding(
     });
 
     // 5. Link end user → trust product.
-    await masterClient.trusthub.v1
+    await hubClient.trusthub.v1
       .trustProducts(trustProduct.sid)
       .trustProductsEntityAssignments.create({ objectSid: endUser.sid });
 
     // 6. Link business profile → trust product.
-    await masterClient.trusthub.v1
+    await hubClient.trusthub.v1
       .trustProducts(trustProduct.sid)
       .trustProductsEntityAssignments.create({ objectSid: customerProfileSid });
 
     // 7. Assign every phone number to the trust product, and remember the
     //    assignment SID on the local CallerId row so we can unassign on release.
-    for (const n of owned) {
+    for (const sid of ownedSids) {
       try {
-        const assignment = await masterClient.trusthub.v1
+        const assignment = await hubClient.trusthub.v1
           .trustProducts(trustProduct.sid)
           .trustProductsChannelEndpointAssignment.create({
             channelEndpointType: "phone-number",
-            channelEndpointSid: n.sid,
+            channelEndpointSid: sid,
           });
         await prisma.callerId.updateMany({
-          where: { twillioSid: n.sid, systemSetting: { userId: adminUserId } },
+          where: { twillioSid: sid, systemSetting: { userId: adminUserId } },
           data: { voiceIntegrityAssignmentSid: assignment.sid },
         });
       } catch (err: any) {
-        console.warn(`[VoiceIntegrity] assign TP skip ${n.phoneNumber}: ${err.message}`);
+        console.warn(`[VoiceIntegrity] assign TP skip ${sid}: ${err.message}`);
       }
     }
 
     // 8. Submit for vetting.
-    await masterClient.trusthub.v1
+    await hubClient.trusthub.v1
       .trustProducts(trustProduct.sid)
       .update({ status: "pending-review" });
 
@@ -251,7 +369,9 @@ export async function refreshStatus(adminUserId: string): Promise<VoiceIntegrity
   const current = await getStatus(adminUserId);
   if (current.status === "not-started" || !current.trustProductSid) return current;
 
-  const tp = await masterClient.trusthub.v1.trustProducts(current.trustProductSid).fetch();
+  const ctx = await resolveTwilioContext(adminUserId);
+  if (!ctx) return current;
+  const tp = await ctx.client.trusthub.v1.trustProducts(current.trustProductSid).fetch();
   // Twilio's status strings match ours 1:1 (draft / pending-review / twilio-approved / twilio-rejected).
   const nextStatus = tp.status as VoiceIntegrityStatus;
   const next: VoiceIntegrityCredentials = {
@@ -292,19 +412,23 @@ export async function assignNumber(adminUserId: string, twilioSid: string): Prom
   const status = await getStatus(adminUserId);
   if (!status.trustProductSid || !status.customerProfileSid) return;
 
+  const ctx = await resolveTwilioContext(adminUserId);
+  if (!ctx) return;
+  const hubClient = ctx.client;
+
   try {
     // Ensure it's on the business profile first (Trust Hub requires this).
-    await masterClient.trusthub.v1
+    await hubClient.trusthub.v1
       .customerProfiles(status.customerProfileSid)
       .customerProfilesChannelEndpointAssignment.create({
         channelEndpointType: "phone-number",
         channelEndpointSid: twilioSid,
       })
-      .catch(err => {
+      .catch((err: any) => {
         if (!/already/i.test(err.message || "")) throw err;
       });
 
-    const assignment = await masterClient.trusthub.v1
+    const assignment = await hubClient.trusthub.v1
       .trustProducts(status.trustProductSid)
       .trustProductsChannelEndpointAssignment.create({
         channelEndpointType: "phone-number",
@@ -338,8 +462,11 @@ export async function unassignNumber(adminUserId: string, twilioSid: string): Pr
   const status = await getStatus(adminUserId);
   if (!status.trustProductSid) return;
 
+  const ctx = await resolveTwilioContext(adminUserId);
+  if (!ctx) return;
+
   try {
-    await masterClient.trusthub.v1
+    await ctx.client.trusthub.v1
       .trustProducts(status.trustProductSid)
       .trustProductsChannelEndpointAssignment(cid.voiceIntegrityAssignmentSid)
       .remove();

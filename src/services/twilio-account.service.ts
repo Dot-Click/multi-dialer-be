@@ -4,6 +4,7 @@ import prisma from "../lib/prisma";
 import { envConfig } from "../lib/config";
 import { removeAddonSubscriptionItem, cancelAddonSubscriptionForUser } from "./phoneNumberBilling.service";
 import { assignNumber as viAssignNumber, unassignNumber as viUnassignNumber } from "./voiceIntegrity.service";
+import { assignNumber as cnamAssignNumber, unassignNumber as cnamUnassignNumber } from "./cnam.service";
 
 /**
  * Creates a Twilio Sub-Account for a user.
@@ -125,6 +126,9 @@ export async function transferNumberToSubAccount(twilioSid: string, subAccountSi
         await viAssignNumber(adminUserId, twilioSid).catch((err: any) =>
             console.warn(`[TwilioService] Voice Integrity assign for ${twilioSid} failed:`, err?.message)
         );
+        await cnamAssignNumber(adminUserId, twilioSid).catch((err: any) =>
+            console.warn(`[TwilioService] CNAM assign for ${twilioSid} failed:`, err?.message)
+        );
     }
 }
 
@@ -148,6 +152,7 @@ export async function releaseNumber(twilioSid: string, ownerClient: ReturnType<t
         });
         if (cid?.systemSetting.userId) {
             await viUnassignNumber(cid.systemSetting.userId, twilioSid).catch(() => undefined);
+            await cnamUnassignNumber(cid.systemSetting.userId, twilioSid).catch(() => undefined);
         }
     } catch (err: any) {
         console.warn(`[TwilioService] Voice Integrity unassign for ${twilioSid} skipped:`, err?.message);
