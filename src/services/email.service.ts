@@ -131,15 +131,20 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
           user: smtpConfig.username,
           pass: smtpPassword,
         },
-        // Same reasoning as the SMTP test-send transport (settings/smtp/service.ts):
-        // nodemailer's defaults (2min connect, 10min socket) let a silently-dropped
-        // connection hang a real send for minutes instead of failing fast
-        // into the retry queue. family: 4 forces IPv4 at the socket layer,
-        // since Railway has no outbound IPv6 route and reordering DNS results
-        // via dns.setDefaultResultOrder isn't enough on its own.
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 15000,
+        // Timeouts are deliberately generous — some tenant SMTP hosts (Exim
+        // on shared-hosting providers, in particular) reply in 2–3 second
+        // chunks per command, so a full sendMail cycle can run 15–25s on a
+        // good day and longer under load. Nodemailer's own defaults (2min
+        // connect, 10min socket) are too long — we want to fail into the
+        // retry queue eventually — but the earlier 10/10/15s values were
+        // tuned for fast providers and tripped on slower hosts before the
+        // send even reached DATA. family: 4 forces IPv4 at the socket
+        // layer, since Railway has no outbound IPv6 route and reordering
+        // DNS results via dns.setDefaultResultOrder isn't enough on its
+        // own.
+        connectionTimeout: 30000,
+        greetingTimeout: 30000,
+        socketTimeout: 60000,
         family: 4,
       } as SMTPTransport.Options);
       console.log(

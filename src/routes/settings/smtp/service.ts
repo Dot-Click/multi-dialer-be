@@ -144,13 +144,14 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
         user: config.username,
         pass: decryptSmtpPassword(config.password),
       },
-      // Nodemailer's defaults (2min connect, 10min socket) leave "Save &
-      // Test" hanging that long when a host silently drops the connection
-      // instead of rejecting it cleanly — fail fast instead so the UI gets
-      // a quick answer.
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
+      // Save & Test only does verify() + a single tiny sendMail — no big
+      // message body — so keep this side tight enough that the UI gets a
+      // quick answer if the host is unreachable, but generous enough to
+      // cover a slow shared-hosting Exim (which can take 2–3s per SMTP
+      // command → ~11s just for verify).
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 30000,
       // Force IPv4 at the socket layer. Railway has no outbound IPv6 route,
       // and dns.setDefaultResultOrder("ipv4first") only reorders DNS results
       // — if anything downstream still picks an IPv6 address (OS getaddrinfo
