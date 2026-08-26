@@ -61,11 +61,17 @@ export const startActionPlanStepJob = () => {
         const actionType = execution.step.actionType;
 
         try {
+          console.log(
+            `[ActionPlanStep] Firing execution ${execution.id} — type=${actionType} ` +
+            `plan="${planName}" contactId=${execution.assignment.contactId} ` +
+            `assignedById=${execution.assignment.assignedById}`
+          );
           if (actionType === "EMAIL") {
             // step.contentValue holds an EmailTemplate id (set by the Action
             // Plan wizard's "Template" dropdown for Email-type steps) — this
             // reuses the same send path as a manual Touch Point template send,
             // including merge-field substitution and signature handling.
+            console.log(`[ActionPlanStep] → sendTemplateEmailInDb(templateId=${execution.step.contentValue})`);
             await sendTemplateEmailInDb(
               execution.assignment.contactId,
               execution.step.contentValue,

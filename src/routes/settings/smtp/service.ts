@@ -123,7 +123,11 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
   if (!config) throwHttp(404, "SMTP configuration not found. Save your settings first.");
 
   try {
-    const smtpSecure = config.port === 465 ? true : false;
+    // Honor the user's "Secure (TLS/SSL)" toggle. Port 465 is implicit TLS;
+    // any other port with encryption on uses STARTTLS. With the toggle off,
+    // send plaintext — some legacy servers require this and forcing STARTTLS
+    // would fail the handshake.
+    const useImplicitTls = config.secure && config.port === 465;
     // `family: 4` is accepted by nodemailer at runtime (forwarded to
     // net.createConnection) but is not declared on SMTPTransport.Options,
     // so we cast to bypass the excess-property check. Without this cast
@@ -133,8 +137,8 @@ export async function testSmtpConfigInDb(companyId: string, testRecipientEmail: 
     const transporter = nodemailer.createTransport({
       host: config.host,
       port: config.port,
-      secure: smtpSecure,
-      requireTLS: !smtpSecure,
+      secure: useImplicitTls,
+      requireTLS: config.secure && !useImplicitTls,
       tls: { rejectUnauthorized: false },
       auth: {
         user: config.username,

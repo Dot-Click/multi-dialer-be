@@ -2522,6 +2522,7 @@ export function applyMergeFields(text: string, contact: any): string {
 }
 
 export async function sendTemplateEmailInDb(contactId: string, templateId: string, userId: string) {
+  console.log(`[Email:template] enter contactId=${contactId} templateId=${templateId} userId=${userId}`);
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
     include: {
@@ -2535,11 +2536,13 @@ export async function sendTemplateEmailInDb(contactId: string, templateId: strin
   const email =
     contact.emails.find((e) => e.isPrimary)?.email || contact.emails[0]?.email;
   if (!email) throwHttp(400, "Contact has no primary email");
+  console.log(`[Email:template] contact has ${contact.emails.length} email(s); using "${email}"`);
 
   const template = await prisma.emailTemplate.findUnique({
     where: { id: templateId },
   });
   if (!template) throwHttp(404, "Email template not found");
+  console.log(`[Email:template] template loaded — subject="${template.subject}" content.length=${template.content?.length ?? 0}`);
 
   // Read includeSignature via raw SQL (Prisma client may not be regenerated yet)
   const flagRows = await prisma.$queryRaw<{ includeSignature: boolean }[]>`
@@ -2558,7 +2561,17 @@ export async function sendTemplateEmailInDb(contactId: string, templateId: strin
   }
 
   const { companyId, agentEmail } = await resolveCompanyContext(userId);
-  await sendEmail(email, subject, content, { userId, contactId, templateId, includeUnsubscribe: true, companyId, replyToEmail: agentEmail });
+  console.log(`[Email:template] company context — companyId=${companyId ?? "<none>"} agentEmail=${agentEmail ?? "<none>"}`);
+  const result: any = await sendEmail(email, subject, content, { userId, contactId, templateId, includeUnsubscribe: true, companyId, replyToEmail: agentEmail });
+  console.log(`[Email:template] send returned success=${result?.success} error=${result?.error ?? "<none>"}`);
+  // The send path never throws on failure — it returns { success:false, error }
+  // and enqueues a retry — so callers that don't inspect the result end up
+  // reporting success on a failed send. The Action Plan job used to flip
+  // executions to SENT for exactly this reason; propagate the failure so it
+  // (and the manual send endpoint) surface the real outcome.
+  if (!result || result.success === false || result.error) {
+    throwHttp(502, result?.error || "Email send failed");
+  }
 
   return true;
 }
@@ -2574,7 +2587,10 @@ export async function sendFreeformEmailInDb(contactId: string, userId: string, s
   if (!email) throwHttp(400, "Contact has no email address");
 
   const { companyId, agentEmail } = await resolveCompanyContext(userId);
-  await sendEmail(email, subject, html, { userId, contactId, companyId, replyToEmail: agentEmail });
+  const result: any = await sendEmail(email, subject, html, { userId, contactId, companyId, replyToEmail: agentEmail });
+  if (!result || result.success === false || result.error) {
+    throwHttp(502, result?.error || "Email send failed");
+  }
 
   return true;
 }

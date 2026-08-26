@@ -6,7 +6,7 @@ import { envConfig } from "../lib/config";
 import prisma from "../lib/prisma";
 import { EmailStatus } from "@prisma/client";
 import { getSuppression, buildUnsubscribeUrl } from "../utils/emailSuppression";
-import { decryptSmtpPassword } from "../utils/encryption";
+import { decryptSmtpPassword, SmtpPasswordDecryptError } from "../utils/encryption";
 import { maskEmail } from "../utils/maskEmail";
 import { emailBrandedFooter, LOGO_URL as BRAND_LOGO_URL } from "../utils/emailShell";
 
@@ -76,22 +76,60 @@ type EmailTransport =
  * call sendEmail() — this is exposed separately for the SMTP test-send endpoint.
  */
 export async function getEmailTransporter(companyId?: string): Promise<EmailTransport> {
+  console.log(`[Email:transport] resolving transporter (companyId=${companyId ?? "<none>"})`);
   if (companyId) {
     const smtpConfig = await prisma.smtpConfig.findUnique({ where: { companyId } });
-    if (smtpConfig) {
-      const smtpSecure = smtpConfig.port === 465 ? true : false;
+    if (!smtpConfig) {
+      console.log(`[Email:transport] no SmtpConfig row for company ${companyId} → MailerSend`);
+    } else {
+      console.log(
+        `[Email:transport] SmtpConfig loaded — host=${smtpConfig.host} port=${smtpConfig.port} ` +
+        `secure=${smtpConfig.secure} username=${smtpConfig.username} fromEmail=${smtpConfig.fromEmail} ` +
+        `isVerified=${smtpConfig.isVerified}`
+      );
+    }
+    // Only route real sends through the tenant SMTP after it's been verified
+    // via the Save & Test flow — an unverified config (freshly saved, edited
+    // but never retested, or previously failing) falls back to MailerSend so
+    // outbound mail keeps working instead of silently breaking.
+    if (smtpConfig && !smtpConfig.isVerified) {
+      console.warn(`[Email:transport] SmtpConfig for company ${companyId} is NOT verified → falling back to MailerSend`);
+    }
+    if (smtpConfig && smtpConfig.isVerified) {
+      // Decrypt first — if SMTP_ENCRYPTION_KEY was rotated (or was never set
+      // when this row was written) the stored password is unusable. Fall back
+      // to MailerSend so mail keeps flowing, and log loudly so the operator
+      // knows the tenant needs to re-enter their password.
+      let smtpPassword: string;
+      try {
+        smtpPassword = decryptSmtpPassword(smtpConfig.password);
+      } catch (err) {
+        if (err instanceof SmtpPasswordDecryptError) {
+          console.error(
+            `[EmailService] Tenant SMTP for company ${companyId} could not be decrypted — falling back to MailerSend. ` +
+            `The user must re-enter their SMTP password in Settings.`
+          );
+          return { kind: "mailersend" };
+        }
+        throw err;
+      }
+      // Honor the user's "Secure (TLS/SSL)" toggle. Port 465 is implicit TLS;
+      // any other port with encryption on uses STARTTLS. With the toggle off,
+      // send plaintext — some legacy servers require this and forcing STARTTLS
+      // would fail the handshake.
+      const useImplicitTls = smtpConfig.secure && smtpConfig.port === 465;
       // `family: 4` is accepted by nodemailer at runtime (forwarded to
       // net.createConnection) but not declared on SMTPTransport.Options —
       // see the matching cast in settings/smtp/service.ts for details.
       const transporter = nodemailer.createTransport({
         host: smtpConfig.host,
         port: smtpConfig.port,
-        secure: smtpSecure,
-        requireTLS: !smtpSecure,
+        secure: useImplicitTls,
+        requireTLS: smtpConfig.secure && !useImplicitTls,
         tls: { rejectUnauthorized: false },
         auth: {
           user: smtpConfig.username,
-          pass: decryptSmtpPassword(smtpConfig.password),
+          pass: smtpPassword,
         },
         // Same reasoning as the SMTP test-send transport (settings/smtp/service.ts):
         // nodemailer's defaults (2min connect, 10min socket) let a silently-dropped
@@ -104,6 +142,9 @@ export async function getEmailTransporter(companyId?: string): Promise<EmailTran
         socketTimeout: 15000,
         family: 4,
       } as SMTPTransport.Options);
+      console.log(
+        `[Email:transport] using tenant SMTP — secure=${useImplicitTls} requireTLS=${smtpConfig.secure && !useImplicitTls}`
+      );
       return { kind: "smtp", transporter, fromEmail: smtpConfig.fromEmail, fromName: smtpConfig.fromName };
     }
   }
@@ -127,10 +168,16 @@ export interface DispatchResult {
  */
 export async function dispatchEmail(options: SendEmailOptions): Promise<DispatchResult & { suppressed?: true }> {
   const { to, from, subject, text, html, companyId, replyToEmail } = options;
+  console.log(
+    `[Email:dispatch] start to=${maskEmail(to)} from=${from} companyId=${companyId ?? "<none>"} ` +
+    `replyTo=${replyToEmail ?? "<none>"} includeUnsubscribe=${!!options.includeUnsubscribe} ` +
+    `userId=${options.userId ?? "<none>"} templateId=${options.templateId ?? "<none>"}`
+  );
 
   // Suppression gate — re-checked on every attempt so a bounce registered
   // after the initial enqueue is respected on retry.
   const suppression = await getSuppression(to);
+  console.log(`[Email:dispatch] suppression check → ${suppression ?? "none"}`);
   if (suppression && (suppression !== "UNSUBSCRIBE" || options.includeUnsubscribe)) {
     const reason = `Recipient suppressed (${suppression})`;
     console.warn(`[EmailService] Skipped send to ${maskEmail(to)} — ${reason}`);
@@ -159,12 +206,18 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
   const replyTo = transport.kind === "smtp" ? fromEmail : (replyToEmail || from || undefined);
 
   console.log(`[EmailService] Sending to ${maskEmail(to)} via ${transport.kind}`);
+  console.log(`[Email:dispatch] envelope from="${fromHeader}" replyTo="${replyTo ?? "<none>"}" subject="${subject}"`);
 
   try {
     let messageId: string | null = null;
 
     if (transport.kind === "smtp") {
+      console.log(`[Email:dispatch] handing off to nodemailer.sendMail…`);
       const info = await transport.transporter.sendMail({ from: fromHeader, to, replyTo, subject, text, html: htmlBody });
+      console.log(
+        `[Email:dispatch] nodemailer accepted=${JSON.stringify(info.accepted)} ` +
+        `rejected=${JSON.stringify(info.rejected)} response="${info.response}"`
+      );
       messageId = info.messageId || null;
     } else {
       // --- Retired SES send path (kept for reference / easy rollback) ---
@@ -233,8 +286,16 @@ const RETRY_BACKOFF_MINUTES = [2, 10, 30];
  */
 export async function sendEmail(options: SendEmailOptions) {
   const { to, from, subject, text, html, userId, contactId, leadId, templateId } = options;
+  console.log(
+    `[Email:send] enter to=${maskEmail(to)} subject="${subject}" ` +
+    `userId=${userId ?? "<none>"} contactId=${contactId ?? "<none>"} templateId=${templateId ?? "<none>"}`
+  );
 
   const result = await dispatchEmail(options);
+  console.log(
+    `[Email:send] dispatch result — success=${result.success} suppressed=${!!result.suppressed} ` +
+    `messageId=${result.messageId ?? "<none>"} error=${result.error ?? "<none>"}`
+  );
 
   // ── Log outcome to EmailLog ───────────────────────────────────────────────
   if (userId) {
@@ -246,7 +307,7 @@ export async function sendEmail(options: SendEmailOptions) {
       ? `[MailerSend template ${options.mailerSendTemplateId}]\n${JSON.stringify(options.variables ?? {}, null, 2)}`
       : (html || text);
     try {
-      await prisma.emailLog.create({
+      const log = await prisma.emailLog.create({
         data: {
           to, from, subject,
           content,
@@ -256,9 +317,12 @@ export async function sendEmail(options: SendEmailOptions) {
           userId, contactId, leadId, templateId,
         },
       });
+      console.log(`[Email:send] EmailLog row ${log.id} written status=${log.status}`);
     } catch (dbErr) {
       console.error("[EmailService] Failed to write EmailLog:", dbErr);
     }
+  } else {
+    console.log(`[Email:send] no userId on options → skipping EmailLog write`);
   }
 
   // ── On failure, enqueue for retry (unless suppressed — those are permanent) ─
