@@ -69,6 +69,15 @@ type EmailTransport =
   | { kind: "smtp"; transporter: nodemailer.Transporter; fromEmail: string; fromName: string }
   | { kind: "mailersend" };
 
+// Tracks consecutive tenant-SMTP failures per company. Kept in memory (not DB)
+// so we don't need a schema migration for this fallback; the counter resets on
+// restart, which is fine — the goal is "stop hammering a dead SMTP host during
+// one process's lifetime," not durable state. After SMTP_FAILURE_THRESHOLD
+// misses in a row we flip SmtpConfig.isVerified=false so subsequent sends
+// route straight to MailerSend and the UI can prompt the user to re-verify.
+const smtpFailureCounts = new Map<string, number>();
+const SMTP_FAILURE_THRESHOLD = 3;
+
 /**
  * Resolves which transporter to send a given email through: the company's own
  * verified SMTP config if one exists for `companyId`, otherwise the shared
@@ -213,6 +222,9 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
   console.log(`[EmailService] Sending to ${maskEmail(to)} via ${transport.kind}`);
   console.log(`[Email:dispatch] envelope from="${fromHeader}" replyTo="${replyTo ?? "<none>"}" subject="${subject}"`);
 
+  // Attempt the primary transport. On SMTP failure the caller path below falls
+  // back to MailerSend so action-plan / drip mail still reaches the recipient
+  // when a tenant's SMTP host is timing out or rate-limiting.
   try {
     let messageId: string | null = null;
 
@@ -224,58 +236,124 @@ export async function dispatchEmail(options: SendEmailOptions): Promise<Dispatch
         `rejected=${JSON.stringify(info.rejected)} response="${info.response}"`
       );
       messageId = info.messageId || null;
+      // Successful tenant SMTP send resets the failure streak.
+      if (companyId) smtpFailureCounts.set(companyId, 0);
     } else {
-      // --- Retired SES send path (kept for reference / easy rollback) ---
-      // const command = new SendEmailCommand({ ... });
-      // const response = await ses.send(command);
-      // messageId = response.MessageId || null;
-
-      const sentFrom = new Sender(fromEmail, fromName);
-      const emailParams = new EmailParams()
-        .setFrom(sentFrom)
-        .setTo([new Recipient(to)])
-        .setSubject(subject);
-
-      if (options.mailerSendTemplateId) {
-        // Dashboard-hosted template. MailerSend renders subject + html from
-        // the template itself; passing setSubject above is a safe fallback
-        // for the (rare) case where the template has no subject configured.
-        emailParams
-          .setTemplateId(options.mailerSendTemplateId)
-          .setPersonalization([{ email: to, data: options.variables ?? {} }]);
-      } else {
-        emailParams.setHtml(htmlBody).setText(text);
-      }
-      if (replyTo) emailParams.setReplyTo(new Sender(replyTo));
-
-      const response = await mailerSend.email.send(emailParams);
-      messageId =
-        (response?.headers as any)?.["x-message-id"] ||
-        (response?.body as any)?.message_id ||
-        null;
+      messageId = await sendViaMailerSend({ to, subject, text, htmlBody, replyTo, options });
     }
 
     console.log(`[EmailService] Delivered to ${maskEmail(to)} (messageId: ${messageId})`);
     return { success: true, messageId };
   } catch (error: any) {
-    // MailerSend SDK errors arrive as { statusCode, body: { message, errors } }
-    // rather than a standard Error, so error.message is often undefined.
-    const bodyMsg =
-      error?.body?.message ||
-      (typeof error?.body === "string" ? error.body : null);
-    const msg =
-      error?.message ||
-      (bodyMsg ? `MailerSend API ${error?.statusCode ?? "error"}: ${bodyMsg}` : null) ||
-      (error?.statusCode ? `MailerSend HTTP ${error.statusCode}` : null) ||
-      `Unknown ${transport.kind === "smtp" ? "SMTP" : "MailerSend"} error`;
-    console.error(`[EmailService] Dispatch failed for ${maskEmail(to)}:`, msg);
-    // Log the raw error body when we had to fall back to a generic message,
-    // so the actual MailerSend reason is visible in the logs.
+    const msg = formatSendError(error, transport.kind);
+    console.error(`[EmailService] Dispatch failed for ${maskEmail(to)} via ${transport.kind}:`, msg);
     if (!error?.message) {
       console.error(`[EmailService] Raw error detail:`, JSON.stringify(error ?? null));
     }
+
+    // Tenant SMTP just failed. Track the streak, and if we've crossed the
+    // threshold flip isVerified=false so subsequent sends skip the SMTP path
+    // outright until the user re-runs Save & Test. Either way, immediately
+    // retry this same send through MailerSend so the recipient still gets
+    // their email — an action-plan drip failing silently is what got us here.
+    if (transport.kind === "smtp" && companyId) {
+      const streak = (smtpFailureCounts.get(companyId) ?? 0) + 1;
+      smtpFailureCounts.set(companyId, streak);
+      console.warn(`[Email:dispatch] tenant SMTP failure streak for company ${companyId}: ${streak}`);
+      if (streak >= SMTP_FAILURE_THRESHOLD) {
+        try {
+          await prisma.smtpConfig.update({
+            where: { companyId },
+            data: { isVerified: false, verifiedAt: null },
+          });
+          smtpFailureCounts.delete(companyId);
+          console.warn(
+            `[Email:dispatch] flipped SmtpConfig.isVerified=false for company ${companyId} ` +
+            `after ${SMTP_FAILURE_THRESHOLD} consecutive failures — future sends will use MailerSend until re-verified.`
+          );
+        } catch (dbErr: any) {
+          console.error(`[Email:dispatch] failed to flip isVerified: ${dbErr?.message}`);
+        }
+      }
+    }
+
+    if (transport.kind === "smtp") {
+      console.warn(`[Email:dispatch] falling back to MailerSend for ${maskEmail(to)}`);
+      try {
+        // Build MailerSend-appropriate From: even if the tenant configured a
+        // custom fromEmail, MailerSend rejects arbitrary senders — use the
+        // shared workspace sender and preserve the tenant's Reply-To so
+        // replies still land in the right inbox.
+        const fbFromEmail = envConfig.MAILERSEND_FROM_EMAIL || envConfig.EMAIL_USER || "noreply@slingvo.com";
+        const fbFromName  = options.fromName || envConfig.MAILERSEND_FROM_NAME || "Slingvo";
+        const fbReplyTo   = replyToEmail || fromEmail;
+        const messageId = await sendViaMailerSend({
+          to, subject, text, htmlBody,
+          replyTo: fbReplyTo,
+          options: { ...options, fromName: fbFromName },
+          fromEmail: fbFromEmail,
+          fromName: fbFromName,
+        });
+        console.log(`[EmailService] Delivered via MailerSend fallback to ${maskEmail(to)} (messageId: ${messageId})`);
+        return { success: true, messageId };
+      } catch (fbErr: any) {
+        const fbMsg = formatSendError(fbErr, "mailersend");
+        console.error(`[EmailService] MailerSend fallback ALSO failed for ${maskEmail(to)}:`, fbMsg);
+        return { success: false, error: `SMTP: ${msg} | MailerSend: ${fbMsg}` };
+      }
+    }
+
     return { success: false, error: msg };
   }
+}
+
+// Extracted so the fallback branch above can reuse the exact MailerSend send
+// path without duplicating the setFrom/setTo/setSubject wiring.
+async function sendViaMailerSend(args: {
+  to: string;
+  subject: string;
+  text: string;
+  htmlBody: string;
+  replyTo?: string;
+  options: SendEmailOptions;
+  fromEmail?: string;
+  fromName?: string;
+}): Promise<string | null> {
+  const fromEmail = args.fromEmail ?? envConfig.MAILERSEND_FROM_EMAIL ?? envConfig.EMAIL_USER ?? "noreply@slingvo.com";
+  const fromName  = args.fromName  ?? args.options.fromName ?? envConfig.MAILERSEND_FROM_NAME ?? "Slingvo";
+  const sentFrom = new Sender(fromEmail, fromName);
+  const emailParams = new EmailParams()
+    .setFrom(sentFrom)
+    .setTo([new Recipient(args.to)])
+    .setSubject(args.subject);
+
+  if (args.options.mailerSendTemplateId) {
+    emailParams
+      .setTemplateId(args.options.mailerSendTemplateId)
+      .setPersonalization([{ email: args.to, data: args.options.variables ?? {} }]);
+  } else {
+    emailParams.setHtml(args.htmlBody).setText(args.text);
+  }
+  if (args.replyTo) emailParams.setReplyTo(new Sender(args.replyTo));
+
+  const response = await mailerSend.email.send(emailParams);
+  return (
+    (response?.headers as any)?.["x-message-id"] ||
+    (response?.body as any)?.message_id ||
+    null
+  );
+}
+
+function formatSendError(error: any, kind: "smtp" | "mailersend"): string {
+  const bodyMsg =
+    error?.body?.message ||
+    (typeof error?.body === "string" ? error.body : null);
+  return (
+    error?.message ||
+    (bodyMsg ? `MailerSend API ${error?.statusCode ?? "error"}: ${bodyMsg}` : null) ||
+    (error?.statusCode ? `MailerSend HTTP ${error.statusCode}` : null) ||
+    `Unknown ${kind === "smtp" ? "SMTP" : "MailerSend"} error`
+  );
 }
 
 // Exponential-backoff delays (minutes) for each retry attempt index (0-based).
