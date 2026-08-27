@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { SessionRow } from "../../domain/prospecting";
 import { ProspectingStage } from "@prisma/client";
+import { isoDayInTimeZone, startOfDayInTimeZone, endOfDayExclusiveInTimeZone } from "../../utils/timezone";
 
 /**
  * This file is the application-layer equivalent of BUILD_SPEC.md's
@@ -16,34 +17,57 @@ import { ProspectingStage } from "@prisma/client";
  *   - Source   <- AgentSession.listId for dialer-derived rows (BUILD_SPEC's
  *                 contract calls this "calling list / campaign", which is
  *                 exactly what listId already is).
- *   - Contacts <- CallRecord.dispositionId where the disposition is "CONTACT",
- *                 i.e. the Contacted outcome pushed on an actual call.
- *                 See the block comment below — this deliberately does NOT
- *                 use ContactDispositionLog.
+ *   - Contacts <- the FIRST application of the "CONTACT" disposition to each
+ *                 contact since CONTACTS_COUNTED_FROM. One press, one
+ *                 contact, once ever. See the block comment below — this
+ *                 counts distinct contacts, not log rows, and deliberately
+ *                 does NOT use CallRecord.
  *   - Funnel stages (leads..closed) + GCI <- ProspectingStageEvent, which is
  *                 itself written whenever one of the six funnel Dispositions
  *                 is applied (see systemSettings/dispositions/service.ts).
  *
- * Day boundaries are UTC-midnight pending the Timezone open question in
- * BUILD_SPEC.md §7 (Company.defaultTimeZone exists but isn't yet threaded
- * through every write path that can produce a day bucket).
+ * Days are bucketed in the TENANT'S timezone (Company.defaultTimeZone — the
+ * same value TCPA windows are evaluated against), not UTC. See the two range
+ * kinds in getDailyRows: TIMESTAMP and DATE columns need different treatment
+ * and mixing them up puts activity on the wrong day.
  */
-
-const DAY_MS = 86_400_000;
 
 /** Disposition.value that means "I actually spoke to this person". */
 const CONTACTED_DISPOSITION_VALUE = "CONTACT";
 
-function toIsoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+/**
+ * Contacts are counted from this INSTANT forward and no earlier.
+ *
+ * Until 2026-08-22 the dialer auto-applied this disposition on every call
+ * that reached Twilio's "completed" status — an uncaught voicemail, a
+ * two-second wrong number, a pickup and an immediate hangup. Those rows are
+ * identical in every column to an agent pressing the Contacted button, so
+ * there is no way to tell them apart after the fact. They are the reason the
+ * tracker read 3,133 contacts against 22.6 hours, and 68 on a day nobody
+ * pressed the button 68 times.
+ *
+ * applyDisposition now refuses automatic CONTACT applications, so everything
+ * written after this instant is a person's judgement. Everything before it is
+ * unauditable and is not carried.
+ *
+ * An instant rather than a date on purpose: the rows this excludes were
+ * written earlier the SAME calendar day as the presses it must include.
+ *
+ * Exported so the API can disclose it: a zero because nothing was measured
+ * and a zero because nothing happened must never render the same.
+ */
+export const CONTACTS_COUNTED_FROM = "2026-08-22T13:00:00.000Z";
 
-/** Inclusive day range as UTC instants, for Prisma `gte`/`lt` filters. */
-function dayRangeFilter(fromIso: string, toIso: string): { gte: Date; lt: Date } {
-  return {
-    gte: new Date(fromIso + "T00:00:00.000Z"),
-    lt: new Date(new Date(toIso + "T00:00:00.000Z").getTime() + DAY_MS),
-  };
+/**
+ * The calendar day a DATE column already represents.
+ *
+ * Prisma hands back a @db.Date as a Date pinned to UTC midnight. It carries no
+ * time and no zone — it IS the day. Passing it through a zone-aware reader
+ * would resolve UTC midnight to the previous evening somewhere west of
+ * Greenwich and report the day before. Read the UTC parts and stop.
+ */
+function toIsoDayUTC(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
 function emptyRow(loggedOn: string, source: string | null): SessionRow {
@@ -82,13 +106,30 @@ function bucketKey(loggedOn: string, source: string | null): string {
  * winning wholesale for the (day, source) buckets it covers. Feed the result
  * into the domain layer's aggregateSessions/computeActualKpis/computeStreak —
  * it has no opinion on where the numbers came from.
+ *
+ * `timeZone` is the tenant's IANA zone. Callers resolve it once and pass it
+ * down rather than each query looking it up.
  */
 export async function getDailyRows(
   userId: string,
   fromIso: string,
   toIso: string,
+  timeZone: string,
 ): Promise<SessionRow[]> {
-  const range = dayRangeFilter(fromIso, toIso);
+  // TIMESTAMP columns: the UTC instants at which the local day starts and the
+  // local day after the range ends starts.
+  const instantRange = {
+    gte: startOfDayInTimeZone(fromIso, timeZone),
+    lt: endOfDayExclusiveInTimeZone(toIso, timeZone),
+  };
+
+  // DATE columns: no time, no zone, already a calendar day. Plain UTC midnight
+  // bounds — shifting these by an offset would move the day.
+  const dateRange = {
+    gte: new Date(`${fromIso}T00:00:00.000Z`),
+    lt: new Date(new Date(`${toIso}T00:00:00.000Z`).getTime() + 86_400_000),
+  };
+
   const derived = new Map<string, SessionRow>();
 
   const getOrCreate = (loggedOn: string, source: string | null): SessionRow => {
@@ -102,59 +143,80 @@ export async function getDailyRows(
   };
 
   // ---- Hours, from dialer sessions -----------------------------------
+  // startTime is a TIMESTAMP, so the day it belongs to depends on the zone.
   const agentSessions = await prisma.agentSession.findMany({
-    where: { userId, startTime: range },
+    where: { userId, startTime: instantRange },
     select: { startTime: true, duration: true, listId: true },
   });
   for (const s of agentSessions) {
-    const row = getOrCreate(toIsoDay(s.startTime), s.listId ?? null);
+    const row = getOrCreate(isoDayInTimeZone(s.startTime, timeZone), s.listId ?? null);
     row.hours += (s.duration ?? 0) / 3600;
   }
 
-  // ---- Contacts, from the Contacted outcome on an actual call ---------
+  // ---- Contacts: first press of Contacted, per contact, once ever -----
   //
-  // Deliberately CallRecord, not ContactDispositionLog.
+  // The rule: one press of the Contacted button on a contact is one contact.
+  // Inside or outside a dialer session, no distinction. However many times
+  // that person is called, still one. Once ever — reaching them again next
+  // month does not count again. Identical semantics to Lead.
   //
-  // ContactDispositionLog records every application of a disposition to a
-  // contact, whatever the route: bulk list actions, imports, manual
-  // re-tagging from the contact detail screen. On live that produced 3,133
-  // "contacts" against 22.6 hours — 138 per hour, one every 26 seconds,
-  // which is not a conversation rate. It made every downstream ratio
-  // meaningless: contact->lead read 0.0% purely because the denominator was
-  // inflated by an order of magnitude.
+  // Counting the FIRST application per contact rather than log rows is what
+  // makes that true. ContactDispositionLog writes a row on every application,
+  // by every route, and collapsing to MIN(createdAt) per contact means a
+  // second application can never add to the count.
   //
-  // CallRecord.dispositionId is only written when a disposition is chosen as
-  // the outcome of a real call, which is exactly the contract: a contact is
-  // counted when the Contacted outcome is pushed on the dialer, or when the
-  // agent enters one by hand in the Log activity form (handled by the
-  // override merge at the bottom of this function).
-  const contactCalls = await prisma.callRecord.findMany({
-    where: {
-      userId,
-      createdAt: range,
-      dispositionRef: { value: CONTACTED_DISPOSITION_VALUE },
-    },
-    select: {
-      createdAt: true,
-      session: { select: { listId: true } },
-    },
-  });
-  for (const call of contactCalls) {
-    // Attribute to the calling list the call belonged to, so contacts land in
-    // the same channel bucket as the hours that produced them. Calls with no
-    // session (rare — manual dials outside a session) fall to null source,
-    // same as before.
-    const row = getOrCreate(toIsoDay(call.createdAt), call.session?.listId ?? null);
-    row.contacts += 1;
+  // Deliberately NOT CallRecord.dispositionId. That column is only written
+  // when applyDisposition is called WITH a callRecordId, which is now exactly
+  // the automatic path this tracker must ignore — and the frontend has never
+  // sent one, so it never reflected a button press at all.
+  //
+  // The floor is applied INSIDE the subquery, before the grouping. That is
+  // the difference between "first press since the cutover" and "first press
+  // ever, if that happened to fall after the cutover". The dialer spent
+  // months auto-marking every completed call, so under the second reading
+  // most of the database is permanently burned: press Contacted on one of
+  // those people tomorrow and they still would not count, because their
+  // first-ever row predates the cutover. Filtering before the group asks the
+  // honest question instead — we distrust everything written before the
+  // cutover, and within the window the once-ever rule is unchanged.
+  //
+  // AT TIME ZONE twice is not a typo. Prisma maps DateTime to timestamp(3)
+  // WITHOUT time zone, so the first call declares "this naive value is UTC"
+  // and the second converts it to the tenant's wall clock. One call alone
+  // would read the stored value as already-local and be wrong by the offset.
+  //
+  // Bucketed to a null source: a contact can be recorded with no dialer
+  // session running, so there is no calling list to attribute it to.
+  const contactsFloor = new Date(CONTACTS_COUNTED_FROM);
+
+  if (instantRange.lt > contactsFloor) {
+    const contactDays = await prisma.$queryRaw<Array<{ day: string; contacts: number }>>`
+      SELECT to_char((f.first_at AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone})::date, 'YYYY-MM-DD') AS day,
+             COUNT(*)::int AS contacts
+      FROM (
+        SELECT l."contactId", MIN(l."createdAt") AS first_at
+        FROM contact_disposition_logs l
+        JOIN dispositions d ON d.id = l."dispositionId"
+        WHERE l."appliedById" = ${userId}
+          AND d.value = ${CONTACTED_DISPOSITION_VALUE}
+          AND l."createdAt" >= ${contactsFloor}
+        GROUP BY l."contactId"
+      ) f
+      WHERE f.first_at >= ${instantRange.gte} AND f.first_at < ${instantRange.lt}
+      GROUP BY 1 ORDER BY 1`;
+    for (const r of contactDays) {
+      getOrCreate(r.day, null).contacts += Number(r.contacts);
+    }
   }
 
   // ---- Funnel stages + GCI, from stage events -------------------------
+  // occurredOn is a DATE — already the calendar day the stage was reached.
   const stageEvents = await prisma.prospectingStageEvent.findMany({
-    where: { userId, occurredOn: range },
+    where: { userId, occurredOn: dateRange },
     select: { occurredOn: true, source: true, stage: true, gci: true },
   });
   for (const ev of stageEvents) {
-    const row = getOrCreate(toIsoDay(ev.occurredOn), ev.source ?? null);
+    const row = getOrCreate(toIsoDayUTC(ev.occurredOn), ev.source ?? null);
     const field = STAGE_FIELD[ev.stage];
     (row[field] as number) += 1;
     if (ev.stage === "CLOSED") {
@@ -162,14 +224,14 @@ export async function getDailyRows(
     }
   }
 
-  // ---- Manual overrides — win wholesale per (day, source) -------------
+  // ---- Manual entries — also a DATE column ----------------------------
   const overrides = await prisma.prospectingSession.findMany({
-    where: { userId, loggedOn: range },
+    where: { userId, loggedOn: dateRange },
   });
 
   const merged = new Map<string, SessionRow>(derived);
   for (const o of overrides) {
-    const loggedOn = toIsoDay(o.loggedOn);
+    const loggedOn = toIsoDayUTC(o.loggedOn);
     merged.set(bucketKey(loggedOn, o.source), {
       loggedOn,
       source: o.source,

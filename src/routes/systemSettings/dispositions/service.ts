@@ -1,6 +1,8 @@
 import prisma from "@/lib/prisma";
 import { ensureTrashFolder, ensureDncFolder, moveToDncInDb } from "../../contact/service";
 import { stageForDispositionValue } from "../../tracker/stageDispositions";
+import { resolveTenantTimeZone } from "../../../utils/tenant";
+import { todayIsoInTimeZone } from "../../../utils/timezone";
 
 function throwHttp(statusCode: number, message: string): never {
     throw { message, statusCode };
@@ -10,6 +12,10 @@ function throwHttp(statusCode: number, message: string): never {
 // Dispositions list (NOT as system "Call Outcomes"), and cannot be edited or
 // deleted. Matched by their `value`.
 const PROTECTED_DEFAULT_VALUES = ["TRASH", "LEAD", "NOT_INTERESTED"];
+
+// The disposition that means "I actually spoke to this person". Never applied
+// automatically — see the guard in applyDisposition.
+const CONTACTED_DISPOSITION_VALUE = "CONTACT";
 
 export function isProtectedDispositionValue(value?: string | null) {
     return !!value && PROTECTED_DEFAULT_VALUES.includes(value.toUpperCase());
@@ -466,6 +472,40 @@ export class DispositionService {
             where: { id: dispositionId }
         });
 
+        // 1b. A Contact is a human judgement. Only a person can record one.
+        //
+        // calling/services.ts auto-applies a disposition when a call reaches a
+        // terminal Twilio status, and maps "completed" to CONTACT. Twilio calls
+        // a call "completed" whenever anything answered it and hung up — an
+        // uncaught voicemail, a two-second wrong number, a pickup and an
+        // immediate hangup. None of those is a conversation, but each one wrote
+        // a ContactDispositionLog row identical in every column to an agent
+        // pressing the Contacted button.
+        //
+        // That is what put 3,133 "contacts" against 22.6 hours on the
+        // Prospecting Tracker, and 68 on a day nobody pressed the button 68
+        // times. Counting one row per contact capped the inflation; it did not
+        // remove it, because the inflation was one bogus row per person.
+        //
+        // Refused here rather than at the call handler on purpose: this is the
+        // chokepoint every CONTACT row is written through, so the rule survives
+        // another automatic path being added later. Nothing about the Twilio
+        // connection, the call flow, CallRecord writes, redials or the dial
+        // queue is touched.
+        //
+        // callRecordId is what identifies an automatic application. The call
+        // handler is the only caller that passes it — the frontend has never
+        // sent one, and the identifier appears nowhere in slingvo-fe. If that
+        // ever stops being true this guard needs an explicit flag instead.
+        //
+        // NO_ANSWER and VOICEMAIL keep auto-applying, folder actions included.
+        // Those are statements about what the phone did, which the system
+        // genuinely knows. CONTACT is a statement about what a person heard.
+        if (callRecordId && disposition.value === CONTACTED_DISPOSITION_VALUE) {
+            console.log(`[applyDisposition] Refused automatic ${disposition.label} for contact=${contactId} callRecord=${callRecordId} — Contacted is only ever recorded when a person applies it.`);
+            return { success: true, folderId: null };
+        }
+
         // 2. Resolve which folder to drop contact into
         let resolvedFolderId: string | null;
 
@@ -650,12 +690,27 @@ export class DispositionService {
                     where: { id: contactId },
                     select: { source: true },
                 });
-                // Occurs "today" — see the Timezone open question in
-                // BUILD_SPEC.md §7. Using UTC-midnight until the tenant's
-                // Company.defaultTimeZone is threaded through every call site
-                // that can trigger a disposition change (calling controller,
-                // contact detail page, bulk actions).
-                const occurredOn = new Date(new Date().toISOString().slice(0, 10));
+
+                // Occurs "today" — in the TENANT'S calendar, not the server's.
+                //
+                // occurredOn is a DATE column: what gets stored is a day with
+                // no time and no zone. The only question is WHICH day, and the
+                // answer has to be the one the agent is living in. This server
+                // runs on UTC, so tagging a Lead at 8pm Central wrote
+                // tomorrow's date — the funnel then looked for it on the right
+                // local day and did not find it, and the number showed up a
+                // day late.
+                //
+                // Same source as the tracker's day bucketing and the TCPA
+                // calling windows: Company.defaultTimeZone. One control, one
+                // answer. Unset falls back to UTC, which is the behaviour this
+                // line had before.
+                //
+                // Resolved once, outside the loop below — tagging a contact
+                // with four funnel dispositions at once is one settings lookup
+                // and four stage rows, not four lookups.
+                const timeZone = await resolveTenantTimeZone(appliedById);
+                const occurredOn = new Date(`${todayIsoInTimeZone(timeZone)}T00:00:00.000Z`);
 
                 for (const stage of stageRows) {
                     await prisma.prospectingStageEvent.upsert({
