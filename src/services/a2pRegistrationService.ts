@@ -75,6 +75,36 @@ const getUsAppToPersonUsecase = (businessType: string) => {
     }
 };
 
+/**
+ * Twilio's customer_profile_business_information End User expects the
+ * spelled-out business_type value ("Limited Liability Corporation"), NOT
+ * the acronym. Verified against the approved Lumina Bridge profile on
+ * master. Passing the UI value directly ("LLC") makes the evaluation fail.
+ */
+const mapBusinessTypeToTwilio = (businessType: string): string => {
+    switch (businessType) {
+        case 'LLC':
+        case 'Limited Liability Corporation':
+            return 'Limited Liability Corporation';
+        case 'Corporation':
+        case 'CORPORATION':
+            return 'Corporation';
+        case 'Partnership':
+        case 'PARTNERSHIP':
+            return 'Partnership';
+        case 'Sole Proprietor':
+        case 'SOLE_PROPRIETOR':
+        case 'Sole Proprietorship':
+            return 'Sole Proprietorship';
+        case 'Non-Profit':
+        case 'NON_PROFIT':
+        case 'Non-profit Corporation':
+            return 'Non-profit Corporation';
+        default:
+            return businessType;
+    }
+};
+
 const getBrandType = (businessType: string) => {
     switch(businessType) {
         case 'Sole Proprietor':
@@ -178,6 +208,18 @@ export class A2PRegistrationService {
             //          verify the entity against public registries. Missing
             //          any of these attributes fails evaluation.
             console.log("[A2P Service] Step 1b: Creating business_information End User...");
+            // Attribute names + values verified against the approved
+            // "Lumina Bridge" profile on master. Notable gotchas:
+            //   - website_url (NOT business_website — Twilio's rejection
+            //     copy said "business_website" but the actual attribute
+            //     is website_url).
+            //   - business_type must be SPELLED OUT ("Limited Liability
+            //     Corporation"), not the acronym.
+            //   - is_subassigned is not an attribute here at all — it's
+            //     apparently supplied elsewhere, if at all.
+            //   - business_identity: isv_reseller_or_partner matches the
+            //     multi-dialer ISV model (Slingvo owns the parent Twilio
+            //     account; sub-account admins are effectively resold).
             const businessInfo = await subClient.trusthub.v1.endUsers.create({
                 friendlyName: `${details.legalBusinessName} - Business Info`,
                 type: 'customer_profile_business_information',
@@ -185,24 +227,11 @@ export class A2PRegistrationService {
                     business_name: details.legalBusinessName,
                     business_registration_number: details.ein,
                     business_registration_identifier: 'EIN',
-                    business_type: details.businessType,
-                    // Real-estate is the client's primary vertical; adjust
-                    // via the A2P form once we surface it as a picker.
+                    business_type: mapBusinessTypeToTwilio(details.businessType),
                     business_industry: 'REAL_ESTATE',
                     business_regions_of_operation: 'USA_AND_CANADA',
-                    // Twilio expects `business_website`, NOT `website_url`.
-                    business_website: details.businessWebsite,
-                    // Required by the Secondary Customer Profile policy —
-                    // Twilio's evaluation was flagging both of these as
-                    // missing before we added them.
-                    //   direct_customer  → the sub-account IS the end user
-                    //   isv_reseller    → an ISV holds numbers on behalf
-                    // Ours is direct_customer per the ISV sub-account model.
-                    business_identity: 'direct_customer',
-                    // Numbers stay with the sub-account admin, so "No" —
-                    // the sub-account isn't subassigning to yet another
-                    // downstream end customer.
-                    is_subassigned: 'No',
+                    website_url: details.businessWebsite,
+                    business_identity: 'isv_reseller_or_partner',
                 },
             });
 
