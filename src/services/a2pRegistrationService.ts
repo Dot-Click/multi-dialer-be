@@ -149,7 +149,85 @@ export class A2PRegistrationService {
                 statusCallbackUrl: `${envConfig.BACKEND_URL}/api/a2p/webhook`
             } as any);
 
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // STEP 1a: Create Address on the sub-account and wrap it as a
+            //          Supporting Document so Trust Hub can attach it to the
+            //          Customer Profile. Without this, the profile evaluation
+            //          fails with "Business address missing or does not match
+            //          registry" — which was the root cause of every A2P
+            //          rejection until now.
+            console.log("[A2P Service] Step 1a: Creating Address + Supporting Document...");
+            const address = await subClient.addresses.create({
+                customerName: details.legalBusinessName,
+                street: details.businessAddress,
+                city: details.city,
+                region: details.state,
+                postalCode: details.postalCode,
+                isoCountry: details.country || 'US',
+            });
+            const addressDoc = await subClient.trusthub.v1.supportingDocuments.create({
+                friendlyName: `${details.legalBusinessName} - Business Address`,
+                type: 'customer_profile_address',
+                attributes: { address_sids: address.sid },
+            } as any);
+
+            // STEP 1b: End User — business_information. Twilio uses this to
+            //          verify the entity against public registries. Missing
+            //          any of these attributes fails evaluation.
+            console.log("[A2P Service] Step 1b: Creating business_information End User...");
+            const businessInfo = await subClient.trusthub.v1.endUsers.create({
+                friendlyName: `${details.legalBusinessName} - Business Info`,
+                type: 'customer_profile_business_information',
+                attributes: {
+                    business_name: details.legalBusinessName,
+                    business_registration_number: details.ein,
+                    business_registration_identifier: 'EIN',
+                    business_type: details.businessType,
+                    // Real-estate is the client's primary vertical; adjust
+                    // via the A2P form once we surface it as a picker.
+                    business_industry: 'REAL_ESTATE',
+                    business_regions_of_operation: 'USA_AND_CANADA',
+                    website_url: details.businessWebsite,
+                },
+            });
+
+            // STEP 1c: End User — authorized_representative_1.
+            console.log("[A2P Service] Step 1c: Creating authorized_representative_1 End User...");
+            const authRep = await subClient.trusthub.v1.endUsers.create({
+                friendlyName: `${details.contactFirstName} ${details.contactLastName} - Auth Rep`,
+                type: 'authorized_representative_1',
+                attributes: {
+                    job_position: 'Director',
+                    phone_number: details.contactPhone,
+                    business_title: 'Director',
+                    first_name: details.contactFirstName,
+                    last_name: details.contactLastName,
+                    email: details.contactEmail,
+                },
+            });
+
+            // STEP 1d: Attach the three artifacts to the Customer Profile.
+            console.log("[A2P Service] Step 1d: Attaching entities to Customer Profile...");
+            const attach = (objectSid: string) =>
+                subClient.trusthub.v1
+                    .customerProfiles(profile.sid)
+                    .customerProfilesEntityAssignments.create({ objectSid });
+            await attach(addressDoc.sid);
+            await attach(businessInfo.sid);
+            await attach(authRep.sid);
+
+            // STEP 1e: Submit the Customer Profile for Twilio review. Until
+            //          this transitions to twilio-approved, VI + CNAM stay
+            //          locked. Brand can be created before this resolves,
+            //          but Brand vetting also depends on the profile being
+            //          approved, so it usually fails until then.
+            console.log("[A2P Service] Step 1e: Submitting Customer Profile for review...");
+            await subClient.trusthub.v1
+                .customerProfiles(profile.sid)
+                .update({ status: 'pending-review' });
+
+            await new Promise(resolve => setTimeout(resolve, 500));
 
             // STEP 2: Register Brand
             console.log("[A2P Service] Step 2: Registering Brand...");
