@@ -1,7 +1,30 @@
 import prisma from "../lib/prisma";
 import { encryptEIN } from "../utils/encryption";
 import twilio from "twilio";
-import { envConfig } from "../lib/config";
+import { envConfig, client as masterClient } from "../lib/config";
+
+/**
+ * Normalize a phone number to E.164 for Twilio Trust Hub, which rejects
+ * anything else with "Phone number is invalid". Heuristic:
+ *   - already starts with '+'  → keep as-is
+ *   - 10 digits                → assume US, prepend +1
+ *   - 11 digits starting with 1 → US with country code, prepend +
+ *   - else                     → best-effort strip leading zeros and hope
+ *                                the caller supplied a country code
+ * Not exhaustive — a proper international-phone parser (libphonenumber)
+ * would be more robust but adds a dep. For the US-focused product this
+ * covers the common cases.
+ */
+const normalizePhoneE164 = (raw: string): string => {
+    const digits = raw.replace(/\D/g, "");
+    if (raw.trim().startsWith("+")) return raw.trim();
+    if (digits.length === 10) return `+1${digits}`;
+    if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+    // Fallback: strip leading zero(s) so numbers like "03152557056" don't
+    // reach Twilio as "0...". Still requires a country code prefix from
+    // the caller, but avoids the trivial leading-0 rejection.
+    return `+${digits.replace(/^0+/, "")}`;
+};
 
 export interface A2PBusinessDetails {
     legalBusinessName: string;
@@ -176,7 +199,7 @@ export class A2PRegistrationService {
             const profile = await subClient.trusthub.v1.customerProfiles.create({
                 friendlyName: details.legalBusinessName,
                 email: details.contactEmail,
-                phoneNumber: details.contactPhone,
+                phoneNumber: normalizePhoneE164(details.contactPhone),
                 policySid: policySid,
                 statusCallbackUrl: `${envConfig.BACKEND_URL}/api/a2p/webhook`
             } as any);
@@ -236,13 +259,15 @@ export class A2PRegistrationService {
             });
 
             // STEP 1c: End User — authorized_representative_1.
+            //          phone_number MUST be E.164 or Twilio rejects with
+            //          "Phone number is invalid".
             console.log("[A2P Service] Step 1c: Creating authorized_representative_1 End User...");
             const authRep = await subClient.trusthub.v1.endUsers.create({
                 friendlyName: `${details.contactFirstName} ${details.contactLastName} - Auth Rep`,
                 type: 'authorized_representative_1',
                 attributes: {
                     job_position: 'Director',
-                    phone_number: details.contactPhone,
+                    phone_number: normalizePhoneE164(details.contactPhone),
                     business_title: 'Director',
                     first_name: details.contactFirstName,
                     last_name: details.contactLastName,
@@ -250,7 +275,31 @@ export class A2PRegistrationService {
                 },
             });
 
-            // STEP 1d: Attach the three artifacts to the Customer Profile.
+            // STEP 1c-bis: End User — primary_customer_profile_information.
+            //          The Secondary Customer Profile (sub-account) must
+            //          reference the ISV's approved Primary Customer Profile
+            //          (on master) so Twilio can chain trust. Without this
+            //          the evaluation fails with "The status of the Primary
+            //          Customer Profile must be in an approved state or
+            //          in-review state" pointing at bundle_sid.
+            console.log("[A2P Service] Step 1c-bis: Linking to master's Primary Customer Profile...");
+            const masterProfiles = await masterClient.trusthub.v1.customerProfiles.list({ limit: 20 });
+            const masterPrimary = masterProfiles.find(p => p.status === "twilio-approved");
+            if (!masterPrimary) {
+                throw new Error(
+                    "No twilio-approved Primary Customer Profile on the master account — " +
+                    "the ISV's own Primary Business Profile must be approved before sub-accounts can submit."
+                );
+            }
+            const primaryRef = await subClient.trusthub.v1.endUsers.create({
+                friendlyName: `${details.legalBusinessName} - Primary CP Reference`,
+                type: 'primary_customer_profile_information',
+                attributes: {
+                    bundle_sid: masterPrimary.sid,
+                },
+            });
+
+            // STEP 1d: Attach the four artifacts to the Customer Profile.
             console.log("[A2P Service] Step 1d: Attaching entities to Customer Profile...");
             const attach = (objectSid: string) =>
                 subClient.trusthub.v1
@@ -259,6 +308,7 @@ export class A2PRegistrationService {
             await attach(addressDoc.sid);
             await attach(businessInfo.sid);
             await attach(authRep.sid);
+            await attach(primaryRef.sid);
 
             // STEP 1e: Submit the Customer Profile for Twilio review. Until
             //          this transitions to twilio-approved, VI + CNAM stay
