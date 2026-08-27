@@ -338,6 +338,16 @@ model A2P_Registration {
   status          A2PStatus @default(NOT_STARTED)
   rejectionReason String?
 
+  // Tracks whether the *Customer Profile* itself is twilio-approved — the
+  // upstream artifact that Voice Integrity / CNAM attach to. This is often
+  // approved even when the full A2P flow (Brand + Campaign, TCR vetting)
+  // gets rejected — TCR is stricter than Twilio's own profile review, and
+  // real-estate / lead-gen use cases frequently fail there. VI/CNAM key
+  // off this specifically rather than the overall A2P `status`, so admins
+  // whose Brand fails can still use branded voice. Kept in sync by
+  // checkA2PStatus.
+  customerProfileApproved Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

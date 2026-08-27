@@ -150,15 +150,16 @@ export async function getStatus(adminUserId: string): Promise<VoiceIntegrityCred
       return { status: "blocked-no-business-profile" };
     }
   } else {
-    // Subaccount admins: only APPROVED A2P is good enough. NOT_STARTED,
-    // PENDING and REJECTED all block — Twilio would refuse to link VI to a
-    // non-approved customer profile anyway, so we surface it here as a
-    // clear "finish A2P first" prompt instead of a Twilio API error later.
+    // Subaccount admins: Voice Integrity needs only the Customer Profile
+    // itself twilio-approved, NOT the full A2P flow. Brand + Campaign are
+    // SMS-only and often get rejected by TCR for legitimate use cases
+    // (real estate, lead-gen). Blocking VI on those would strand admins
+    // who are perfectly eligible to run branded voice.
     const a2p = await prisma.a2P_Registration.findUnique({
       where: { userId: adminUserId },
-      select: { status: true, customerProfileSid: true },
+      select: { customerProfileApproved: true, customerProfileSid: true },
     });
-    if (a2p?.status !== "APPROVED" || !a2p?.customerProfileSid) {
+    if (!a2p?.customerProfileApproved || !a2p?.customerProfileSid) {
       return { status: "blocked-no-business-profile" };
     }
   }

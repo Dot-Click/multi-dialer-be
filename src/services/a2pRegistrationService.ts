@@ -289,6 +289,18 @@ export class A2PRegistrationService {
                     .fetch();
                 console.log(`[A2P Service] Customer Profile ${reg.customerProfileSid} status: ${profile.status}`);
 
+                // Mirror the profile-only approval state onto the local row.
+                // Voice Integrity and CNAM key off this — they need the
+                // Customer Profile approved, but don't care about Brand /
+                // Campaign, which often get rejected by TCR for legitimate
+                // real-estate / lead-gen use cases.
+                if (profile.status === "twilio-approved" && !reg.customerProfileApproved) {
+                    await prisma.a2P_Registration.update({
+                        where: { userId },
+                        data: { customerProfileApproved: true },
+                    });
+                }
+
                 if (profile.status === "twilio-rejected") {
                     let detail = "Business Profile was rejected by Twilio.";
                     try {
