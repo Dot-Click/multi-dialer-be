@@ -2,6 +2,7 @@ import { Router } from "express";
 import { protectRoute } from "../../middlewares/auth.middleware";
 import { a2pRegistrationService } from "../../services/a2pRegistrationService";
 import prisma from "../../lib/prisma";
+import { decryptEIN } from "../../utils/encryption";
 
 const router = Router();
 
@@ -40,6 +41,50 @@ router.get("/status", protectRoute, async (req: any, res) => {
         });
 
         res.json(registration || { status: "NOT_STARTED" });
+    } catch (error: any) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+/**
+ * GET /api/a2p/details
+ * Returns the previously-submitted A2P business details so the frontend
+ * can prefill the form for editing on resubmit. EIN is decrypted here
+ * so the admin sees what they submitted; every other field is stored
+ * plaintext already.
+ * Returns null when the admin has never submitted A2P.
+ */
+router.get("/details", protectRoute, async (req: any, res) => {
+    try {
+        const userId = req.user.id;
+        const reg = await prisma.a2P_Registration.findUnique({
+            where: { userId },
+            select: {
+                legalBusinessName: true,
+                businessType: true,
+                ein: true,
+                businessWebsite: true,
+                businessAddress: true,
+                city: true,
+                state: true,
+                postalCode: true,
+                country: true,
+                contactFirstName: true,
+                contactLastName: true,
+                contactEmail: true,
+                contactPhone: true,
+            },
+        });
+        if (!reg) {
+            res.json(null);
+            return;
+        }
+        // Best-effort decrypt — if the stored value was written with a
+        // different key or corrupted, fall back to empty so the admin
+        // can re-enter their EIN rather than seeing gibberish.
+        let einPlain = "";
+        try { einPlain = decryptEIN(reg.ein); } catch { einPlain = ""; }
+        res.json({ ...reg, ein: einPlain });
     } catch (error: any) {
         res.status(500).json({ message: error.message });
     }
