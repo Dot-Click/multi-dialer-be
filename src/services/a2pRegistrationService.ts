@@ -132,14 +132,16 @@ export class A2PRegistrationService {
 
         try {
             // STEP 1: Create Customer Profile (Trust Hub)
+            //
+            // Policy SID is fixed by Twilio — do NOT search by name. The
+            // previous "find by 'business' in friendlyName" heuristic picked
+            // up "Australia: Local - Business" and produced an evaluation
+            // that checked Australian business fields, causing every A2P
+            // submission to reject. RNdfbf3fae0e1107f8aded0e7cead80bf5 is
+            // Twilio's Secondary Customer Profile policy — the correct one
+            // for ISV sub-accounts submitting a US Business Profile.
             console.log("[A2P Service] Step 1: Creating Customer Profile...");
-            const policies = await subClient.trusthub.v1.policies.list();
-            const businessPolicy = policies.find(p => 
-                p.friendlyName.toLowerCase().includes('business')
-            );
-            const policySid = businessPolicy?.sid;
-
-            if (!policySid) throw new Error("Could not find business policy SID");
+            const policySid = "RNdfbf3fae0e1107f8aded0e7cead80bf5";
 
             const profile = await subClient.trusthub.v1.customerProfiles.create({
                 friendlyName: details.legalBusinessName,
@@ -188,7 +190,19 @@ export class A2PRegistrationService {
                     // via the A2P form once we surface it as a picker.
                     business_industry: 'REAL_ESTATE',
                     business_regions_of_operation: 'USA_AND_CANADA',
-                    website_url: details.businessWebsite,
+                    // Twilio expects `business_website`, NOT `website_url`.
+                    business_website: details.businessWebsite,
+                    // Required by the Secondary Customer Profile policy —
+                    // Twilio's evaluation was flagging both of these as
+                    // missing before we added them.
+                    //   direct_customer  → the sub-account IS the end user
+                    //   isv_reseller    → an ISV holds numbers on behalf
+                    // Ours is direct_customer per the ISV sub-account model.
+                    business_identity: 'direct_customer',
+                    // Numbers stay with the sub-account admin, so "No" —
+                    // the sub-account isn't subassigning to yet another
+                    // downstream end customer.
+                    is_subassigned: 'No',
                 },
             });
 
