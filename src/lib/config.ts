@@ -51,6 +51,11 @@ export const envConfig = {
   TWILIO_API_KEY: process.env.TWILIO_API_KEY,
   TWILIO_API_SECRET: process.env.TWILIO_API_SECRET,
   TWILIO_TWIML_APP_SID: process.env.TWILIO_TWIML_APP_SID,
+  // Pinned SID of the ISV master's approved Primary Customer Profile that
+  // Secondary CPs (per sub-account admin) link to during A2P onboarding.
+  // Optional — if unset, the A2P service falls back to discovering the
+  // first twilio-approved profile via customerProfiles.list().
+  TWILIO_MASTER_PRIMARY_CUSTOMER_PROFILE_SID: process.env.TWILIO_MASTER_PRIMARY_CUSTOMER_PROFILE_SID,
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
   ZILLOW_RAPIDAPI_KEY: process.env.ZILLOW_RAPIDAPI_KEY,
   ZILLOW_RAPIDAPI_HOST: process.env.ZILLOW_RAPIDAPI_HOST,
