@@ -2,6 +2,12 @@ import prisma from "../lib/prisma";
 import { encryptEIN } from "../utils/encryption";
 import twilio from "twilio";
 import { envConfig, client as masterClient } from "../lib/config";
+import {
+    classifyBrand,
+    classifyCampaign,
+    classifyCustomerProfile,
+    type Verdict,
+} from "./a2pFailureClassifier";
 
 /**
  * Normalize a phone number to E.164 for Twilio Trust Hub, which rejects
@@ -40,7 +46,62 @@ export interface A2PBusinessDetails {
     contactLastName: string;
     contactEmail: string;
     contactPhone: string;
+
+    // Campaign fields — optional on the initial submit so the existing 3-step
+    // wizard keeps working during rollout; the new step 4 populates them.
+    // Defaults live in DEFAULT_CAMPAIGN_FIELDS below and are only applied
+    // when a caller passes nothing so we never silently overwrite a value
+    // the user chose.
+    useCase?: string;
+    businessIndustry?: string;
+    messageSamples?: string[];
+    optInDetails?: string;
+    optInKeywords?: string[];
+    optOutKeywords?: string[];
+    helpKeywords?: string[];
+    helpMessage?: string;
 }
+
+/**
+ * Fields required to submit or resubmit the campaign stage. Kept separate
+ * from A2PBusinessDetails so the campaign-only resubmit route can validate
+ * exactly this shape without pulling in the business fields.
+ */
+export interface A2PCampaignDetails {
+    useCase: string;
+    businessIndustry?: string;
+    messageSamples: string[];
+    optInDetails: string;
+    optInKeywords: string[];
+    optOutKeywords: string[];
+    helpKeywords: string[];
+    helpMessage: string;
+}
+
+/**
+ * Legacy real-estate defaults — the values that were previously hard-coded
+ * inside executePhase2. Kept as a fallback so existing in-flight users
+ * (rows submitted before the schema change) still get a working campaign
+ * on their next status check. The wizard's step 4 replaces these with
+ * user-entered values on new submits; the backfill script also seeds
+ * existing rows with these values so the UI shows editable state.
+ */
+export const DEFAULT_CAMPAIGN_FIELDS: A2PCampaignDetails = {
+    useCase: "MIXED",
+    businessIndustry: "REAL_ESTATE",
+    messageSamples: [
+        "Hi {name}, this is {agent} following up on the property at {address}. Reply STOP to opt out.",
+        "Your showing appointment is confirmed for {date} at {time}. Reply STOP to opt out.",
+        "Hi {name}, I wanted to check in regarding your real estate inquiry. Reply STOP to opt out.",
+    ],
+    optInDetails:
+        "Contacts opt-in via lead forms on our website and verbal consent during initial contact.",
+    optInKeywords: ["START", "YES"],
+    optOutKeywords: ["STOP", "UNSUBSCRIBE", "END", "CANCEL", "QUIT"],
+    helpKeywords: ["HELP", "INFO"],
+    helpMessage:
+        "For help contact support@slingvo.com. Reply STOP to unsubscribe.",
+};
 
 /**
  * Twilio's evaluation results list every failed field individually, which
@@ -164,6 +225,49 @@ const getA2pCompanyType = (businessType: string): string => {
 };
 
 /**
+ * Reads the campaign fields off an A2P_Registration row, falling back to
+ * DEFAULT_CAMPAIGN_FIELDS whenever a column is null or empty. This is the
+ * bridge between the DB-stored user values and the shape executePhase2
+ * needs to hand to Twilio. Non-empty arrays win over the defaults so a
+ * user who cleared a field explicitly (e.g. no HELP keywords) doesn't
+ * silently get the legacy list back.
+ */
+function pickCampaignFields(reg: any): A2PCampaignDetails {
+    const nonEmpty = <T>(arr: T[] | undefined | null, fallback: T[]): T[] =>
+        Array.isArray(arr) && arr.length > 0 ? arr : fallback;
+    return {
+        useCase: reg.useCase || DEFAULT_CAMPAIGN_FIELDS.useCase,
+        businessIndustry: reg.businessIndustry || DEFAULT_CAMPAIGN_FIELDS.businessIndustry,
+        messageSamples: nonEmpty(reg.messageSamples, DEFAULT_CAMPAIGN_FIELDS.messageSamples),
+        optInDetails: reg.optInDetails || DEFAULT_CAMPAIGN_FIELDS.optInDetails,
+        optInKeywords: nonEmpty(reg.optInKeywords, DEFAULT_CAMPAIGN_FIELDS.optInKeywords),
+        optOutKeywords: nonEmpty(reg.optOutKeywords, DEFAULT_CAMPAIGN_FIELDS.optOutKeywords),
+        helpKeywords: nonEmpty(reg.helpKeywords, DEFAULT_CAMPAIGN_FIELDS.helpKeywords),
+        helpMessage: reg.helpMessage || DEFAULT_CAMPAIGN_FIELDS.helpMessage,
+    };
+}
+
+/**
+ * Human-readable campaign description shown to TCR reviewers. TCR expects
+ * a plain summary of what the campaign will send; the description is one
+ * of the fields TCR humans read when scoring, so we derive it from the
+ * use case rather than sending the same real-estate string for every
+ * vertical.
+ */
+function buildCampaignDescription(useCase: string): string {
+    switch ((useCase || "").toUpperCase()) {
+        case "MARKETING":
+            return "Marketing messages, promotions, and product updates to contacts who have opted in.";
+        case "SOLE_PROPRIETOR":
+        case "LOW_VOLUME":
+            return "Low-volume outreach and follow-ups to contacts who have opted in.";
+        case "MIXED":
+        default:
+            return "Sending appointment reminders, follow-ups, and lead outreach messages to contacts who have opted in.";
+    }
+}
+
+/**
  * Trust Hub policy SIDs. Constants (Twilio-side, not per-account):
  *  - SECONDARY_CUSTOMER_PROFILE — the ISV sub-account Business Profile policy.
  *  - US_A2P_MESSAGING_PROFILE   — the "Standard A2P Profile" bundle that
@@ -176,6 +280,111 @@ const getA2pCompanyType = (businessType: string): string => {
  */
 const POLICY_SECONDARY_CUSTOMER_PROFILE = "RNdfbf3fae0e1107f8aded0e7cead80bf5";
 const POLICY_US_A2P_MESSAGING_PROFILE   = "RNb0d4771c2c98518d916a3d4cd70a8f8b";
+
+/**
+ * Thrown by resubmit* methods when the request can't proceed. The `code`
+ * lets the route translate to a specific HTTP status (409 for terminal /
+ * not-rejected, 424 for dependency-not-ready) instead of a bare 500.
+ */
+export class ResubmitError extends Error {
+    constructor(
+        public readonly code:
+            | "NOT_STARTED"
+            | "NOT_REJECTED"
+            | "TERMINAL"
+            | "CP_NOT_APPROVED"
+            | "BRAND_NOT_APPROVED"
+            | "NO_MESSAGING_SERVICE",
+        message: string,
+    ) {
+        super(message);
+        this.name = "ResubmitError";
+    }
+}
+
+/**
+ * Reduces the three per-stage statuses to the existing rollup enum. Any
+ * rejection wins over pending; only when every present stage is approved
+ * do we return APPROVED. Absent stages (e.g. no campaign yet) don't count
+ * against approval — they just mean the flow hasn't reached that step.
+ */
+function deriveRollupStatus(input: {
+    cpStatus: string | null;
+    brandStatus: string | null;
+    campaignStatus: string | null;
+}): "NOT_STARTED" | "PENDING" | "APPROVED" | "REJECTED" {
+    const { cpStatus, brandStatus, campaignStatus } = input;
+    if (cpStatus === "twilio-rejected") return "REJECTED";
+    if (brandStatus === "FAILED") return "REJECTED";
+    if (campaignStatus === "FAILED") return "REJECTED";
+    // Approval requires the full chain — CP approved, brand approved, and
+    // campaign verified. If any stage is missing or still pending we stay
+    // PENDING so the panel keeps showing progress.
+    if (
+        cpStatus === "twilio-approved" &&
+        brandStatus === "APPROVED" &&
+        campaignStatus === "VERIFIED"
+    ) {
+        return "APPROVED";
+    }
+    return "PENDING";
+}
+
+/**
+ * Picks the most user-actionable rejection message for the rollup
+ * `rejectionReason` column, in the order the user should tackle them:
+ * CP first (upstream), then brand, then campaign. The panel reads the
+ * per-stage columns directly — this is only for legacy consumers of the
+ * flat `rejectionReason` field.
+ */
+function deriveRollupReason(input: {
+    cpVerdict: Verdict | null;
+    brandVerdict: Verdict | null;
+    campaignVerdict: Verdict | null;
+}): string | null {
+    if (input.cpVerdict?.userMessage) return input.cpVerdict.userMessage;
+    if (input.brandVerdict?.userMessage) return input.brandVerdict.userMessage;
+    if (input.campaignVerdict?.userMessage) return input.campaignVerdict.userMessage;
+    return null;
+}
+
+/**
+ * Reconstructs an A2PBusinessDetails from a stored row so resubmit-brand
+ * can hand it back through submitA2PRegistration. EIN is passed encrypted
+ * — submitA2PRegistration calls encryptEIN() on whatever it receives, so
+ * we decrypt here first to avoid double-wrapping. Legacy rows that fail
+ * decryption surface an empty EIN, which surfaces as a clear submit error
+ * rather than silently corrupting the value.
+ */
+function registrationRowToDetails(reg: any): A2PBusinessDetails {
+    // Local require to avoid a circular import — decryptEIN lives in utils.
+    const { decryptEIN } = require("../utils/encryption");
+    let einPlain = "";
+    try { einPlain = decryptEIN(reg.ein); } catch { einPlain = ""; }
+    return {
+        legalBusinessName: reg.legalBusinessName,
+        businessType: reg.businessType,
+        ein: einPlain,
+        businessWebsite: reg.businessWebsite,
+        businessAddress: reg.businessAddress,
+        city: reg.city,
+        state: reg.state,
+        postalCode: reg.postalCode,
+        country: reg.country,
+        contactFirstName: reg.contactFirstName,
+        contactLastName: reg.contactLastName,
+        contactEmail: reg.contactEmail,
+        contactPhone: reg.contactPhone,
+        useCase: reg.useCase ?? undefined,
+        businessIndustry: reg.businessIndustry ?? undefined,
+        messageSamples: reg.messageSamples ?? undefined,
+        optInDetails: reg.optInDetails ?? undefined,
+        optInKeywords: reg.optInKeywords ?? undefined,
+        optOutKeywords: reg.optOutKeywords ?? undefined,
+        helpKeywords: reg.helpKeywords ?? undefined,
+        helpMessage: reg.helpMessage ?? undefined,
+    };
+}
 
 export class A2PRegistrationService {
     /**
@@ -196,20 +405,64 @@ export class A2PRegistrationService {
             select: { status: true, rejectionReason: true },
         });
 
-        // 2. Initialize DB record
+        // Split campaign fields out of the wire payload so we can persist
+        // them explicitly. Callers may omit them (existing 3-step wizard);
+        // we DON'T fill in defaults here — leaving them null lets the
+        // backfill script + executePhase2 fall back to DEFAULT_CAMPAIGN_FIELDS
+        // without us prematurely stamping stale values.
+        const {
+            useCase,
+            businessIndustry,
+            messageSamples,
+            optInDetails,
+            optInKeywords,
+            optOutKeywords,
+            helpKeywords,
+            helpMessage,
+            ...businessDetails
+        } = details;
+
+        const campaignData: Record<string, unknown> = {};
+        if (useCase !== undefined) campaignData.useCase = useCase;
+        if (businessIndustry !== undefined) campaignData.businessIndustry = businessIndustry;
+        if (messageSamples !== undefined) campaignData.messageSamples = messageSamples;
+        if (optInDetails !== undefined) campaignData.optInDetails = optInDetails;
+        if (optInKeywords !== undefined) campaignData.optInKeywords = optInKeywords;
+        if (optOutKeywords !== undefined) campaignData.optOutKeywords = optOutKeywords;
+        if (helpKeywords !== undefined) campaignData.helpKeywords = helpKeywords;
+        if (helpMessage !== undefined) campaignData.helpMessage = helpMessage;
+
+        // 2. Initialize DB record. A fresh submit (or resubmit) clears the
+        //    per-stage rejection state — everything is pending until the
+        //    poller writes new verdicts. Campaign fields carry over from the
+        //    previous row when the caller omits them (partial resubmit).
         const registration = await prisma.a2P_Registration.upsert({
             where: { userId },
             create: {
                 userId,
-                ...details,
+                ...businessDetails,
                 ein: encryptedEin,
                 status: "PENDING",
+                ...campaignData,
             },
             update: {
-                ...details,
+                ...businessDetails,
                 ein: encryptedEin,
                 status: "PENDING",
                 rejectionReason: null,
+                cpStatus: null,
+                cpRejectionReason: null,
+                cpRejectionCode: null,
+                cpRetriable: null,
+                brandStatus: null,
+                brandRejectionReason: null,
+                brandRejectionCode: null,
+                brandRetriable: null,
+                campaignStatus: null,
+                campaignRejectionReason: null,
+                campaignRejectionCode: null,
+                campaignRetriable: null,
+                ...campaignData,
             }
         });
 
@@ -361,7 +614,11 @@ export class A2PRegistrationService {
                     business_registration_number: details.ein,
                     business_registration_identifier: 'EIN',
                     business_type: mapBusinessTypeToTwilio(details.businessType),
-                    business_industry: 'REAL_ESTATE',
+                    // Was previously hard-coded to REAL_ESTATE. Now sourced
+                    // from the user-picked industry, with the legacy default
+                    // as a fallback so the existing 3-step wizard keeps
+                    // producing valid submits until step 4 ships.
+                    business_industry: details.businessIndustry || DEFAULT_CAMPAIGN_FIELDS.businessIndustry,
                     business_regions_of_operation: 'USA_AND_CANADA',
                     website_url: details.businessWebsite,
                     business_identity: 'isv_reseller_or_partner',
@@ -538,10 +795,16 @@ export class A2PRegistrationService {
 
     /**
      * Executes Steps 3 and 4 (Messaging Service & Campaign) after Brand approval.
+     * Reads campaign copy (use case, samples, opt-in/out, help) from the DB
+     * row so admins can edit these values at submit time or on resubmit
+     * without touching the code path. Falls back to DEFAULT_CAMPAIGN_FIELDS
+     * for rows written before the schema change.
      */
     private async executePhase2(userId: string, registration: any, subClient: any) {
         console.log(`[A2P Service] Starting Phase 2 for user: ${userId}`);
-        
+
+        const campaign = pickCampaignFields(registration);
+
         try {
             // STEP 3: Create Messaging Service
             console.log("[A2P Service] Step 3: Creating Messaging Service...");
@@ -553,23 +816,28 @@ export class A2PRegistrationService {
 
             // STEP 4: Submit Campaign
             console.log("[A2P Service] Step 4: Submitting Campaign...");
-            const campaign = await subClient.messaging.v1
+            const campaignResource = await subClient.messaging.v1
                 .services(messagingService.sid)
                 .usAppToPerson.create({
                     brandRegistrationSid: registration.brandSid,
-                    description: 'Sending appointment reminders, follow-ups, and lead outreach messages to real estate contacts who have opted in.',
-                    messageSamples: [
-                        'Hi {name}, this is {agent} following up on the property at {address}. Reply STOP to opt out.',
-                        'Your showing appointment is confirmed for {date} at {time}. Reply STOP to opt out.',
-                        'Hi {name}, I wanted to check in regarding your real estate inquiry. Reply STOP to opt out.'
-                    ],
-                    usAppToPersonUsecase: getUsAppToPersonUsecase(registration.businessType),
-                    messageFlow: 'Contacts opt-in via lead forms on our website and verbal consent during initial contact.',
+                    // Description is derived from the user-picked use case
+                    // rather than hard-coded so different verticals get
+                    // TCR-appropriate copy.
+                    description: buildCampaignDescription(campaign.useCase),
+                    messageSamples: campaign.messageSamples,
+                    // usAppToPersonUsecase preferred: user-selected use case
+                    // when it maps to a TCR enum, else fall back to the
+                    // legacy businessType-derived value.
+                    usAppToPersonUsecase: campaign.useCase || getUsAppToPersonUsecase(registration.businessType),
+                    messageFlow: campaign.optInDetails,
                     hasEmbeddedLinks: false,
                     hasEmbeddedPhone: false,
-                    optInMessage: 'You have opted in to receive messages from {agent}. Reply STOP to unsubscribe.',
-                    optOutMessage: 'You have been unsubscribed. Reply START to resubscribe.',
-                    helpMessage: 'For help contact support@slingvo.com. Reply STOP to unsubscribe.',
+                    optInMessage: `You have opted in to receive messages. Reply ${campaign.optOutKeywords[0] || "STOP"} to unsubscribe.`,
+                    optOutMessage: `You have been unsubscribed. Reply ${campaign.optInKeywords[0] || "START"} to resubscribe.`,
+                    helpMessage: campaign.helpMessage,
+                    optInKeywords: campaign.optInKeywords,
+                    optOutKeywords: campaign.optOutKeywords,
+                    helpKeywords: campaign.helpKeywords,
                     subscriberOptIn: true,
                     subscriberOptOut: true,
                     subscriberHelp: true
@@ -580,8 +848,15 @@ export class A2PRegistrationService {
                 where: { userId },
                 data: {
                     messagingServiceSid: messagingService.sid,
-                    campaignSid: campaign.sid,
-                    status: "PENDING" // Still pending final campaign approval
+                    campaignSid: campaignResource.sid,
+                    status: "PENDING", // Still pending final campaign approval
+                    // Fresh campaign submission — clear any prior rejection
+                    // state so the panel doesn't show stale copy while TCR
+                    // reviews the new campaign.
+                    campaignStatus: "IN_PROGRESS",
+                    campaignRejectionReason: null,
+                    campaignRejectionCode: null,
+                    campaignRetriable: null,
                 }
             });
 
@@ -600,22 +875,25 @@ export class A2PRegistrationService {
     /**
      * Polls Twilio for status updates and mirrors them onto the local A2P row.
      *
-     * A2P has two independent Twilio resources that can be rejected:
-     *   - Customer Profile (Business Profile, BU… SID) — vetted by Twilio itself.
-     *   - Brand Registration (BN… SID) — vetted against TCR by the carriers.
+     * A2P has THREE independent Twilio / TCR resources that can be rejected:
+     *   - Customer Profile (BU… SID)         — vetted by Twilio itself.
+     *   - Brand Registration (BN… SID)       — vetted by TCR / carriers.
+     *   - Campaign (QE… under Messaging Svc) — vetted by TCR / carriers.
      *
-     * Either rejection means the local status should flip to REJECTED so the
-     * UI stops showing "under review" indefinitely. We check the customer
-     * profile first because it's the upstream artifact (a rejected profile
-     * makes brand progression moot).
+     * Each stage's raw Twilio response is fed through a2pFailureClassifier
+     * so we persist BOTH the canonical status AND a stage-level verdict
+     * (retriable + human message + suggested fields for the resubmit form).
+     * The panel reads these per-stage columns directly; the rollup `status`
+     * column stays for backwards compat and is derived from the three
+     * stages.
      */
     async checkA2PStatus(userId: string) {
         const reg = await prisma.a2P_Registration.findUnique({ where: { userId } });
         if (!reg) return "NOT_STARTED";
         // APPROVED is truly terminal — skip the network round-trip.
-        // REJECTED is NOT — we want to keep the rejection message fresh so
-        // improvements to the summarizer, or updates to Twilio's evaluation
-        // results, actually surface on the next status fetch.
+        // REJECTED is NOT — we want to keep the classifier verdict fresh so
+        // taxonomy updates and Twilio's evaluation edits actually surface
+        // on the next status fetch.
         if (reg.status === "APPROVED") return "APPROVED";
 
         const integration = await prisma.integration.findFirst({
@@ -626,97 +904,375 @@ export class A2PRegistrationService {
         const creds = integration.credentials as any;
         const subClient = twilio(creds.accountSid, creds.authToken);
 
+        // Track per-stage status + verdict as we probe Twilio; single DB
+        // update at the end so the row moves atomically.
+        let cpStatus: string | null = reg.cpStatus;
+        let brandStatus: string | null = reg.brandStatus;
+        let campaignStatus: string | null = reg.campaignStatus;
+        let cpVerdict: Verdict | null = null;
+        let brandVerdict: Verdict | null = null;
+        let campaignVerdict: Verdict | null = null;
+        let customerProfileApproved = reg.customerProfileApproved;
+
         try {
-            // 1) Check Customer Profile — the Business Profile that everything
-            //    else attaches to. A twilio-rejected profile is terminal for
-            //    this whole A2P attempt.
+            // ---- 1) Customer Profile ------------------------------------
             if (reg.customerProfileSid) {
                 const profile = await subClient.trusthub.v1
                     .customerProfiles(reg.customerProfileSid)
                     .fetch();
-                console.log(`[A2P Service] Customer Profile ${reg.customerProfileSid} status: ${profile.status}`);
+                cpStatus = profile.status;
+                console.log(`[A2P Service] Customer Profile ${reg.customerProfileSid} status: ${cpStatus}`);
 
-                // Mirror the profile-only approval state onto the local row.
-                // Voice Integrity and CNAM key off this — they need the
-                // Customer Profile approved, but don't care about Brand /
-                // Campaign, which often get rejected by TCR for legitimate
-                // real-estate / lead-gen use cases.
-                if (profile.status === "twilio-approved" && !reg.customerProfileApproved) {
-                    await prisma.a2P_Registration.update({
-                        where: { userId },
-                        data: { customerProfileApproved: true },
-                    });
-                }
+                if (cpStatus === "twilio-approved") customerProfileApproved = true;
 
-                if (profile.status === "twilio-rejected") {
-                    let detail = "Business Profile was rejected by Twilio.";
+                // Only fetch evaluation detail when actually rejected — the
+                // list endpoint is a separate paid API call, no reason to
+                // hit it when the profile is happily under review.
+                let latestEval: any = null;
+                if (cpStatus === "twilio-rejected") {
                     try {
                         const evals = await subClient.trusthub.v1
                             .customerProfiles(reg.customerProfileSid)
                             .customerProfilesEvaluations.list({ limit: 3 });
-                        const latest = evals.find(e => e.status === "noncompliant") || evals[0];
-                        if (latest && (latest as any).results) {
-                            const failedFields = (latest as any).results
-                                .flatMap((r: any) => r.fields || [])
-                                .filter((f: any) => f.passed === false)
-                                .map((f: any) => (f.friendly_name || f.object_field || "").toString());
-                            const summary = summarizeRejectionFields(failedFields);
-                            if (summary) detail = summary;
-                        }
+                        latestEval = evals.find(e => e.status === "noncompliant") || evals[0] || null;
                     } catch { /* best-effort */ }
-
-                    await prisma.a2P_Registration.update({
-                        where: { userId },
-                        data: { status: "REJECTED", rejectionReason: detail },
-                    });
-                    return "REJECTED";
                 }
+                cpVerdict = classifyCustomerProfile({
+                    customerProfile: { status: cpStatus },
+                    latestEvaluation: latestEval,
+                });
+            }
 
-                // The CP is in an unrejected state (draft / pending-review /
-                // in-review / twilio-approved). If the local row still carries
-                // a stale REJECTED status + "Business Profile was rejected..."
-                // reason from an earlier failed attempt, clear it. Otherwise
-                // the UI keeps showing a rejection for a CP Twilio is happily
-                // reviewing. Only clear when the current message specifically
-                // came from the CP rejection branch — leave Brand/Phase 2
-                // rejection reasons intact, since those live independently.
-                if (
-                    reg.status === "REJECTED" &&
-                    reg.rejectionReason &&
-                    /business profile/i.test(reg.rejectionReason)
-                ) {
-                    await prisma.a2P_Registration.update({
-                        where: { userId },
-                        data: { status: "PENDING", rejectionReason: null },
-                    });
+            // ---- 2) Brand -----------------------------------------------
+            // Only fetch when a brand exists AND the CP is at least
+            // pending-review — a twilio-rejected CP makes brand progression
+            // moot and we don't want stale brand verdicts overwriting the
+            // CP one.
+            if (reg.brandSid && cpStatus !== "twilio-rejected") {
+                const brand = await subClient.messaging.v1.brandRegistrations(reg.brandSid).fetch();
+                brandStatus = brand.status;
+                console.log(`[A2P Service] Brand status: ${brandStatus}`);
+
+                brandVerdict = classifyBrand({
+                    brand: {
+                        status: brandStatus,
+                        failureReason: (brand as any).failureReason,
+                        errorDetail: (brand as any).errorDetail,
+                    },
+                });
+
+                // Brand APPROVED triggers Phase 2 the first time we see it.
+                // executePhase2 writes its own campaign columns; we skip
+                // the classifier for campaign in this tick because the
+                // resource was just created and hasn't been evaluated yet.
+                if (brandStatus === "APPROVED" && !reg.campaignSid) {
+                    await this.executePhase2(userId, reg, subClient);
                 }
             }
 
-            // 2) Check Brand — only relevant if the profile isn't rejected and a
-            //    brand has been submitted. Brand approval triggers Phase 2
-            //    (Messaging Service + Campaign creation).
-            if (reg.brandSid && reg.status === "PENDING" && !reg.campaignSid) {
-                console.log(`[A2P Service] Checking brand status for user: ${userId}`);
-                const brand = await subClient.messaging.v1.brandRegistrations(reg.brandSid).fetch();
-                console.log(`[A2P Service] Brand status: ${brand.status}`);
-
-                if (brand.status === "APPROVED") {
-                    await this.executePhase2(userId, reg, subClient);
-                } else if (brand.status === "FAILED") {
-                    const detail = (brand as any).failureReason || (brand as any).errorDetail || "Brand registration failed";
-                    await prisma.a2P_Registration.update({
-                        where: { userId },
-                        data: { status: "REJECTED", rejectionReason: `Brand rejected: ${detail}` },
+            // ---- 3) Campaign --------------------------------------------
+            // Only meaningful once we have a campaignSid — before that,
+            // "waiting for brand" is the state the panel should show and
+            // the classifier has nothing to say.
+            //
+            // Refetch the reg here because executePhase2 above may have
+            // just written campaignSid — otherwise the first tick after
+            // brand approval would always miss the campaign check.
+            const latestReg = await prisma.a2P_Registration.findUnique({ where: { userId } });
+            const campaignSid = latestReg?.campaignSid ?? reg.campaignSid;
+            const messagingServiceSid = latestReg?.messagingServiceSid ?? reg.messagingServiceSid;
+            if (campaignSid && messagingServiceSid) {
+                try {
+                    const campaign = await subClient.messaging.v1
+                        .services(messagingServiceSid)
+                        .usAppToPerson(campaignSid)
+                        .fetch();
+                    campaignStatus = (campaign as any).campaignStatus || null;
+                    console.log(`[A2P Service] Campaign status: ${campaignStatus}`);
+                    campaignVerdict = classifyCampaign({
+                        campaign: {
+                            campaignStatus,
+                            rejectionReason: (campaign as any).rejectionReason,
+                        },
                     });
-                    return "REJECTED";
+                } catch (err: any) {
+                    // Campaign endpoint can 404 briefly right after Phase 2
+                    // if TCR hasn't propagated. Non-fatal.
+                    console.warn(`[A2P Service] Campaign fetch failed: ${err.message}`);
                 }
             }
         } catch (error: any) {
             console.error("[A2P Service] Status check error:", error.message);
         }
 
-        const updatedReg = await prisma.a2P_Registration.findUnique({ where: { userId } });
-        return updatedReg?.status || "PENDING";
+        // ---- Persist per-stage columns + derived rollup -----------------
+        const rollupStatus = deriveRollupStatus({ cpStatus, brandStatus, campaignStatus });
+        const rollupReason = deriveRollupReason({ cpVerdict, brandVerdict, campaignVerdict });
+
+        await prisma.a2P_Registration.update({
+            where: { userId },
+            data: {
+                status: rollupStatus,
+                rejectionReason: rollupReason,
+                customerProfileApproved,
+                cpStatus,
+                cpRejectionReason: cpVerdict?.userMessage || null,
+                cpRejectionCode: cpVerdict?.code || null,
+                cpRetriable: cpVerdict?.retriable ?? null,
+                brandStatus,
+                brandRejectionReason: brandVerdict?.userMessage || null,
+                brandRejectionCode: brandVerdict?.code || null,
+                brandRetriable: brandVerdict?.retriable ?? null,
+                campaignStatus,
+                campaignRejectionReason: campaignVerdict?.userMessage || null,
+                campaignRejectionCode: campaignVerdict?.code || null,
+                campaignRetriable: campaignVerdict?.retriable ?? null,
+            },
+        });
+
+        return rollupStatus;
+    }
+
+    /**
+     * Resubmit ONLY the Customer Profile after a twilio-rejection. Refuses
+     * if the last classifier verdict marked the CP terminal. Because
+     * Twilio doesn't allow mutating an already-submitted CP, the underlying
+     * flow deletes the old one and creates a fresh one — we route the call
+     * through submitA2PRegistration so all the cleanup + entity-assignment
+     * logic is reused. Business fields come from the user's edited form;
+     * campaign fields carry over from the row so we don't zero them out.
+     */
+    async resubmitCustomerProfile(userId: string, details: A2PBusinessDetails) {
+        const reg = await prisma.a2P_Registration.findUnique({ where: { userId } });
+        if (!reg) throw new ResubmitError("NOT_STARTED", "No A2P registration to resubmit.");
+        if (reg.cpStatus !== "twilio-rejected") {
+            throw new ResubmitError(
+                "NOT_REJECTED",
+                "Customer Profile isn't in a rejected state — nothing to resubmit."
+            );
+        }
+        if (reg.cpRetriable === false) {
+            throw new ResubmitError(
+                "TERMINAL",
+                reg.cpRejectionReason || "This rejection cannot be retried self-serve — contact support."
+            );
+        }
+
+        // Force fresh-CP path: null the SID so submitA2PRegistration's
+        // resubmit-cleanup branch takes the "delete stale + create new"
+        // path, which is what CP-rejection recovery requires.
+        await prisma.a2P_Registration.update({
+            where: { userId },
+            data: { customerProfileSid: null },
+        });
+
+        // Preserve stored campaign fields so the user isn't retyping them.
+        const merged: A2PBusinessDetails = {
+            ...details,
+            useCase: reg.useCase ?? undefined,
+            businessIndustry: reg.businessIndustry ?? undefined,
+            messageSamples: reg.messageSamples,
+            optInDetails: reg.optInDetails ?? undefined,
+            optInKeywords: reg.optInKeywords,
+            optOutKeywords: reg.optOutKeywords,
+            helpKeywords: reg.helpKeywords,
+            helpMessage: reg.helpMessage ?? undefined,
+        };
+
+        await prisma.a2P_Registration.update({
+            where: { userId },
+            data: { lastResubmitAt: new Date() },
+        });
+
+        return this.submitA2PRegistration(userId, merged);
+    }
+
+    /**
+     * Resubmit ONLY the Brand + A2P Messaging Profile. Reuses the existing
+     * approved Customer Profile — that's the whole point of the split.
+     * Brand registrations are append-only in Twilio, so the previous BN…
+     * SID is orphaned; a new one is created against the same CP bundle.
+     * Charges a real TCR fee — the route confirms with the user first.
+     */
+    async resubmitBrand(userId: string) {
+        const reg = await prisma.a2P_Registration.findUnique({ where: { userId } });
+        if (!reg) throw new ResubmitError("NOT_STARTED", "No A2P registration to resubmit.");
+        if (reg.brandStatus !== "FAILED") {
+            throw new ResubmitError(
+                "NOT_REJECTED",
+                "Brand isn't in a failed state — nothing to resubmit."
+            );
+        }
+        if (reg.brandRetriable === false) {
+            throw new ResubmitError(
+                "TERMINAL",
+                reg.brandRejectionReason || "This brand rejection cannot be retried self-serve — contact support."
+            );
+        }
+        if (!reg.customerProfileApproved) {
+            throw new ResubmitError(
+                "CP_NOT_APPROVED",
+                "Fix and resubmit your Business Profile first — Brand can't be resubmitted until it's approved."
+            );
+        }
+
+        await prisma.a2P_Registration.update({
+            where: { userId },
+            data: {
+                brandResubmitCount: { increment: 1 },
+                lastResubmitAt: new Date(),
+                // Clear the failure state so the panel shows "syncing" while
+                // Twilio processes the new submission.
+                brandStatus: null,
+                brandRejectionReason: null,
+                brandRejectionCode: null,
+                brandRetriable: null,
+            },
+        });
+
+        // Rebuild the details struct from the row and hand back through
+        // the shared submit flow. The CP-preserve path fires because the
+        // stored customerProfileSid still points at the approved CP.
+        const details = registrationRowToDetails(reg);
+        return this.submitA2PRegistration(userId, details);
+    }
+
+    /**
+     * Resubmit ONLY the campaign. Reuses the approved brand + existing
+     * messaging service; only the usAppToPerson resource is deleted and
+     * recreated with the new samples / opt-in / keywords / etc. No TCR
+     * fee.
+     */
+    async resubmitCampaign(userId: string, campaign: A2PCampaignDetails) {
+        const reg = await prisma.a2P_Registration.findUnique({ where: { userId } });
+        if (!reg) throw new ResubmitError("NOT_STARTED", "No A2P registration to resubmit.");
+        if (reg.campaignStatus !== "FAILED") {
+            throw new ResubmitError(
+                "NOT_REJECTED",
+                "Campaign isn't in a failed state — nothing to resubmit."
+            );
+        }
+        if (reg.campaignRetriable === false) {
+            throw new ResubmitError(
+                "TERMINAL",
+                reg.campaignRejectionReason || "This campaign rejection cannot be retried self-serve — contact support."
+            );
+        }
+        if (!reg.brandSid || reg.brandStatus !== "APPROVED") {
+            throw new ResubmitError(
+                "BRAND_NOT_APPROVED",
+                "Brand must be approved before the campaign can be resubmitted."
+            );
+        }
+        if (!reg.messagingServiceSid) {
+            throw new ResubmitError(
+                "NO_MESSAGING_SERVICE",
+                "Messaging service missing — please contact support."
+            );
+        }
+
+        // Persist the new campaign fields first so executePhase2 picks them
+        // up. Also increments the counter + resets the campaign SID so
+        // the next status check knows to look for a fresh resource.
+        await prisma.a2P_Registration.update({
+            where: { userId },
+            data: {
+                useCase: campaign.useCase,
+                businessIndustry: campaign.businessIndustry ?? reg.businessIndustry,
+                messageSamples: campaign.messageSamples,
+                optInDetails: campaign.optInDetails,
+                optInKeywords: campaign.optInKeywords,
+                optOutKeywords: campaign.optOutKeywords,
+                helpKeywords: campaign.helpKeywords,
+                helpMessage: campaign.helpMessage,
+                campaignResubmitCount: { increment: 1 },
+                lastResubmitAt: new Date(),
+                campaignSid: null,
+                campaignStatus: null,
+                campaignRejectionReason: null,
+                campaignRejectionCode: null,
+                campaignRetriable: null,
+            },
+        });
+
+        // Best-effort: delete the old usAppToPerson resource so we're not
+        // keeping a rejected campaign attached to a live messaging service.
+        // Twilio allows deletion of failed campaigns; if it fails, the
+        // orphan is harmless — the new campaign becomes the active one.
+        const integration = await prisma.integration.findFirst({
+            where: { systemSetting: { userId }, provider: "TWILIO" },
+        });
+        if (!integration?.credentials) {
+            throw new Error("Twilio integration not found for this user.");
+        }
+        const creds = integration.credentials as any;
+        const subClient = twilio(creds.accountSid, creds.authToken);
+        if (reg.campaignSid) {
+            try {
+                await subClient.messaging.v1
+                    .services(reg.messagingServiceSid)
+                    .usAppToPerson(reg.campaignSid)
+                    .remove();
+            } catch (err: any) {
+                console.warn(`[A2P Service] Old campaign cleanup failed (non-fatal): ${err.message}`);
+            }
+        }
+
+        // executePhase2 creates a fresh Messaging Service each time; for a
+        // campaign-only resubmit we want to reuse the existing service so
+        // downstream number attachments don't need to be rewired. Call the
+        // narrower helper below instead.
+        const updated = await prisma.a2P_Registration.findUnique({ where: { userId } });
+        if (!updated) throw new Error("Registration row disappeared during resubmit.");
+        await this.createCampaignOnExistingService(userId, updated, subClient);
+        return { status: "PENDING" };
+    }
+
+    /**
+     * Creates a usAppToPerson campaign on the messaging service already
+     * attached to the registration. Used by resubmitCampaign so we don't
+     * churn the messaging service SID (which would break number
+     * attachments configured against it).
+     */
+    private async createCampaignOnExistingService(userId: string, registration: any, subClient: any) {
+        const campaign = pickCampaignFields(registration);
+        try {
+            const campaignResource = await subClient.messaging.v1
+                .services(registration.messagingServiceSid)
+                .usAppToPerson.create({
+                    brandRegistrationSid: registration.brandSid,
+                    description: buildCampaignDescription(campaign.useCase),
+                    messageSamples: campaign.messageSamples,
+                    usAppToPersonUsecase: campaign.useCase || getUsAppToPersonUsecase(registration.businessType),
+                    messageFlow: campaign.optInDetails,
+                    hasEmbeddedLinks: false,
+                    hasEmbeddedPhone: false,
+                    optInMessage: `You have opted in to receive messages. Reply ${campaign.optOutKeywords[0] || "STOP"} to unsubscribe.`,
+                    optOutMessage: `You have been unsubscribed. Reply ${campaign.optInKeywords[0] || "START"} to resubscribe.`,
+                    helpMessage: campaign.helpMessage,
+                    optInKeywords: campaign.optInKeywords,
+                    optOutKeywords: campaign.optOutKeywords,
+                    helpKeywords: campaign.helpKeywords,
+                    subscriberOptIn: true,
+                    subscriberOptOut: true,
+                    subscriberHelp: true,
+                } as any);
+            await prisma.a2P_Registration.update({
+                where: { userId },
+                data: {
+                    campaignSid: campaignResource.sid,
+                    campaignStatus: "IN_PROGRESS",
+                    status: "PENDING",
+                },
+            });
+        } catch (error: any) {
+            console.error("[A2P Service] Campaign resubmit FAILED:", error.message, error.code, error.status);
+            await prisma.a2P_Registration.update({
+                where: { userId },
+                data: { rejectionReason: `Campaign resubmit error: ${error.message}` },
+            });
+            throw error;
+        }
     }
 }
 
