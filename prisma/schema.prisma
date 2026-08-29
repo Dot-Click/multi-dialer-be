@@ -348,6 +348,47 @@ model A2P_Registration {
   // checkA2PStatus.
   customerProfileApproved Boolean @default(false)
 
+  // Per-stage status tracking. The rollup `status` column above is now a
+  // derived value written by checkA2PStatus from these three; downstream
+  // code that reads `status` keeps working, but the panel + resubmit flows
+  // read the per-stage columns directly so we can tell the user *which*
+  // stage failed and whether it's retriable.
+  //
+  // Nullable because existing rows won't have values until the poller
+  // backfills on its next tick — the frontend renders "syncing…" for null.
+  cpStatus                String? // twilio-approved | twilio-rejected | pending-review | in-review | draft
+  cpRejectionReason       String?
+  cpRejectionCode         String?
+  cpRetriable             Boolean?
+  brandStatus             String? // APPROVED | FAILED | PENDING | IN_REVIEW | SUSPENDED
+  brandRejectionReason    String?
+  brandRejectionCode      String?
+  brandRetriable          Boolean?
+  campaignStatus          String? // VERIFIED | FAILED | IN_PROGRESS
+  campaignRejectionReason String?
+  campaignRejectionCode   String?
+  campaignRetriable       Boolean?
+
+  // Campaign fields — promoted out of hard-coded literals in executePhase2
+  // so the user can edit them at first submission and on resubmit. Nullable
+  // so existing rows survive the migration; the backfill script seeds them
+  // from the previous hard-coded real-estate defaults for in-flight users.
+  useCase          String?
+  businessIndustry String?
+  messageSamples   String[] @default([])
+  optInDetails     String?
+  optInKeywords    String[] @default([])
+  optOutKeywords   String[] @default([])
+  helpKeywords     String[] @default([])
+  helpMessage      String?
+
+  // Resubmit accounting. Brand resubmits cost the tenant a TCR fee each
+  // time; count is surfaced in the UI so users see how many attempts
+  // they've made and an admin can soft-cap runaway retries.
+  brandResubmitCount    Int       @default(0)
+  campaignResubmitCount Int       @default(0)
+  lastResubmitAt        DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
