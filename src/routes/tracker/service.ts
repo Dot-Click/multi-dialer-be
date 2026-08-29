@@ -368,7 +368,7 @@ export class TrackerService {
     return { success: true };
   }
 
-  // ── Sessions (manual override / historical backfill) ────────────────────
+  // ── Manual entries (activity the dialer and CRM cannot see) ────────────
 
   static async listSessions(userId: string, from?: string, to?: string) {
     return prisma.prospectingSession.findMany({
@@ -387,20 +387,22 @@ export class TrackerService {
     });
   }
 
+  /**
+   * Logs activity the system could not observe — door knocking, an open
+   * house, a conversation at the gym.
+   *
+   * ADDS to whatever this (day, channel) already holds. It used to write
+   * absolute values over the existing row, so logging a second block of door
+   * knocking on the same day left only the second one. The schema's own
+   * comment on the unique constraint says a repeat entry "must UPDATE this
+   * row, not insert a duplicate that silently double-counts" — right about
+   * the row, wrong about the values. One row per (user, day, channel) is
+   * correct; that row holds the running manual total for the bucket.
+   *
+   * Correcting a figure is a different operation, and a different endpoint:
+   * PATCH /tracker/sessions/:id sets absolute values.
+   */
   static async upsertSession(userId: string, row: SessionRow) {
-    const data = {
-      hours: row.hours,
-      contacts: row.contacts,
-      leads: row.leads,
-      apptsSet: row.apptsSet,
-      apptsMet: row.apptsMet,
-      listingsTaken: row.listingsTaken,
-      underContract: row.underContract,
-      closed: row.closed,
-      gci: row.gci,
-      notes: row.notes ?? null,
-      isOverride: true,
-    };
     const loggedOn = new Date(row.loggedOn);
 
     // NOT a Prisma .upsert() against the (userId, loggedOn, source) unique
@@ -413,14 +415,63 @@ export class TrackerService {
     const existing = await prisma.prospectingSession.findFirst({
       where: { userId, loggedOn, source: row.source },
     });
+
     if (existing) {
-      return prisma.prospectingSession.update({ where: { id: existing.id }, data });
+      // Two entries on one day are two things worth remembering, so the notes
+      // concatenate. Losing the first note to save the second is the same bug
+      // this commit fixes, in miniature.
+      const notes = row.notes
+        ? existing.notes
+          ? `${existing.notes}\n${row.notes}`
+          : row.notes
+        : existing.notes;
+
+      // increment, not read-then-write: two entries saved at the same moment
+      // both land, instead of one silently winning the race.
+      return prisma.prospectingSession.update({
+        where: { id: existing.id },
+        data: {
+          hours: { increment: row.hours },
+          contacts: { increment: row.contacts },
+          leads: { increment: row.leads },
+          apptsSet: { increment: row.apptsSet },
+          apptsMet: { increment: row.apptsMet },
+          listingsTaken: { increment: row.listingsTaken },
+          underContract: { increment: row.underContract },
+          closed: { increment: row.closed },
+          gci: { increment: row.gci },
+          notes,
+        },
+      });
     }
+
+    // isOverride is not set here. It defaults to true and nothing reads it
+    // meaningfully now that manual entries add rather than replace — the
+    // column is vestigial and should be dropped in a later migration.
     return prisma.prospectingSession.create({
-      data: { userId, loggedOn, source: row.source, ...data },
+      data: {
+        userId,
+        loggedOn,
+        source: row.source,
+        hours: row.hours,
+        contacts: row.contacts,
+        leads: row.leads,
+        apptsSet: row.apptsSet,
+        apptsMet: row.apptsMet,
+        listingsTaken: row.listingsTaken,
+        underContract: row.underContract,
+        closed: row.closed,
+        gci: row.gci,
+        notes: row.notes ?? null,
+      },
     });
   }
 
+  /**
+   * Corrects a manual entry: sets absolute values, unlike upsertSession which
+   * adds to them. This is the difference between "I did more today" and "that
+   * figure is wrong", and they must not be the same operation.
+   */
   static async patchSession(userId: string, id: string, patch: Partial<SessionRow>) {
     const existing = await prisma.prospectingSession.findFirst({ where: { id, userId } });
     if (!existing) throw new Error("Session not found, or does not belong to you");

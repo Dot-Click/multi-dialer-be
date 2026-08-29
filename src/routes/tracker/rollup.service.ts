@@ -25,6 +25,8 @@ import { isoDayInTimeZone, startOfDayInTimeZone, endOfDayExclusiveInTimeZone } f
  *   - Funnel stages (leads..closed) + GCI <- ProspectingStageEvent, which is
  *                 itself written whenever one of the six funnel Dispositions
  *                 is applied (see systemSettings/dispositions/service.ts).
+ *   - Manual entries <- ProspectingSession, ADDED on top of all of the above.
+ *                 See the merge at the bottom.
  *
  * Days are bucketed in the TENANT'S timezone (Company.defaultTimeZone — the
  * same value TCPA windows are evaluated against), not UTC. See the two range
@@ -102,10 +104,10 @@ function bucketKey(loggedOn: string, source: string | null): string {
 
 /**
  * Builds the merged daily SessionRow[] for one user over an inclusive date
- * range — dialer + CRM derived rows, with any ProspectingSession override
- * winning wholesale for the (day, source) buckets it covers. Feed the result
- * into the domain layer's aggregateSessions/computeActualKpis/computeStreak —
- * it has no opinion on where the numbers came from.
+ * range — dialer + CRM derived rows, PLUS any manual entries the agent logged
+ * for those (day, source) buckets. Feed the result into the domain layer's
+ * aggregateSessions/computeActualKpis/computeStreak — it has no opinion on
+ * where the numbers came from.
  *
  * `timeZone` is the tenant's IANA zone. Callers resolve it once and pass it
  * down rather than each query looking it up.
@@ -224,27 +226,48 @@ export async function getDailyRows(
     }
   }
 
-  // ---- Manual entries — also a DATE column ----------------------------
-  const overrides = await prisma.prospectingSession.findMany({
+  // ---- Manual entries — ADDED to the bucket, never replacing it -------
+  //
+  // A manual entry is activity the system could not see: door knocking, an
+  // open house, a conversation at the gym. It happened IN ADDITION to what
+  // the dialer and CRM recorded, so it is a contribution to its (day, source)
+  // bucket, not a substitute for one.
+  //
+  // This used to overwrite the bucket wholesale — every field taken from the
+  // manual row — which erased the derived numbers rather than adding to them.
+  // Worse, the fields left at zero in the form erased too: logging two hours
+  // of door knocking zeroed that day's contacts, leads and appointments along
+  // with its dialer hours.
+  //
+  // A bucket with no derived activity starts from an empty row, so a purely
+  // manual day still reads exactly what was entered.
+  //
+  // loggedOn is a DATE column, same as occurredOn above.
+  const manualEntries = await prisma.prospectingSession.findMany({
     where: { userId, loggedOn: dateRange },
   });
 
   const merged = new Map<string, SessionRow>(derived);
-  for (const o of overrides) {
-    const loggedOn = toIsoDayUTC(o.loggedOn);
-    merged.set(bucketKey(loggedOn, o.source), {
+  for (const m of manualEntries) {
+    const loggedOn = toIsoDayUTC(m.loggedOn);
+    const key = bucketKey(loggedOn, m.source);
+    const base = merged.get(key) ?? emptyRow(loggedOn, m.source);
+
+    merged.set(key, {
       loggedOn,
-      source: o.source,
-      hours: Number(o.hours),
-      contacts: o.contacts,
-      leads: o.leads,
-      apptsSet: o.apptsSet,
-      apptsMet: o.apptsMet,
-      listingsTaken: o.listingsTaken,
-      underContract: o.underContract,
-      closed: o.closed,
-      gci: Number(o.gci),
-      notes: o.notes,
+      source: m.source,
+      hours: base.hours + Number(m.hours),
+      contacts: base.contacts + m.contacts,
+      leads: base.leads + m.leads,
+      apptsSet: base.apptsSet + m.apptsSet,
+      apptsMet: base.apptsMet + m.apptsMet,
+      listingsTaken: base.listingsTaken + m.listingsTaken,
+      underContract: base.underContract + m.underContract,
+      closed: base.closed + m.closed,
+      gci: base.gci + Number(m.gci),
+      // The derived side has no notes to lose, so the manual note simply
+      // carries through when there is one.
+      notes: m.notes ?? base.notes ?? null,
     });
   }
 
