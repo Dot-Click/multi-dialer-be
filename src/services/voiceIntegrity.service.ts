@@ -86,6 +86,53 @@ async function getIntegration(adminUserId: string) {
  *
  * Returns null when the admin can't do VI at all (no context to attach to).
  */
+/**
+ * Pull the latest `trustProductsEvaluations` record for a Trust Product
+ * and collapse its failed fields into a readable rejection reason string.
+ * Trust products don't expose failure detail on the plain fetch payload,
+ * so this evaluation endpoint is the only source of truth.
+ *
+ * Returns null when the evaluation can't be fetched or has no failures —
+ * caller should fall back to a generic "rejected by Twilio" message.
+ */
+export async function fetchTrustProductRejectionReason(
+  client: any,
+  trustProductSid: string
+): Promise<string | null> {
+  try {
+    const evals = await client.trusthub.v1
+      .trustProducts(trustProductSid)
+      .trustProductsEvaluations.list({ limit: 3 });
+    const latest =
+      evals.find((e: any) => e.status === "noncompliant") ?? evals[0];
+    if (!latest?.results) return null;
+
+    const failures: string[] = latest.results
+      .flatMap((r: any) => r.fields || [])
+      .filter((f: any) => f.passed === false)
+      .map((f: any) => {
+        const label = (f.friendly_name || f.object_field || "").toString().trim();
+        const reason = (f.failure_reason || "invalid").toString().trim();
+        return label ? `${label}: ${reason}` : reason;
+      });
+
+    // Dedupe (Twilio sometimes lists the same field twice under different
+    // requirement groups) and cap the length so the UI banner stays sane.
+    const unique = Array.from(new Set(failures)).filter(Boolean);
+    if (!unique.length) return null;
+    const compact = unique.slice(0, 6).join(" | ");
+    return unique.length > 6
+      ? `${compact} | (+${unique.length - 6} more issues)`
+      : compact;
+  } catch (err: any) {
+    console.warn(
+      `[TrustHub] fetchTrustProductRejectionReason(${trustProductSid}) failed:`,
+      err?.message
+    );
+    return null;
+  }
+}
+
 export async function resolveTwilioContext(
   adminUserId: string
 ): Promise<{ client: any; onMaster: boolean } | null> {
@@ -375,10 +422,19 @@ export async function refreshStatus(adminUserId: string): Promise<VoiceIntegrity
   const tp = await ctx.client.trusthub.v1.trustProducts(current.trustProductSid).fetch();
   // Twilio's status strings match ours 1:1 (draft / pending-review / twilio-approved / twilio-rejected).
   const nextStatus = tp.status as VoiceIntegrityStatus;
+  // Trust products don't carry rejection detail on the fetch payload —
+  // `(tp as any).errors` was always undefined, so the UI was showing "null".
+  // The real reasons live in the trust product's evaluation records, same
+  // shape as customer profile evaluations. Pull the latest noncompliant
+  // one and summarize its failed fields into a readable string.
+  const rejectionReason =
+    nextStatus === "twilio-rejected"
+      ? await fetchTrustProductRejectionReason(ctx.client, current.trustProductSid)
+      : null;
   const next: VoiceIntegrityCredentials = {
     ...current,
     status: nextStatus,
-    rejectionReason: (tp as any).errors ? JSON.stringify((tp as any).errors) : null,
+    rejectionReason,
   };
 
   const systemSettingId = await getSystemSettingId(adminUserId);
