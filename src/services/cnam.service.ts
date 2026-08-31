@@ -1,6 +1,9 @@
 import prisma from "../lib/prisma";
-import { resolveTwilioContext } from "./voiceIntegrity.service";
-import { getStatus as getVoiceIntegrityStatus } from "./voiceIntegrity.service";
+import {
+  resolveTwilioContext,
+  fetchTrustProductRejectionReason,
+  getStatus as getVoiceIntegrityStatus,
+} from "./voiceIntegrity.service";
 import { getUserPlanLimits } from "./planLimits.service";
 
 /**
@@ -278,10 +281,17 @@ export async function refreshStatus(adminUserId: string): Promise<CnamCredential
 
   const tp = await ctx.client.trusthub.v1.trustProducts(current.trustProductSid).fetch();
   const nextStatus = tp.status as CnamStatus;
+  // Same fix as Voice Integrity — `(tp as any).errors` isn't a thing on
+  // the fetch payload, so we were writing "null" as the rejection reason.
+  // Pull the evaluation record and summarize its failed fields.
+  const rejectionReason =
+    nextStatus === "twilio-rejected"
+      ? await fetchTrustProductRejectionReason(ctx.client, current.trustProductSid)
+      : null;
   const next: CnamCredentials = {
     ...current,
     status: nextStatus,
-    rejectionReason: (tp as any).errors ? JSON.stringify((tp as any).errors) : null,
+    rejectionReason,
   };
 
   const systemSettingId = await getSystemSettingId(adminUserId);
