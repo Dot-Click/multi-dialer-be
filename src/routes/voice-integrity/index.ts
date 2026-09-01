@@ -6,6 +6,7 @@ import {
   backfillAssignments,
   getStatus,
   VoiceIntegrityAttributes,
+  VoiceIntegrityCredentials,
 } from "../../services/voiceIntegrity.service";
 
 const router = Router();
@@ -18,11 +19,28 @@ router.use(protectRoute, checkRole(["ADMIN", "OWNER"]));
 
 /**
  * GET /api/voice-integrity/status
- * Returns the current enrolment state for the logged-in admin.
+ * Returns the current enrolment state for the logged-in admin. Kicks off a
+ * Twilio status sync first so the UI never shows a stale rejection reason
+ * (or a stale "pending" after Twilio has already ruled). Sync is
+ * best-effort — a Twilio outage still returns the DB state.
+ *
+ * Same pattern A2P's /status route uses. Adds ~200-400ms per request; that
+ * cost is acceptable here because this endpoint fires once when the panel
+ * opens, not on every render.
  */
 router.get("/status", async (req: any, res) => {
   try {
-    const status = await getStatus(req.user.id);
+    const userId = req.user.id;
+    let status: VoiceIntegrityCredentials;
+    try {
+      // refreshStatus internally reads getStatus first and short-circuits
+      // when the admin has no trust product to poll — so it's safe to call
+      // unconditionally.
+      status = await refreshStatus(userId);
+    } catch (err: any) {
+      console.warn(`[VI] refreshStatus for ${userId} failed:`, err?.message);
+      status = await getStatus(userId);
+    }
     res.json(status);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

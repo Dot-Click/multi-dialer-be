@@ -28,6 +28,45 @@ import { getUserPlanLimits } from "./planLimits.service";
  */
 const VOICE_INTEGRITY_POLICY_SID = "RN5b3660f9598883b1df4e77f77acefba0";
 
+/**
+ * Map our internal slug for VI use case → Twilio's exact enum values.
+ * Twilio validates this strictly (case + spacing + wording all matter). The
+ * rejection message enumerates them verbatim; we default to "Outbound Dialer"
+ * because that's what a multi-dialer product actually is.
+ *
+ * Valid values (from Twilio's rejection copy):
+ *   Identify & Verification, Asset Management, Lead Generation,
+ *   Intelligent Routing, Appointment Scheduling, Customer Support,
+ *   Self-Service, Automated Support, Appointment Reminders,
+ *   Employee Notifications, Delivery Notifications, Emergency Notifications,
+ *   Contactless Delivery, Order Notifications, Service Alerts,
+ *   Purchase Confirmation, Mass Alerts, Fraud Alerts, Contact Tracing,
+ *   Lead Management, Lead Nurturing, Telemarketing, Marketing Events,
+ *   Rewards Program, Lead Alerts, Lead Distribution, Abandoned Cart,
+ *   Call Tracking, Outbound Dialer, Click to Call, Phone System,
+ *   Meetings/Collaboration, Telehealth, Distance Learning,
+ *   Shift Management, Field Notifications, Dating/Social,
+ *   Remote appointments, Group Messaging, Exam Proctoring, Tutoring,
+ *   Therapy (Individual+Group), Pharmacy, First Responder, Survey/Research
+ */
+const mapUseCaseToTwilio = (useCase: string): string => {
+  switch (useCase) {
+    case "sales_dialer":
+    case "outbound_dialer":       return "Outbound Dialer";
+    case "customer_care":
+    case "customer_support":      return "Customer Support";
+    case "appointment_reminders": return "Appointment Reminders";
+    case "lead_generation":       return "Lead Generation";
+    case "lead_management":       return "Lead Management";
+    case "lead_alerts":           return "Lead Alerts";
+    case "telemarketing":         return "Telemarketing";
+    case "marketing_events":      return "Marketing Events";
+    case "debt_collection":       return "Customer Support";
+    case "other":
+    default:                      return "Outbound Dialer";
+  }
+};
+
 export type VoiceIntegrityStatus =
   | "not-started"
   | "draft"
@@ -343,7 +382,7 @@ export async function submitOnboarding(
       friendlyName: `Voice Integrity End User — ${adminUserId}`,
       type: "voice_integrity_information",
       attributes: {
-        use_case: attrs.useCase,
+        use_case: mapUseCaseToTwilio(attrs.useCase),
         business_employee_count: attrs.businessEmployeeCount,
         average_business_day_call_volume: attrs.averageBusinessDayCallVolume,
         notes: attrs.notes || "",

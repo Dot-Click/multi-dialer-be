@@ -6,6 +6,7 @@ import {
   backfillAssignments,
   getStatus,
   CnamAttributes,
+  CnamCredentials,
 } from "../../services/cnam.service";
 
 const router = Router();
@@ -16,11 +17,20 @@ router.use(protectRoute, checkRole(["ADMIN", "OWNER"]));
  * GET /api/cnam/status
  * Returns the current CNAM enrolment state, including blocked-* statuses
  * that tell the UI which prerequisite is missing (plan, VI, business
- * profile, or subaccount).
+ * profile, or subaccount). Auto-syncs from Twilio so the UI never shows a
+ * stale rejection reason after Twilio has ruled. Best-effort — a Twilio
+ * outage falls back to the DB state.
  */
 router.get("/status", async (req: any, res) => {
   try {
-    const status = await getStatus(req.user.id);
+    const userId = req.user.id;
+    let status: CnamCredentials;
+    try {
+      status = await refreshStatus(userId);
+    } catch (err: any) {
+      console.warn(`[CNAM] refreshStatus for ${userId} failed:`, err?.message);
+      status = await getStatus(userId);
+    }
     res.json(status);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
