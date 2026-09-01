@@ -134,6 +134,28 @@ async function getIntegration(adminUserId: string) {
  * Returns null when the evaluation can't be fetched or has no failures —
  * caller should fall back to a generic "rejected by Twilio" message.
  */
+/**
+ * Trim a single failure_reason so it renders as a short, actionable line
+ * instead of a Twilio enum dump.
+ *
+ * Twilio's failure_reason for enum mismatches embeds the entire valid-value
+ * list into the message (e.g. "Use Case should be one of Identify & Verification
+ * Asset Management Lead Generation ... 44 values ..."). We collapse those to
+ * a compact message and hard-cap everything else.
+ */
+const REASON_MAX_CHARS = 140;
+function compactFailureReason(label: string, reason: string): string {
+  const r = reason.trim();
+  // "X should be one of Y Z W ..." — collapse the enum dump.
+  const enumMatch = r.match(/^([\w\s]+?)\s+should be one of\b/i);
+  if (enumMatch) {
+    const fieldName = enumMatch[1].trim() || label || "value";
+    return `${fieldName} is not a valid option. Pick one from the form.`;
+  }
+  if (r.length > REASON_MAX_CHARS) return `${r.slice(0, REASON_MAX_CHARS - 1)}…`;
+  return r;
+}
+
 export async function fetchTrustProductRejectionReason(
   client: any,
   trustProductSid: string
@@ -151,12 +173,12 @@ export async function fetchTrustProductRejectionReason(
       .filter((f: any) => f.passed === false)
       .map((f: any) => {
         const label = (f.friendly_name || f.object_field || "").toString().trim();
-        const reason = (f.failure_reason || "invalid").toString().trim();
+        const reason = compactFailureReason(label, (f.failure_reason || "invalid").toString());
         return label ? `${label}: ${reason}` : reason;
       });
 
     // Dedupe (Twilio sometimes lists the same field twice under different
-    // requirement groups) and cap the length so the UI banner stays sane.
+    // requirement groups) and cap the number of items so the UI banner stays sane.
     const unique = Array.from(new Set(failures)).filter(Boolean);
     if (!unique.length) return null;
     const compact = unique.slice(0, 6).join(" | ");
