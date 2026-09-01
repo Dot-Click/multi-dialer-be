@@ -1,5 +1,11 @@
 import prisma from "../../../lib/prisma";
 
+/** Matches the error shape the company and SMTP services throw, so the
+ *  controller can map it to a real status code instead of a blanket 500. */
+function throwHttp(statusCode: number, message: string): never {
+    throw { message, statusCode };
+}
+
 /**
  * The tenant that owns settings for this user. Agents read and write their
  * creating admin's settings, matching every other resolver in this folder.
@@ -13,27 +19,84 @@ async function resolveSettingsOwner(userId: string): Promise<string> {
 }
 
 /**
- * Rejects anything Intl cannot resolve, which includes the abbreviations this
- * app has historically stored (Appearance.timeZone still defaults to "CST").
+ * Canonical IANA zone names keyed by their lowercase form, built once.
  *
- * An abbreviation is not a timezone: "CST" is a fixed -6 offset with no notion
- * of daylight saving, so every date derived from it is an hour wrong for
- * roughly half the year. That matters here specifically — this value decides
- * when a TCPA calling window opens and closes.
+ * `Intl.supportedValuesOf` is Node 18+, so it exists on the 20.x this project
+ * pins, but it is read off Intl dynamically because the TypeScript lib target
+ * here does not declare it. `null` means the runtime lacks it.
  */
-function assertValidTimeZone(tz: unknown): asserts tz is string {
-    if (typeof tz !== "string" || tz.trim() === "") {
-        throw new Error("companyTimeZone must be an IANA timezone name, for example America/Chicago");
+let canonicalZones: Map<string, string> | null | undefined;
+
+function getCanonicalZones(): Map<string, string> | null {
+    if (canonicalZones !== undefined) return canonicalZones;
+
+    const supportedValuesOf = (Intl as any).supportedValuesOf;
+    if (typeof supportedValuesOf !== "function") {
+        canonicalZones = null;
+        return canonicalZones;
     }
-    try {
-        new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    } catch {
-        throw new Error(
-            `"${tz}" is not a valid timezone name. Use an IANA zone such as America/Chicago ` +
-            `rather than an abbreviation like CST — abbreviations cannot express daylight ` +
-            `saving, which would put every call-window check an hour out for half the year.`,
+
+    const zones = new Map<string, string>(
+        (supportedValuesOf("timeZone") as string[]).map((zone) => [zone.toLowerCase(), zone]),
+    );
+
+    // ICU's canonical list carries no "UTC" and no "Etc/*" entry at all, but
+    // UTC is this column's schema default, the value resolveTenantTimeZone
+    // falls back to, and an option the frontend offers on engines without
+    // supportedValuesOf — so it has to stay settable. It is also the one
+    // fixed-offset value that is safe here: zero offset, no daylight saving
+    // to get wrong. "Etc/UTC" collapses onto it so the column cannot hold two
+    // spellings of the same zone.
+    zones.set("utc", "UTC");
+    zones.set("etc/utc", "UTC");
+
+    canonicalZones = zones;
+    return canonicalZones;
+}
+
+/**
+ * Returns the canonical IANA name for a submitted timezone, or throws a 400.
+ *
+ * Validating with `new Intl.DateTimeFormat({ timeZone })` alone is not enough,
+ * and the difference matters here specifically: this value decides when a TCPA
+ * calling window opens and closes, and which calendar day the Prospecting
+ * Tracker counts a call against.
+ *
+ * ICU resolves a great deal more than IANA zone names. "EST" resolves to
+ * America/Panama and "MST" to America/Phoenix — zones that observe no daylight
+ * saving at all. An Eastern tenant who stored "EST" would have every
+ * call-window check an hour out from March to November, silently. So the
+ * submitted value has to appear in the canonical zone list, and the canonical
+ * spelling is what gets stored: "america/chicago" is accepted and saved as
+ * "America/Chicago", so one zone cannot end up stored two ways.
+ */
+function normalizeTimeZone(tz: unknown): string {
+    if (typeof tz !== "string" || tz.trim() === "") {
+        return throwHttp(400, "companyTimeZone must be an IANA timezone name, for example America/Chicago");
+    }
+
+    const submitted = tz.trim();
+    const zones = getCanonicalZones();
+
+    if (zones) {
+        const canonical = zones.get(submitted.toLowerCase());
+        if (canonical) return canonical;
+        return throwHttp(
+            400,
+            `"${submitted}" is not an IANA timezone name. Use a zone such as America/Chicago — ` +
+            `abbreviations like CST or EST cannot express daylight saving, which would put every ` +
+            `call-window check an hour out for half the year.`,
         );
     }
+
+    // Runtime without supportedValuesOf: fall back to the loose check rather
+    // than rejecting every timezone the app has.
+    try {
+        new Intl.DateTimeFormat("en-US", { timeZone: submitted });
+    } catch {
+        return throwHttp(400, `"${submitted}" is not a valid timezone name. Use an IANA zone such as America/Chicago.`);
+    }
+    return submitted;
 }
 
 export async function getRegulatorySettingFromDb(userId: string) {
@@ -70,10 +133,11 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
 
     // companyTimeZone lives on Company, not RegulatorySetting. Split it out
     // before anything touches the regulatory row — passing it through would
-    // fail on an unknown column.
-    const { companyTimeZone, ...regulatoryPayload } = payload ?? {};
-    const timeZoneRequested = companyTimeZone !== undefined;
-    if (timeZoneRequested) assertValidTimeZone(companyTimeZone);
+    // fail on an unknown column. What gets written from here on is the
+    // canonical form, never the raw submitted string.
+    const { companyTimeZone: submittedTimeZone, ...regulatoryPayload } = payload ?? {};
+    const timeZoneRequested = submittedTimeZone !== undefined;
+    const companyTimeZone = timeZoneRequested ? normalizeTimeZone(submittedTimeZone) : undefined;
 
     const systemSetting = await prisma.system_Setting.findFirst({
         where: { userId: targetUserId },
@@ -81,7 +145,7 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
     });
 
     if (!systemSetting) {
-        throw new Error("System settings not found");
+        return throwHttp(404, "System settings not found");
     }
 
     const applyTimeZone = async (tx: any) => {
@@ -89,8 +153,8 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
 
         // The tenant may have no Company row yet — the SMTP save path hit the
         // same case and resolved it by creating a minimal one rather than
-        // making the admin fill out a company profile first. Every other
-        // column has a schema default.
+        // making the admin fill out a company profile first. companyName is
+        // nullable and every other column has a schema default.
         const company = await tx.company.findFirst({
             where: { userId: targetUserId },
             select: { id: true },
@@ -106,14 +170,13 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
             });
         }
 
-        // Keep the one timezone control that already exists in the UI in step
-        // with this one. updateMany rather than update: a tenant may not have
-        // an appearance row yet, and that is not an error worth failing a
-        // compliance save over.
-        await tx.appearance.updateMany({
-            where: { systemSettingId: systemSetting.id },
-            data: { timeZone: companyTimeZone },
-        });
+        // Company.defaultTimeZone is the only tenant timezone the application
+        // reads (see resolveTenantTimeZone in src/utils/tenant.ts), so there is
+        // nothing else to keep in step here. The `appearance` table carried a
+        // legacy `timeZone` column that was dropped from the Prisma model when
+        // Appearance became a pure feature-toggle row; writing to it from here
+        // threw "Unknown argument `timeZone`" and failed the whole transaction,
+        // which is why saving a timezone in Compliance & DNC errored out.
     };
 
     if (!systemSetting.regulatorySetting) {
@@ -122,6 +185,19 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
                 data: { ...regulatoryPayload, systemSettingId: systemSetting.id },
             });
             await applyTimeZone(tx);
+
+            // Audited in both branches: a first-ever save still changes the
+            // zone every TCPA window is evaluated against, and a compliance
+            // control whose trail depends on which branch ran is not a trail
+            // worth having.
+            await tx.auditLog.create({
+                data: {
+                    userId,
+                    action: "Updated TCPA/Regulatory Settings",
+                    details: JSON.stringify({ ...regulatoryPayload, companyTimeZone }),
+                },
+            });
+
             return {
                 ...created,
                 companyTimeZone: timeZoneRequested ? companyTimeZone : undefined,
@@ -145,7 +221,7 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
             data: {
                 userId,
                 action: "Updated TCPA/Regulatory Settings",
-                details: JSON.stringify(payload),
+                details: JSON.stringify({ ...regulatoryPayload, companyTimeZone }),
             },
         });
 

@@ -8,7 +8,7 @@ export const getRegulatorySetting = async (req: Request, res: Response) => {
         const settings = await getRegulatorySettingFromDb(userId);
         successResponse(res, 200, "Regulatory settings fetched", settings);
     } catch (error: any) {
-        errorResponse(res, error.message || "Internal server error", 500);
+        errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
     }
 };
 
@@ -19,6 +19,6 @@ export const updateRegulatorySetting = async (req: Request, res: Response) => {
         const settings = await updateRegulatorySettingInDb(userId, payload);
         successResponse(res, 200, "Regulatory settings updated", settings);
     } catch (error: any) {
-        errorResponse(res, error.message || "Internal server error", 500);
+        errorResponse(res, error?.message || "Internal server error", error?.statusCode || 500);
     }
 };
