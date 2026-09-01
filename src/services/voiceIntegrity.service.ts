@@ -49,7 +49,30 @@ const VOICE_INTEGRITY_POLICY_SID = "RN5b3660f9598883b1df4e77f77acefba0";
  *   Remote appointments, Group Messaging, Exam Proctoring, Tutoring,
  *   Therapy (Individual+Group), Pharmacy, First Responder, Survey/Research
  */
+// All of Twilio's valid Voice Integrity use_case enum values. If we're
+// handed one of these verbatim (which the frontend now always does), pass
+// it through unchanged.
+const TWILIO_USE_CASE_VALUES = new Set([
+  "Outbound Dialer", "Telemarketing", "Lead Generation", "Lead Management",
+  "Lead Nurturing", "Lead Alerts", "Lead Distribution", "Marketing Events",
+  "Rewards Program", "Call Tracking", "Click to Call", "Customer Support",
+  "Self-Service", "Automated Support", "Appointment Reminders",
+  "Appointment Scheduling", "Remote appointments", "Employee Notifications",
+  "Delivery Notifications", "Emergency Notifications", "Contactless Delivery",
+  "Order Notifications", "Service Alerts", "Purchase Confirmation",
+  "Mass Alerts", "Fraud Alerts", "Contact Tracing", "Abandoned Cart",
+  "Phone System", "Meetings/Collaboration", "Telehealth", "Distance Learning",
+  "Shift Management", "Field Notifications", "Dating/Social", "Group Messaging",
+  "Exam Proctoring", "Tutoring", "Therapy (Individual+Group)", "Pharmacy",
+  "First Responder", "Survey/Research", "Identify & Verification",
+  "Asset Management", "Intelligent Routing",
+]);
+
 const mapUseCaseToTwilio = (useCase: string): string => {
+  // Frontend now sends Twilio's exact enum verbatim — pass through.
+  if (TWILIO_USE_CASE_VALUES.has(useCase)) return useCase;
+
+  // Legacy slug support for scripts / older payloads.
   switch (useCase) {
     case "sales_dialer":
     case "outbound_dialer":       return "Outbound Dialer";
@@ -94,10 +117,19 @@ export interface VoiceIntegrityCredentials {
 }
 
 export interface VoiceIntegrityAttributes {
-  useCase: string;                     // e.g. "sales_dialer"
+  // Must match one of Twilio's Voice Integrity use-case enum values
+  // verbatim (e.g. "Outbound Dialer", "Customer Support"). The frontend
+  // picks from a dropdown seeded with the enum, so this is Twilio-ready.
+  useCase: string;
   businessEmployeeCount: number;
-  averageBusinessDayCallVolume: number;
+  // Twilio expects a range string, not a raw number. Values match the
+  // ones offered in Twilio's own Voice Integrity console form:
+  //   "0-100" | "101-1000" | "1001-10000" | "10001-100000" | "100000+"
+  averageBusinessDayCallVolume: string;
   notes?: string;
+  // Email Twilio pings when the trust product review completes. Falls
+  // back to the requesting admin's account email if blank.
+  notificationEmail?: string;
 }
 
 /**
@@ -393,9 +425,12 @@ export async function submitOnboarding(
     }
 
     // 3. Create Voice Integrity Trust Product.
+    // Trust Hub notification email — Twilio pings this when the review
+    // completes. Prefer the admin's chosen address, then the Business
+    // Profile's contact email, then a hardcoded fallback.
     const trustProduct = await hubClient.trusthub.v1.trustProducts.create({
       friendlyName: `Voice Integrity — ${adminUserId}`,
-      email: primary.email || "support@slingvo.com",
+      email: attrs.notificationEmail?.trim() || primary.email || "support@slingvo.com",
       policySid: VOICE_INTEGRITY_POLICY_SID,
     });
 
@@ -404,6 +439,9 @@ export async function submitOnboarding(
       friendlyName: `Voice Integrity End User — ${adminUserId}`,
       type: "voice_integrity_information",
       attributes: {
+        // Frontend now sends Twilio's exact enum value directly, so no
+        // slug-to-enum mapping needed here. mapUseCaseToTwilio() is kept
+        // for one-off scripts that still send legacy slugs.
         use_case: mapUseCaseToTwilio(attrs.useCase),
         business_employee_count: attrs.businessEmployeeCount,
         average_business_day_call_volume: attrs.averageBusinessDayCallVolume,
