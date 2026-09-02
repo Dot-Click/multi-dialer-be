@@ -39,7 +39,8 @@ router.get("/status", async (req: any, res) => {
 
 /**
  * POST /api/cnam/onboard
- * Runs the CNAM Trust Hub sequence. Body: { displayName, useCase?, notes? }
+ * Runs the CNAM Trust Hub sequence.
+ * Body: { displayName, notificationEmail, statusCallbackUrl?, consent }
  * Idempotent-ish: repeated calls upsert the integration row and resume.
  */
 router.post("/onboard", async (req: any, res) => {
@@ -47,6 +48,16 @@ router.post("/onboard", async (req: any, res) => {
     const attrs = req.body as CnamAttributes;
     if (!attrs?.displayName || !attrs.displayName.trim()) {
       res.status(400).json({ message: "displayName is required." });
+      return;
+    }
+    if (!attrs?.notificationEmail || !attrs.notificationEmail.trim()) {
+      res.status(400).json({ message: "notificationEmail is required." });
+      return;
+    }
+    if (!attrs?.consent) {
+      res.status(400).json({
+        message: "You must certify that the business is the caller of record to enable CNAM.",
+      });
       return;
     }
     const result = await submitOnboarding(req.user.id, attrs);

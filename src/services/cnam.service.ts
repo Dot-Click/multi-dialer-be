@@ -61,9 +61,20 @@ export interface CnamCredentials {
 }
 
 export interface CnamAttributes {
-  displayName: string; // ≤ 15 chars — the branded caller name that shows on recipient phones.
-  useCase?: string;
-  notes?: string;
+  // The branded caller name shown on the recipient's phone — max 15
+  // characters per carrier rules. Twilio vets this for appropriateness
+  // and business relevance during review.
+  displayName: string;
+  // Required. Twilio emails this address when the trust product review
+  // completes (approved or rejected).
+  notificationEmail: string;
+  // Optional webhook. Twilio POSTs status transitions here when they
+  // happen. Skip unless the tenant explicitly wires it.
+  statusCallbackUrl?: string;
+  // The admin must certify their business will be the caller of record
+  // for numbers under this display name. Required by Twilio's form and
+  // carrier terms — refuse the submission if this isn't true.
+  consent: boolean;
 }
 
 async function getIntegration(adminUserId: string) {
@@ -129,6 +140,14 @@ export async function submitOnboarding(
   if (displayName.length > CNAM_DISPLAY_NAME_MAX) {
     throw new Error(`Display name must be ${CNAM_DISPLAY_NAME_MAX} characters or fewer.`);
   }
+  const notificationEmail = (attrs.notificationEmail || "").trim();
+  if (!notificationEmail) throw new Error("Notification email is required.");
+  if (!/^\S+@\S+\.\S+$/.test(notificationEmail)) {
+    throw new Error("Notification email is invalid.");
+  }
+  if (!attrs.consent) {
+    throw new Error("You must certify that the business is the caller of record to enable CNAM.");
+  }
 
   const gate = await getStatus(adminUserId);
   if (gate.status.startsWith("blocked-")) {
@@ -190,20 +209,27 @@ export async function submitOnboarding(
     }
 
     // 3. Create CNAM Trust Product.
+    //    - email: the address Twilio pings when review completes. Required
+    //      by Twilio's own console form as "Notification email".
+    //    - statusCallbackUrl (optional): webhook for real-time transitions.
     const trustProduct = await hubClient.trusthub.v1.trustProducts.create({
       friendlyName: `CNAM — ${displayName}`,
-      email: primary.email || "support@slingvo.com",
+      email: attrs.notificationEmail.trim(),
       policySid: CNAM_POLICY_SID,
-    });
+      ...(attrs.statusCallbackUrl?.trim()
+        ? { statusCallback: attrs.statusCallbackUrl.trim() }
+        : {}),
+    } as any);
 
-    // 4. Create End User of type cnam_information carrying the display name.
+    // 4. Create End User of type cnam_information carrying the display
+    //    name — the ONLY user-supplied attribute the CNAM policy actually
+    //    consumes. use_case/notes we used to send weren't part of the
+    //    policy schema; Twilio ignored them silently.
     const endUser = await hubClient.trusthub.v1.endUsers.create({
       friendlyName: `CNAM End User — ${adminUserId}`,
       type: "cnam_information",
       attributes: {
         display_name: displayName,
-        use_case: attrs.useCase || "sales_dialer",
-        notes: attrs.notes || "",
       },
     });
 
