@@ -31,8 +31,17 @@ import { getUserPlanLimits } from "./planLimits.service";
  * CNAM policy SID is fixed by Twilio and matches the one the client already
  * uses on master for their own account ("Lumina Bridge").
  */
-const CNAM_POLICY_SID = "RNb0d4771c2c98518d916a3d4cd70a8f8b";
+// Twilio "Branded Calling" — ISV/subaccount variant that references an
+// already-approved Voice Integrity trust product as its supporting bundle.
+// Confirmed against Twilio's policies list; this policy's End User schema
+// wants `branded_calls_information` with the 5 attributes below.
+//
+// (The old hardcoded SID `RNb0d4771c...` was actually US A2P Messaging
+// Profile — wrong product entirely; Twilio ignored the CNAM-shaped payload
+// or rejected it with the "not mapped to object" error.)
+const CNAM_POLICY_SID = "RNca63d1066fbd5e44eac02d0b3cf6d019";
 const CNAM_DISPLAY_NAME_MAX = 15;
+const CNAM_LONG_DISPLAY_NAME_MAX = 100;
 
 export type CnamStatus =
   | "not-started"
@@ -61,19 +70,29 @@ export interface CnamCredentials {
 }
 
 export interface CnamAttributes {
-  // The branded caller name shown on the recipient's phone — max 15
-  // characters per carrier rules. Twilio vets this for appropriateness
-  // and business relevance during review.
+  // Short branded caller name shown on the recipient's phone — max 15
+  // chars. Maps to Twilio's `branded_calls_display_name`.
   displayName: string;
-  // Required. Twilio emails this address when the trust product review
-  // completes (approved or rejected).
+  // Longer business name shown in richer UIs (iOS with First Orion, etc.).
+  // Maps to `branded_calls_long_display_name`.
+  longDisplayName: string;
+  // Purpose-of-call code Twilio surfaces to iOS callers as a category.
+  // Enum values TBD from Twilio's response — we pass whatever the form
+  // sends and let Twilio's evaluation tell us the valid list on rejection.
+  // Common expected values: SALES, SUPPORT, MARKETING, APPOINTMENT_REMINDER.
+  callPurposeCode: string;
+  // Free-text reason the recipient should know about the call. Shown
+  // beneath the display name on Branded Calling-enabled devices.
+  callReason: string;
+  // Name of the logo asset registered with the branded calling provider.
+  // Uploading logo files is a separate manual step in the Twilio Console
+  // for now — this string references the asset by name.
+  logoName: string;
+  // Required. Twilio emails this address when review completes.
   notificationEmail: string;
-  // Optional webhook. Twilio POSTs status transitions here when they
-  // happen. Skip unless the tenant explicitly wires it.
+  // Optional webhook for real-time status transitions.
   statusCallbackUrl?: string;
-  // The admin must certify their business will be the caller of record
-  // for numbers under this display name. Required by Twilio's form and
-  // carrier terms — refuse the submission if this isn't true.
+  // Carrier-terms certification — required before submission.
   consent: boolean;
 }
 
@@ -140,13 +159,21 @@ export async function submitOnboarding(
   if (displayName.length > CNAM_DISPLAY_NAME_MAX) {
     throw new Error(`Display name must be ${CNAM_DISPLAY_NAME_MAX} characters or fewer.`);
   }
+  const longDisplayName = (attrs.longDisplayName || "").trim();
+  if (!longDisplayName) throw new Error("Long display name is required.");
+  if (longDisplayName.length > CNAM_LONG_DISPLAY_NAME_MAX) {
+    throw new Error(`Long display name must be ${CNAM_LONG_DISPLAY_NAME_MAX} characters or fewer.`);
+  }
+  if (!attrs.callPurposeCode?.trim()) throw new Error("Call purpose is required.");
+  if (!attrs.callReason?.trim()) throw new Error("Call reason is required.");
+  if (!attrs.logoName?.trim()) throw new Error("Logo name is required.");
   const notificationEmail = (attrs.notificationEmail || "").trim();
   if (!notificationEmail) throw new Error("Notification email is required.");
   if (!/^\S+@\S+\.\S+$/.test(notificationEmail)) {
     throw new Error("Notification email is invalid.");
   }
   if (!attrs.consent) {
-    throw new Error("You must certify that the business is the caller of record to enable CNAM.");
+    throw new Error("You must certify that the business is the caller of record to enable Branded Calling.");
   }
 
   const gate = await getStatus(adminUserId);
@@ -221,15 +248,20 @@ export async function submitOnboarding(
         : {}),
     } as any);
 
-    // 4. Create End User of type cnam_information carrying the display
-    //    name — the ONLY user-supplied attribute the CNAM policy actually
-    //    consumes. use_case/notes we used to send weren't part of the
-    //    policy schema; Twilio ignored them silently.
+    // 4. Create End User of type branded_calls_information carrying the
+    //    five attributes the Branded Calling policy schema defines. The
+    //    exact enum values for call_purpose_code aren't published; if
+    //    Twilio rejects with "should be one of ...", we'll harvest them
+    //    from the evaluation and constrain the form to that list.
     const endUser = await hubClient.trusthub.v1.endUsers.create({
-      friendlyName: `CNAM End User — ${adminUserId}`,
-      type: "cnam_information",
+      friendlyName: `Branded Calling End User — ${adminUserId}`,
+      type: "branded_calls_information",
       attributes: {
-        display_name: displayName,
+        branded_calls_display_name: displayName,
+        branded_calls_long_display_name: attrs.longDisplayName.trim(),
+        branded_calls_call_purpose_code: attrs.callPurposeCode.trim(),
+        branded_calls_call_reason: attrs.callReason.trim(),
+        branded_calls_logo_name: attrs.logoName.trim(),
       },
     });
 
@@ -242,6 +274,22 @@ export async function submitOnboarding(
     await hubClient.trusthub.v1
       .trustProducts(trustProduct.sid)
       .trustProductsEntityAssignments.create({ objectSid: customerProfileSid });
+
+    // 6a. Link the admin's approved Voice Integrity trust product as the
+    //     required supporting bundle. Branded Calling's ISV policy has:
+    //       supporting_trust_products: [{ type: voice_integrity_trust_product }]
+    //     Without this reference, the evaluation fails.
+    const viIntegration = await prisma.integration.findFirst({
+      where: { provider: "TWILIO_VOICE_INTEGRITY", systemSetting: { userId: adminUserId } },
+      select: { credentials: true },
+    });
+    const viTrustProductSid = (viIntegration?.credentials as any)?.trustProductSid;
+    if (!viTrustProductSid) {
+      throw new Error("Voice Integrity trust product SID not found — Branded Calling requires an approved VI bundle to reference.");
+    }
+    await hubClient.trusthub.v1
+      .trustProducts(trustProduct.sid)
+      .trustProductsEntityAssignments.create({ objectSid: viTrustProductSid });
 
     // 7. Assign every phone number to the trust product; save assignment SIDs
     //    on caller_id so unassign works cleanly on number release.

@@ -39,24 +39,32 @@ router.get("/status", async (req: any, res) => {
 
 /**
  * POST /api/cnam/onboard
- * Runs the CNAM Trust Hub sequence.
- * Body: { displayName, notificationEmail, statusCallbackUrl?, consent }
+ * Runs the Branded Calling Trust Hub sequence.
+ * Body: {
+ *   displayName, longDisplayName, callPurposeCode, callReason, logoName,
+ *   notificationEmail, statusCallbackUrl?, consent
+ * }
  * Idempotent-ish: repeated calls upsert the integration row and resume.
+ * Service layer does the detailed field validation; the route only checks
+ * the cheap "did the client send it at all" gate + consent.
  */
 router.post("/onboard", async (req: any, res) => {
   try {
     const attrs = req.body as CnamAttributes;
-    if (!attrs?.displayName || !attrs.displayName.trim()) {
-      res.status(400).json({ message: "displayName is required." });
-      return;
-    }
-    if (!attrs?.notificationEmail || !attrs.notificationEmail.trim()) {
-      res.status(400).json({ message: "notificationEmail is required." });
-      return;
+    const required: (keyof CnamAttributes)[] = [
+      "displayName", "longDisplayName", "callPurposeCode",
+      "callReason", "logoName", "notificationEmail",
+    ];
+    for (const field of required) {
+      const v = (attrs as any)?.[field];
+      if (!v || (typeof v === "string" && !v.trim())) {
+        res.status(400).json({ message: `${field} is required.` });
+        return;
+      }
     }
     if (!attrs?.consent) {
       res.status(400).json({
-        message: "You must certify that the business is the caller of record to enable CNAM.",
+        message: "You must certify that the business is the caller of record to enable Branded Calling.",
       });
       return;
     }
