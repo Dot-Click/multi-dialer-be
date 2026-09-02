@@ -1,4 +1,6 @@
 import prisma from "../../../lib/prisma";
+import { validateData } from "../../../middlewares/vald.middleware";
+import { updateRegulatorySettingSchema } from "../../../schemas/regulatory.schema";
 
 /** Matches the error shape the company and SMTP services throw, so the
  *  controller can map it to a real status code instead of a blanket 500. */
@@ -131,13 +133,38 @@ export async function getRegulatorySettingFromDb(userId: string) {
 export async function updateRegulatorySettingInDb(userId: string, payload: any) {
     const targetUserId = await resolveSettingsOwner(userId);
 
+    // Whitelist before anything reaches Prisma. This route had no validation
+    // middleware and spread req.body straight into regulatorySetting.update —
+    // and Prisma's unchecked update input accepts `systemSettingId`, so an
+    // admin could reparent their regulatory row onto another tenant's settings
+    // and hand them their TCPA hours. Unknown keys are stripped here. (#27)
+    const parsed = validateData(updateRegulatorySettingSchema, payload ?? {}) as any;
+    if (!parsed || !("data" in parsed)) {
+        const detail = Array.isArray(parsed)
+            ? parsed.map((issue: any) => `${issue.path?.join(".") || "payload"}: ${issue.message}`).join("; ")
+            : "Invalid regulatory settings payload";
+        return throwHttp(400, detail);
+    }
+
     // companyTimeZone lives on Company, not RegulatorySetting. Split it out
     // before anything touches the regulatory row — passing it through would
     // fail on an unknown column. What gets written from here on is the
     // canonical form, never the raw submitted string.
-    const { companyTimeZone: submittedTimeZone, ...regulatoryPayload } = payload ?? {};
+    const { companyTimeZone: submittedTimeZone, ...regulatoryPayload } = parsed.data;
     const timeZoneRequested = submittedTimeZone !== undefined;
     const companyTimeZone = timeZoneRequested ? normalizeTimeZone(submittedTimeZone) : undefined;
+
+    // Named fields rather than a spread, so a column added to the model later
+    // cannot silently become writable from the request body. Prisma treats an
+    // undefined value as "leave this alone".
+    const regulatoryData = {
+        tcpaFrom: regulatoryPayload.tcpaFrom,
+        tcpaTo: regulatoryPayload.tcpaTo,
+        tcpaAutodialing: regulatoryPayload.tcpaAutodialing,
+        gdprRetentionDays: regulatoryPayload.gdprRetentionDays,
+        gdprDeleteRelated: regulatoryPayload.gdprDeleteRelated,
+    };
+    const hasRegulatoryChanges = Object.values(regulatoryData).some((value) => value !== undefined);
 
     const systemSetting = await prisma.system_Setting.findFirst({
         where: { userId: targetUserId },
@@ -179,10 +206,12 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
         // which is why saving a timezone in Compliance & DNC errored out.
     };
 
+    const auditDetails = JSON.stringify({ ...regulatoryData, companyTimeZone });
+
     if (!systemSetting.regulatorySetting) {
         return await prisma.$transaction(async (tx) => {
             const created = await tx.regulatorySetting.create({
-                data: { ...regulatoryPayload, systemSettingId: systemSetting.id },
+                data: { ...regulatoryData, systemSettingId: systemSetting.id },
             });
             await applyTimeZone(tx);
 
@@ -194,7 +223,7 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
                 data: {
                     userId,
                     action: "Updated TCPA/Regulatory Settings",
-                    details: JSON.stringify({ ...regulatoryPayload, companyTimeZone }),
+                    details: auditDetails,
                 },
             });
 
@@ -208,10 +237,10 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
     return await prisma.$transaction(async (tx) => {
         // A timezone-only save sends no regulatory fields; an empty update is
         // a pointless round trip, so skip it rather than write nothing.
-        const updated = Object.keys(regulatoryPayload).length > 0
+        const updated = hasRegulatoryChanges
             ? await tx.regulatorySetting.update({
                 where: { id: systemSetting.regulatorySetting!.id },
-                data: regulatoryPayload,
+                data: regulatoryData,
             })
             : systemSetting.regulatorySetting!;
 
@@ -221,7 +250,7 @@ export async function updateRegulatorySettingInDb(userId: string, payload: any) 
             data: {
                 userId,
                 action: "Updated TCPA/Regulatory Settings",
-                details: JSON.stringify({ ...regulatoryPayload, companyTimeZone }),
+                details: auditDetails,
             },
         });
 
