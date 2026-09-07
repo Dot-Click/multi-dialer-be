@@ -39,6 +39,39 @@ async function resolveBasePlanItem(items: any[]): Promise<any | undefined> {
   return items.find((i) => !seatItemIds.includes(i.id)) || items[0];
 }
 
+/**
+ * When this subscription's paid access ends, as a Date — what the super-admin
+ * subscription table's "End Date" column shows next to "Start Date".
+ *
+ * Precedence:
+ *   ended_at   — it is already over; Stripe stamps this when the sub actually ended
+ *   cancel_at  — scheduled to stop on a known date (i.e. cancel_at_period_end)
+ *   item.current_period_end — otherwise the end of the paid period now running,
+ *                             which is the next renewal date
+ *
+ * TWO THINGS THAT ARE EASY TO GET WRONG
+ *
+ *  1. Stripe sends timestamps in SECONDS. Multiply by 1000 exactly once.
+ *     Forgetting it renders 1970; doing it twice renders year ~58661. (The
+ *     original "End Date shows year 3026" report was never reproducible —
+ *     the column had no date at all, because nothing wrote this field.)
+ *
+ *  2. `current_period_end` is NOT a field on Subscription in API version
+ *     2026-04-22.dahlia — it moved to SubscriptionItem. Reading it off the
+ *     subscription yields undefined, silently leaving endDate null.
+ */
+function resolveSubscriptionEndDate(subscription: any, item?: any): Date | null {
+  const seconds =
+    subscription?.ended_at ??
+    subscription?.cancel_at ??
+    item?.current_period_end ??
+    null;
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  return new Date(seconds * 1000);
+}
+
 function mapStripeSubscriptionStatus(stripeStatus: string): "ACTIVE" | "CANCELLED" | "EXPIRED" | "PENDING" {
   switch (stripeStatus) {
     case "active":
@@ -288,12 +321,14 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         let billingCycle: any = "MONTHLY";
         let amountStr: string | null = null;
         let usersCount = 1;
+        let endDate: Date | null = null;
 
         if (stripeSubscriptionId) {
           const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
           const item = stripeSub.items.data[0];
           const interval = item?.price?.recurring?.interval;
           billingCycle = interval === "year" ? "YEARLY" : "MONTHLY";
+          endDate = resolveSubscriptionEndDate(stripeSub, item);
 
           const quantity = item?.quantity ?? 1;
           usersCount = quantity;
@@ -315,6 +350,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             plan: planName,
             status: "ACTIVE",
             startDate: new Date(),
+            endDate,
             stripeCustomerId,
             stripeSubscriptionId,
             billingCycle,
@@ -440,12 +476,14 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             let billingCycle: any = "MONTHLY";
             let amountStr: string | null = null;
             let usersCount = 1;
+            let endDate: Date | null = null;
 
             if (stripeSubscriptionId) {
               const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
               const item = await resolveBasePlanItem(stripeSub.items.data);
               const interval = item?.price?.recurring?.interval;
               billingCycle = interval === "year" ? "YEARLY" : "MONTHLY";
+              endDate = resolveSubscriptionEndDate(stripeSub, item);
 
               const quantity = item?.quantity ?? 1;
               usersCount = quantity;
@@ -467,6 +505,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                 plan: planName,
                 status: "ACTIVE",
                 startDate: new Date(),
+                endDate,
                 stripeCustomerId,
                 stripeSubscriptionId,
                 billingCycle,
@@ -582,6 +621,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         // and how the reporting/MRR sums it); usersCount = subscribed seat quantity.
         let amountStr: string | null = null;
         let usersCount = 1;
+        let endDate: Date | null = null;
 
         if (stripeSubscriptionId) {
           try {
@@ -589,6 +629,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             const item = stripeSub.items.data[0];
             const interval = item?.price?.recurring?.interval;
             billingCycle = interval === "year" ? "YEARLY" : "MONTHLY";
+            endDate = resolveSubscriptionEndDate(stripeSub, item);
 
             const quantity = item?.quantity ?? 1;
             usersCount = quantity;
@@ -613,6 +654,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             plan: planName,
             status: "ACTIVE",
             startDate: new Date(),
+            endDate,
             stripeCustomerId: stripeCustomerId || null,
             stripeSubscriptionId: stripeSubscriptionId || null,
             billingCycle,
@@ -819,6 +861,9 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             amount: amountStr,
             usersCount: quantity,
             billingCycle: billingCycle as any,
+            // Rolls forward on each renewal, and switches to the scheduled stop
+            // date the moment cancel_at_period_end is set.
+            endDate: resolveSubscriptionEndDate(subscription, item),
           },
         });
 
@@ -989,7 +1034,13 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         if (subRecord) {
           await prisma.userSubscription.update({
             where: { id: subRecord.id },
-            data: { status: "CANCELLED" },
+            data: {
+              status: "CANCELLED",
+              // ended_at is set by Stripe on this event, so this is the real
+              // date access stopped — not a projected renewal.
+              endDate:
+                resolveSubscriptionEndDate(subscription, subscription?.items?.data?.[0]) ?? new Date(),
+            },
           });
 
           await prisma.user.update({
