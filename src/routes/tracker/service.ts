@@ -343,7 +343,9 @@ export class TrackerService {
   }) {
     const contact = await prisma.contact.findFirst({
       where: { id: params.contactId, userId },
-      select: { id: true, source: true },
+      // name/address are denormalised onto the event so a CLOSED deal stays
+      // traceable after its contact is merged away or deleted.
+      select: { id: true, source: true, fullName: true, address: true },
     });
     if (!contact) throw new Error("Contact not found, or does not belong to you");
 
@@ -356,6 +358,8 @@ export class TrackerService {
         occurredOn: new Date(params.occurredOn),
         gci: params.gci ?? 0,
         source: params.source ?? contact.source ?? null,
+        contactName: contact.fullName,
+        contactAddress: contact.address,
         note: params.note ?? null,
       },
       update: {

@@ -688,7 +688,10 @@ export class DispositionService {
             if (stageRows.length > 0) {
                 const contact = await prisma.contact.findUnique({
                     where: { id: contactId },
-                    select: { source: true },
+                    // name/address are denormalised onto the event so a CLOSED
+                    // deal stays traceable after its contact is merged away or
+                    // deleted — see ProspectingStageEvent in schema.prisma.
+                    select: { source: true, fullName: true, address: true },
                 });
 
                 // Occurs "today" — in the TENANT'S calendar, not the server's.
@@ -722,6 +725,8 @@ export class DispositionService {
                             stage,
                             occurredOn,
                             source: contact?.source ?? null,
+                            contactName: contact?.fullName ?? null,
+                            contactAddress: contact?.address ?? null,
                         },
                     });
                 }

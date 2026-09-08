@@ -3343,6 +3343,67 @@ export async function mergeContactsInDb(
       }
     });
 
+    // 4b. Carry the losing duplicates' funnel history onto the survivor.
+    //
+    // MUST run before the delete below. The FK is ON DELETE SET NULL now, so
+    // these events would survive either way — but as orphans, detached from
+    // the contact the merge just decided is the real one. Re-pointing keeps
+    // the deal attached to a live contact.
+    //
+    // COLLISION RULE (Trello #186 — "decide and document"): a contact reaches
+    // each stage once, so when master and duplicate both reached the same
+    // stage we keep the EARLIEST occurredOn (the deal started when it started)
+    // and SUM the gci.
+    //
+    // Summing is the deliberate choice and it is worth understanding the risk:
+    // if the duplicate was the SAME deal recorded twice, summing double-counts
+    // the commission. If they were genuinely separate closings on one merged
+    // record, summing is right. There is no way to tell them apart from the
+    // data. Summing was chosen because the alternative — discarding one — is
+    // silent revenue loss, which is the exact failure this card exists to fix;
+    // an overstatement is at least visible and correctable. Change this block
+    // if the business prefers the opposite trade.
+    const duplicateEvents = await tx.prospectingStageEvent.findMany({
+      where: { contactId: { in: duplicateIds } },
+    });
+
+    if (duplicateEvents.length > 0) {
+      const masterEvents = await tx.prospectingStageEvent.findMany({
+        where: { contactId: masterId },
+      });
+      const masterByStage = new Map(masterEvents.map((e) => [e.stage, e]));
+
+      for (const dup of duplicateEvents) {
+        const survivor = masterByStage.get(dup.stage);
+
+        if (!survivor) {
+          // No collision — the master never reached this stage. Move it over.
+          await tx.prospectingStageEvent.update({
+            where: { id: dup.id },
+            data: { contactId: masterId },
+          });
+          // Keep the in-memory index honest: a second duplicate carrying the
+          // same stage must now collide with this one, not be moved again.
+          masterByStage.set(dup.stage, { ...dup, contactId: masterId });
+          continue;
+        }
+
+        const earliest =
+          dup.occurredOn < survivor.occurredOn ? dup.occurredOn : survivor.occurredOn;
+        const summedGci = survivor.gci.add(dup.gci);
+
+        const merged = await tx.prospectingStageEvent.update({
+          where: { id: survivor.id },
+          data: { occurredOn: earliest, gci: summedGci },
+        });
+        masterByStage.set(dup.stage, merged);
+
+        // The duplicate's value now lives on the survivor. Delete it outright
+        // rather than letting it orphan, or the funnel counts the stage twice.
+        await tx.prospectingStageEvent.delete({ where: { id: dup.id } });
+      }
+    }
+
     // 5. Cleanup Duplicates
     await tx.contact.deleteMany({
       where: { id: { in: duplicateIds } }

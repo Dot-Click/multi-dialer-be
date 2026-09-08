@@ -2357,8 +2357,22 @@ model ProspectingStageEvent {
   id        String  @id @default(cuid())
   userId    String
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  contactId String
-  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  // NULLABLE, and SetNull rather than Cascade, on purpose. A CLOSED event and
+  // its gci are a financial record, not an attribute of a CRM row: ordinary
+  // contact hygiene (merging a duplicate, a hard delete, purging an orphan)
+  // must never rewrite last quarter's revenue. Cascade meant it did, silently.
+  //
+  // Orphaned events still roll up correctly — the tracker queries these by
+  // userId + occurredOn and never reads contactId (see rollup.service.ts).
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  // Denormalised at write time so an orphaned event is still traceable to the
+  // deal it came from. Same reasoning as `source` below: the event has to
+  // survive its contact, and re-reading the contact later is exactly what is
+  // no longer possible once it is gone.
+  contactName    String?
+  contactAddress String?
 
   stage ProspectingStage
 
@@ -2385,6 +2399,11 @@ model ProspectingStageEvent {
 
   // A contact reaches each stage once. Re-entering (a fell-through listing
   // that relists) is a new contact record or a deliberate delete + reinsert.
+  //
+  // Still correct now contactId is nullable: Postgres treats NULLs as DISTINCT
+  // in a unique index, so any number of orphaned events may share a stage
+  // without colliding — which is what has to happen when several contacts that
+  // each closed are deleted. No partial index needed.
   @@unique([contactId, stage])
   @@index([userId, occurredOn])
   @@index([userId, stage, occurredOn])
