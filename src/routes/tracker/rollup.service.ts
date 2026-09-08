@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { SessionRow } from "../../domain/prospecting";
 import { ProspectingStage } from "@prisma/client";
-import { isoDayInTimeZone, startOfDayInTimeZone, endOfDayExclusiveInTimeZone } from "../../utils/timezone";
+import { startOfDayInTimeZone, endOfDayExclusiveInTimeZone } from "../../utils/timezone";
 
 /**
  * This file is the application-layer equivalent of BUILD_SPEC.md's
@@ -35,7 +35,7 @@ import { isoDayInTimeZone, startOfDayInTimeZone, endOfDayExclusiveInTimeZone } f
  */
 
 /** Disposition.value that means "I actually spoke to this person". */
-const CONTACTED_DISPOSITION_VALUE = "CONTACT";
+export const CONTACTED_DISPOSITION_VALUE = "CONTACT";
 
 /**
  * Contacts are counted from this INSTANT forward and no earlier.
@@ -100,29 +100,6 @@ const STAGE_FIELD: Record<ProspectingStage, keyof SessionRow> = {
 /** Merge key: a day bucket is unique per (day, source). Null source is its own bucket. */
 function bucketKey(loggedOn: string, source: string | null): string {
   return `${loggedOn}::${source ?? ""}`;
-}
-
-/**
- * How many seconds a dialer session actually lasted, or null if we genuinely
- * cannot tell. See the fallback ladder in getDailyRows.
- *
- * duration === 0 is a real answer (started and stopped at once), not a missing
- * one, so only null/undefined falls through.
- */
-function resolveSessionSeconds(s: {
-  startTime: Date;
-  endTime: Date | null;
-  duration: number | null;
-  calls: Array<{ endTime: Date | null }>;
-}): number | null {
-  if (s.duration != null && Number.isFinite(s.duration)) {
-    return Math.max(0, s.duration);
-  }
-
-  const end = s.endTime ?? s.calls[0]?.endTime ?? null;
-  if (!end) return null;
-
-  return Math.max(0, (end.getTime() - s.startTime.getTime()) / 1000);
 }
 
 export interface DailyRowsResult {
@@ -192,33 +169,57 @@ export async function getDailyRows(
   //      discarding a real three-hour session.
   // A session with none of the three is EXCLUDED rather than counted as zero,
   // and the count is returned so the UI can say so.
-  const agentSessions = await prisma.agentSession.findMany({
-    where: { userId, startTime: instantRange },
-    select: {
-      startTime: true,
-      endTime: true,
-      duration: true,
-      listId: true,
-      // Newest call that actually finished — the floor for a crashed session.
-      calls: {
-        where: { endTime: { not: null } },
-        select: { endTime: true },
-        orderBy: { endTime: "desc" },
-        take: 1,
-      },
-    },
-  });
+  // Bucketed and summed in Postgres: one row per (day, source) crosses the
+  // wire instead of one row per session. The fallback ladder above is the
+  // CASE below, in the same order.
+  //
+  // AT TIME ZONE twice is not a typo — same reason as the contacts query
+  // further down: Prisma maps DateTime to timestamp WITHOUT time zone, so the
+  // first call declares the stored value UTC and the second converts it to the
+  // tenant's wall clock.
+  const sessionDays = await prisma.$queryRaw<
+    Array<{ day: string; source: string | null; seconds: number | null; excluded: number }>
+  >`
+    WITH s AS (
+      SELECT
+        to_char((a."startTime" AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone})::date, 'YYYY-MM-DD') AS day,
+        a."listId" AS source,
+        CASE
+          WHEN a."duration" IS NOT NULL
+            THEN GREATEST(a."duration"::numeric, 0)
+          WHEN a."endTime" IS NOT NULL
+            THEN GREATEST(EXTRACT(EPOCH FROM (a."endTime" - a."startTime")), 0)
+          WHEN lc.max_end IS NOT NULL
+            THEN GREATEST(EXTRACT(EPOCH FROM (lc.max_end - a."startTime")), 0)
+          ELSE NULL
+        END AS seconds
+      FROM agent_sessions a
+      LEFT JOIN LATERAL (
+        SELECT MAX(c."endTime") AS max_end
+        FROM call_records c
+        WHERE c."sessionId" = a.id AND c."endTime" IS NOT NULL
+      ) lc ON TRUE
+      WHERE a."userId" = ${userId}
+        AND a."startTime" >= ${instantRange.gte}
+        AND a."startTime" < ${instantRange.lt}
+    )
+    SELECT day,
+           source,
+           SUM(seconds)::float8                              AS seconds,
+           COUNT(*) FILTER (WHERE seconds IS NULL)::int      AS excluded
+    FROM s
+    GROUP BY day, source`;
 
   let excludedSessions = 0;
 
-  for (const s of agentSessions) {
-    const seconds = resolveSessionSeconds(s);
-    if (seconds === null) {
-      excludedSessions += 1;
-      continue;
-    }
-    const row = getOrCreate(isoDayInTimeZone(s.startTime, timeZone), s.listId ?? null);
-    row.hours += seconds / 3600;
+  for (const r of sessionDays) {
+    excludedSessions += Number(r.excluded);
+    // seconds is NULL only when every session in this bucket was unusable.
+    // Skip rather than creating a 0-hour bucket — a day that exists solely
+    // because of excluded sessions was never a day the agent logged.
+    if (r.seconds === null) continue;
+    const row = getOrCreate(r.day, r.source ?? null);
+    row.hours += Number(r.seconds) / 3600;
   }
 
   // ---- Contacts: first press of Contacted, per contact, once ever -----
@@ -279,14 +280,27 @@ export async function getDailyRows(
 
   // ---- Funnel stages + GCI, from stage events -------------------------
   // occurredOn is a DATE — already the calendar day the stage was reached.
-  const stageEvents = await prisma.prospectingStageEvent.findMany({
-    where: { userId, occurredOn: dateRange },
-    select: { occurredOn: true, source: true, stage: true, gci: true },
-  });
-  for (const ev of stageEvents) {
-    const row = getOrCreate(toIsoDayUTC(ev.occurredOn), ev.source ?? null);
+  // Grouped in Postgres — one row per (day, source, stage) rather than one per
+  // event. occurredOn is a DATE, so to_char gives the day directly; no zone
+  // conversion, for the reason in toIsoDayUTC above.
+  const stageDays = await prisma.$queryRaw<
+    Array<{ day: string; source: string | null; stage: ProspectingStage; n: number; gci: string }>
+  >`
+    SELECT to_char("occurredOn", 'YYYY-MM-DD')  AS day,
+           "source"                             AS source,
+           "stage"::text                        AS stage,
+           COUNT(*)::int                        AS n,
+           COALESCE(SUM("gci"), 0)::text        AS gci
+    FROM prospecting_stage_events
+    WHERE "userId" = ${userId}
+      AND "occurredOn" >= ${dateRange.gte}
+      AND "occurredOn" < ${dateRange.lt}
+    GROUP BY 1, 2, 3`;
+
+  for (const ev of stageDays) {
+    const row = getOrCreate(ev.day, ev.source ?? null);
     const field = STAGE_FIELD[ev.stage];
-    (row[field] as number) += 1;
+    (row[field] as number) += Number(ev.n);
     if (ev.stage === "CLOSED") {
       row.gci += Number(ev.gci);
     }
@@ -338,4 +352,117 @@ export async function getDailyRows(
   }
 
   return { rows: [...merged.values()], excludedSessions };
+}
+
+
+/** One agent's leaderboard line. Totals only — no day bucketing needed. */
+export interface LeaderboardTotals {
+  userId: string;
+  contacts: number;
+  leads: number;
+  closed: number;
+  gci: number;
+}
+
+/**
+ * Leaderboard totals for MANY users in a fixed number of queries.
+ *
+ * getLeaderboard used to call getDailyRows once per opted-in agent inside a
+ * Promise.all — four queries and a full day-row set per person, so a
+ * twenty-agent office was 80 queries with twenty row sets live in memory at
+ * once. This is three grouped queries regardless of headcount.
+ *
+ * Deliberately does NOT reuse getDailyRows. The leaderboard needs four totals
+ * (contacts, leads, closed, gci) — not hours, and not per-day rows — so the
+ * whole agent_sessions leg and the day bucketing are dead weight here. Keeping
+ * the two paths separate also means this cannot regress the dashboard.
+ *
+ * Semantics are the same rules getDailyRows applies, expressed in SQL:
+ *   - contacts: FIRST application of the CONTACT disposition per contact, once
+ *     ever, floored at CONTACTS_COUNTED_FROM (see that constant for why).
+ *   - leads/closed/gci: ProspectingStageEvent rows in range.
+ *   - manual entries are ADDED on top, never replacing.
+ */
+export async function getLeaderboardTotals(
+  userIds: string[],
+  fromIso: string,
+  toIso: string,
+  timeZone: string,
+): Promise<Map<string, LeaderboardTotals>> {
+  const out = new Map<string, LeaderboardTotals>();
+  if (userIds.length === 0) return out;
+
+  const bump = (userId: string): LeaderboardTotals => {
+    let t = out.get(userId);
+    if (!t) {
+      t = { userId, contacts: 0, leads: 0, closed: 0, gci: 0 };
+      out.set(userId, t);
+    }
+    return t;
+  };
+
+  const instantGte = startOfDayInTimeZone(fromIso, timeZone);
+  const instantLt = endOfDayExclusiveInTimeZone(toIso, timeZone);
+  const dateGte = new Date(`${fromIso}T00:00:00.000Z`);
+  const dateLt = new Date(new Date(`${toIso}T00:00:00.000Z`).getTime() + 86_400_000);
+  const contactsFloor = new Date(CONTACTS_COUNTED_FROM);
+
+  // 1. Contacts — distinct contacts whose FIRST CONTACT press falls in range.
+  if (instantLt > contactsFloor) {
+    const contactRows = await prisma.$queryRaw<Array<{ userId: string; contacts: bigint }>>`
+      SELECT f."appliedById" AS "userId", COUNT(*)::bigint AS contacts
+      FROM (
+        SELECT l."appliedById", l."contactId", MIN(l."createdAt") AS first_at
+        FROM contact_disposition_logs l
+        JOIN dispositions d ON d.id = l."dispositionId"
+        WHERE l."appliedById" = ANY(${userIds})
+          AND d.value = ${CONTACTED_DISPOSITION_VALUE}
+          AND l."createdAt" >= ${contactsFloor}
+        GROUP BY l."appliedById", l."contactId"
+      ) f
+      WHERE f.first_at >= ${instantGte} AND f.first_at < ${instantLt}
+      GROUP BY 1`;
+    for (const r of contactRows) bump(r.userId).contacts = Number(r.contacts);
+  }
+
+  // 2. Funnel stages + GCI.
+  const stageRows = await prisma.$queryRaw<
+    Array<{ userId: string; stage: string; n: bigint; gci: string }>
+  >`
+    SELECT "userId", stage::text AS stage, COUNT(*)::bigint AS n, COALESCE(SUM(gci), 0)::text AS gci
+    FROM prospecting_stage_events
+    WHERE "userId" = ANY(${userIds})
+      AND "occurredOn" >= ${dateGte} AND "occurredOn" < ${dateLt}
+    GROUP BY 1, 2`;
+  for (const r of stageRows) {
+    const t = bump(r.userId);
+    if (r.stage === "LEAD") t.leads += Number(r.n);
+    if (r.stage === "CLOSED") {
+      t.closed += Number(r.n);
+      t.gci += Number(r.gci);
+    }
+  }
+
+  // 3. Manual entries, ADDED on top.
+  const manualRows = await prisma.$queryRaw<
+    Array<{ userId: string; contacts: bigint; leads: bigint; closed: bigint; gci: string }>
+  >`
+    SELECT "userId",
+           COALESCE(SUM(contacts), 0)::bigint AS contacts,
+           COALESCE(SUM(leads), 0)::bigint    AS leads,
+           COALESCE(SUM(closed), 0)::bigint   AS closed,
+           COALESCE(SUM(gci), 0)::text        AS gci
+    FROM prospecting_sessions
+    WHERE "userId" = ANY(${userIds})
+      AND "loggedOn" >= ${dateGte} AND "loggedOn" < ${dateLt}
+    GROUP BY 1`;
+  for (const r of manualRows) {
+    const t = bump(r.userId);
+    t.contacts += Number(r.contacts);
+    t.leads += Number(r.leads);
+    t.closed += Number(r.closed);
+    t.gci += Number(r.gci);
+  }
+
+  return out;
 }

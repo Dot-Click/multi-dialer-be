@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { Prisma, ProspectingStage } from "@prisma/client";
 import { resolveTenantUserIds, resolveTenantTimeZone } from "../../utils/tenant";
 import { todayIsoInTimeZone } from "../../utils/timezone";
-import { getDailyRows } from "./rollup.service";
+import { getDailyRows, getLeaderboardTotals } from "./rollup.service";
 import {
   aggregateSessions,
   annualTargets,
@@ -528,20 +528,30 @@ export class TrackerService {
       select: { id: true, fullName: true, email: true },
     });
 
-    const rows = await Promise.all(
-      optedIn.map(async (u) => {
-        const { rows: dailyRows } = await getDailyRows(u.id, from, to, timeZone);
-        const totals = aggregateSessions(dailyRows);
-        return {
-          userId: u.id,
-          name: u.fullName ?? u.email,
-          contacts: totals.contacts,
-          leads: totals.leads,
-          closed: totals.closed,
-          gci: totals.gci,
-        };
-      }),
+    // One grouped pass over everyone, not getDailyRows per agent. The old
+    // shape was four queries and a full day-row set per opted-in user inside
+    // Promise.all — a twenty-agent office meant 80 queries and 20 row sets
+    // held in memory at once, all to produce four numbers each.
+    const totalsByUser = await getLeaderboardTotals(
+      optedIn.map((u) => u.id),
+      from,
+      to,
+      timeZone,
     );
+
+    const rows = optedIn.map((u) => {
+      const t = totalsByUser.get(u.id);
+      return {
+        userId: u.id,
+        name: u.fullName ?? u.email,
+        // An agent with no activity still appears, at zero — dropping them
+        // would silently shorten the board.
+        contacts: t?.contacts ?? 0,
+        leads: t?.leads ?? 0,
+        closed: t?.closed ?? 0,
+        gci: t?.gci ?? 0,
+      };
+    });
 
     rows.sort((a, b) => b.gci - a.gci);
     return { range: { from, to, timeZone }, leaderboard: rows };

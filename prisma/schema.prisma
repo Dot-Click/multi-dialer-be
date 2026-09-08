@@ -1680,6 +1680,9 @@ model AgentSession {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
+  // The tracker's hours rollup filters exactly on (userId, startTime range)
+  // on every dashboard load. Table had no index at all beyond the pkey.
+  @@index([userId, startTime])
   @@map("agent_sessions")
 }
 
@@ -1716,6 +1719,12 @@ model CallRecord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // 26k+ rows in production with only the pkey and the callSid unique index.
+  // (userId, startTime) covers the AI Sidekick analytics scans and the
+  // best-time-to-call hourly aggregation; sessionId covers the per-session
+  // "last finished call" lookup the hours fallback ladder depends on.
+  @@index([userId, startTime])
+  @@index([sessionId])
   @@map("call_records")
 }
 
@@ -2193,6 +2202,11 @@ model ContactDispositionLog {
 
   createdAt DateTime @default(now())
 
+  // The tracker's contacts query filters on appliedById + createdAt and joins
+  // dispositions on dispositionId, then groups by contactId — on every
+  // dashboard load, against a table that had no index beyond the pkey.
+  @@index([appliedById, createdAt])
+  @@index([dispositionId])
   @@map("contact_disposition_logs")
 }
 
