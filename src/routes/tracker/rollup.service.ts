@@ -103,6 +103,36 @@ function bucketKey(loggedOn: string, source: string | null): string {
 }
 
 /**
+ * How many seconds a dialer session actually lasted, or null if we genuinely
+ * cannot tell. See the fallback ladder in getDailyRows.
+ *
+ * duration === 0 is a real answer (started and stopped at once), not a missing
+ * one, so only null/undefined falls through.
+ */
+function resolveSessionSeconds(s: {
+  startTime: Date;
+  endTime: Date | null;
+  duration: number | null;
+  calls: Array<{ endTime: Date | null }>;
+}): number | null {
+  if (s.duration != null && Number.isFinite(s.duration)) {
+    return Math.max(0, s.duration);
+  }
+
+  const end = s.endTime ?? s.calls[0]?.endTime ?? null;
+  if (!end) return null;
+
+  return Math.max(0, (end.getTime() - s.startTime.getTime()) / 1000);
+}
+
+export interface DailyRowsResult {
+  rows: SessionRow[];
+  /** Sessions with no duration, no endTime and no finished calls — counted
+   *  nowhere, so the UI can disclose them instead of quietly losing them. */
+  excludedSessions: number;
+}
+
+/**
  * Builds the merged daily SessionRow[] for one user over an inclusive date
  * range — dialer + CRM derived rows, PLUS any manual entries the agent logged
  * for those (day, source) buckets. Feed the result into the domain layer's
@@ -117,7 +147,7 @@ export async function getDailyRows(
   fromIso: string,
   toIso: string,
   timeZone: string,
-): Promise<SessionRow[]> {
+): Promise<DailyRowsResult> {
   // TIMESTAMP columns: the UTC instants at which the local day starts and the
   // local day after the range ends starts.
   const instantRange = {
@@ -146,13 +176,49 @@ export async function getDailyRows(
 
   // ---- Hours, from dialer sessions -----------------------------------
   // startTime is a TIMESTAMP, so the day it belongs to depends on the zone.
+  //
+  // duration is only written by endSession (calling/analytics.controller.ts),
+  // and it writes endTime and duration together — so a session whose dialer
+  // crashed, or whose tab was closed, has BOTH null and never gets either.
+  // Counting those as 0 hours understated hours worked and silently inflated
+  // every per-hour metric derived from it (contacts/hour, GCI/hour, leads/hour,
+  // avg hours per day). Zero is the one answer that is definitely wrong.
+  //
+  // So fall back, in order of how much we trust it:
+  //   1. duration            — the recorded length
+  //   2. endTime - startTime — a clean end that somehow skipped duration
+  //   3. last call's endTime - startTime — the session crashed, but we know it
+  //      was live at least until its final call connected. A lower bound beats
+  //      discarding a real three-hour session.
+  // A session with none of the three is EXCLUDED rather than counted as zero,
+  // and the count is returned so the UI can say so.
   const agentSessions = await prisma.agentSession.findMany({
     where: { userId, startTime: instantRange },
-    select: { startTime: true, duration: true, listId: true },
+    select: {
+      startTime: true,
+      endTime: true,
+      duration: true,
+      listId: true,
+      // Newest call that actually finished — the floor for a crashed session.
+      calls: {
+        where: { endTime: { not: null } },
+        select: { endTime: true },
+        orderBy: { endTime: "desc" },
+        take: 1,
+      },
+    },
   });
+
+  let excludedSessions = 0;
+
   for (const s of agentSessions) {
+    const seconds = resolveSessionSeconds(s);
+    if (seconds === null) {
+      excludedSessions += 1;
+      continue;
+    }
     const row = getOrCreate(isoDayInTimeZone(s.startTime, timeZone), s.listId ?? null);
-    row.hours += (s.duration ?? 0) / 3600;
+    row.hours += seconds / 3600;
   }
 
   // ---- Contacts: first press of Contacted, per contact, once ever -----
@@ -271,5 +337,5 @@ export async function getDailyRows(
     });
   }
 
-  return [...merged.values()];
+  return { rows: [...merged.values()], excludedSessions };
 }

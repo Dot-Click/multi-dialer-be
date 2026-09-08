@@ -219,7 +219,7 @@ export class TrackerService {
     // string rather than re-parsing it into an instant and asking UTC again.
     const year = Number(to.slice(0, 4));
 
-    const [rows, { inputs: plan }] = await Promise.all([
+    const [{ rows, excludedSessions }, { inputs: plan }] = await Promise.all([
       getDailyRows(userId, from, to, timeZone),
       this.getPlan(userId, year),
     ]);
@@ -253,6 +253,12 @@ export class TrackerService {
       attainment,
       streak,
       coverage,
+      // Dialer sessions in this window whose length could not be established
+      // at all (no duration, no endTime, no finished call). They are counted
+      // nowhere rather than as zero hours — surfaced so the UI can say
+      // "N sessions excluded — no recorded end time" instead of quietly
+      // understating hours. See getDailyRows.
+      excludedSessions,
       pace: {
         gciToDate: totals.gci,
         gciTarget: targets.gciNeeded,
@@ -272,7 +278,7 @@ export class TrackerService {
 
   static async getFunnel(userId: string, from: string, to: string, source?: string) {
     const timeZone = await resolveTenantTimeZone(userId);
-    const rows = await getDailyRows(userId, from, to, timeZone);
+    const { rows } = await getDailyRows(userId, from, to, timeZone);
     const filtered = source ? rows.filter((r) => r.source === source) : rows;
     const totals = aggregateSessions(filtered);
     const kpis = computeActualKpis(totals);
@@ -305,7 +311,7 @@ export class TrackerService {
 
   static async getChannels(userId: string, from: string, to: string) {
     const timeZone = await resolveTenantTimeZone(userId);
-    const rows = await getDailyRows(userId, from, to, timeZone);
+    const { rows } = await getDailyRows(userId, from, to, timeZone);
     const bySource = new Map<string, SessionRow[]>();
     for (const r of rows) {
       const key = r.source ?? "Untagged";
@@ -520,7 +526,7 @@ export class TrackerService {
 
     const rows = await Promise.all(
       optedIn.map(async (u) => {
-        const dailyRows = await getDailyRows(u.id, from, to, timeZone);
+        const { rows: dailyRows } = await getDailyRows(u.id, from, to, timeZone);
         const totals = aggregateSessions(dailyRows);
         return {
           userId: u.id,
