@@ -18,6 +18,37 @@ function currentYear(): number {
   return new Date().getUTCFullYear();
 }
 
+/**
+ * A calendar date the rest of the tracker can rely on.
+ *
+ * The endpoints below used to check only that `from`/`to` were PRESENT. A
+ * value like "garbage" passed that check and became an Invalid Date, which
+ * then reached Prisma as a malformed range — so the caller got a database
+ * error instead of being told which parameter was wrong.
+ *
+ * Both halves matter. The regex alone would accept "2026-13-45"; Date.parse
+ * alone would accept "March 3 2026", "2026", and other shapes whose meaning
+ * varies by engine. Requiring the ISO shape AND round-tripping it back to the
+ * same string is what rejects both.
+ */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isValidIsoDate(value: string): boolean {
+  if (!ISO_DATE.test(value)) return false;
+  const d = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Validates an optional date query param. Returns an error STRING to send, or
+ * null when the value is absent or valid — absent is the caller's business,
+ * since some endpoints require these and some default them.
+ */
+function isoDateError(name: string, value: string | undefined): string | null {
+  if (value === undefined) return null;
+  return isValidIsoDate(value) ? null : `${name} must be a valid date in YYYY-MM-DD format`;
+}
+
 export const getPlan: RequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
@@ -80,6 +111,11 @@ export const getFunnel: RequestHandler = async (req, res) => {
       errorResponse(res, "from and to (ISO dates) are required", 400);
       return;
     }
+    const rangeError = isoDateError("from", from) ?? isoDateError("to", to);
+    if (rangeError) {
+      errorResponse(res, rangeError, 400);
+      return;
+    }
     const data = await TrackerService.getFunnel(userId, from, to, source);
     successResponse(res, 200, "Funnel fetched", data);
   } catch (error: any) {
@@ -93,6 +129,11 @@ export const getChannels: RequestHandler = async (req, res) => {
     const { from, to } = req.query as { from?: string; to?: string };
     if (!from || !to) {
       errorResponse(res, "from and to (ISO dates) are required", 400);
+      return;
+    }
+    const rangeError = isoDateError("from", from) ?? isoDateError("to", to);
+    if (rangeError) {
+      errorResponse(res, rangeError, 400);
       return;
     }
     const data = await TrackerService.getChannels(userId, from, to);
@@ -135,6 +176,13 @@ export const listSessions: RequestHandler = async (req, res) => {
   try {
     const userId = req.user!.id;
     const { from, to } = req.query as { from?: string; to?: string };
+    // Both optional here — the service defaults the window when neither is
+    // given — so validate only what was actually supplied.
+    const rangeError = isoDateError("from", from) ?? isoDateError("to", to);
+    if (rangeError) {
+      errorResponse(res, rangeError, 400);
+      return;
+    }
     const data = await TrackerService.listSessions(userId, from, to);
     successResponse(res, 200, "Sessions fetched", data);
   } catch (error: any) {
@@ -196,6 +244,11 @@ export const getLeaderboard: RequestHandler = async (req, res) => {
     const { from, to } = req.query as { from?: string; to?: string };
     if (!from || !to) {
       errorResponse(res, "from and to (ISO dates) are required", 400);
+      return;
+    }
+    const rangeError = isoDateError("from", from) ?? isoDateError("to", to);
+    if (rangeError) {
+      errorResponse(res, rangeError, 400);
       return;
     }
     const data = await TrackerService.getLeaderboard(userId, from, to);

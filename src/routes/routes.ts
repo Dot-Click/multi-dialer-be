@@ -95,6 +95,13 @@ router.use("/contact-list", protectRoute, contactListRoutes)
 router.use("/user", protectRoute, userRoutes)
 router.use("/company", protectRoute, checkRole(["ADMIN", "OWNER"]), companyRoutes)
 router.use("/reports", protectRoute, reportRoutes)
+// SUPER_ADMIN is deliberately absent, and adding it would be a mistake: it is
+// not a member of the UserRole enum (AGENT | ADMIN | OWNER), so no account can
+// ever hold it. The few checkRole(["OWNER","SUPER_ADMIN"]) mounts below match a
+// value that never occurs. This is the standard tenant-feature role set, shared
+// with the twelve system-settings routes above. Worse, resolveTenantUserIds
+// only special-cases OWNER for platform-wide scope, so a SUPER_ADMIN reaching
+// the tracker would silently resolve to the wrong tenant.
 router.use("/tracker", protectRoute, checkRole(["ADMIN", "OWNER", "AGENT"]), trackerRoutes)
 
 

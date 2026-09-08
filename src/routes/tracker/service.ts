@@ -48,6 +48,12 @@ const DEFAULT_PLAN_INPUTS: BusinessPlanInputs = {
 
 const DAY_MS = 86_400_000;
 
+/** How far back an unbounded activity-log request reaches. */
+const DEFAULT_SESSION_WINDOW_DAYS = 90;
+
+/** Hard ceiling on one activity-log page, regardless of the window asked for. */
+const SESSION_PAGE_LIMIT = 500;
+
 function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -380,21 +386,66 @@ export class TrackerService {
 
   // ── Manual entries (activity the dialer and CRM cannot see) ────────────
 
+  /**
+   * Manual activity entries, newest first.
+   *
+   * With no bounds this used to return EVERY entry the user had ever logged,
+   * unfiltered and unlimited, straight into one table in the UI. Harmless at a
+   * handful of rows and steadily worse forever after, since a manual entry is
+   * one row per day per channel and nothing ever prunes them.
+   *
+   * So an unbounded call now means "the recent window", not "everything". The
+   * applied window is returned rather than assumed, so the UI can say which
+   * period it is showing instead of implying it is the full history — a
+   * truncated list that looks complete is worse than a short one that says so.
+   *
+   * An explicit from/to is still honoured exactly as given; `take` remains as a
+   * backstop for a caller that asks for a decade.
+   */
   static async listSessions(userId: string, from?: string, to?: string) {
-    return prisma.prospectingSession.findMany({
+    const timeZone = await resolveTenantTimeZone(userId);
+    const defaulted = !from && !to;
+
+    // Anchored to the tenant's today, like every other date boundary here —
+    // deriving it from the server's UTC date would move the window's edge for
+    // anyone west of Greenwich.
+    const todayIso = todayIsoInTimeZone(timeZone);
+    const effectiveTo = to ?? todayIso;
+    const effectiveFrom =
+      from ??
+      (defaulted
+        ? iso(new Date(new Date(`${todayIso}T00:00:00.000Z`).getTime() - DEFAULT_SESSION_WINDOW_DAYS * DAY_MS))
+        : undefined);
+
+    const sessions = await prisma.prospectingSession.findMany({
       where: {
         userId,
-        ...(from || to
+        ...(effectiveFrom || to
           ? {
               loggedOn: {
-                ...(from ? { gte: new Date(from) } : {}),
+                ...(effectiveFrom ? { gte: new Date(effectiveFrom) } : {}),
                 ...(to ? { lte: new Date(to) } : {}),
               },
             }
           : {}),
       },
       orderBy: { loggedOn: "desc" },
+      take: SESSION_PAGE_LIMIT,
     });
+
+    return {
+      sessions,
+      window: {
+        from: effectiveFrom ?? null,
+        to: effectiveTo,
+        // True when the caller gave no bounds and got the default window —
+        // the UI's cue to label it rather than call it "all activity".
+        defaulted,
+        limit: SESSION_PAGE_LIMIT,
+        // True when the limit itself cut the list short.
+        truncated: sessions.length === SESSION_PAGE_LIMIT,
+      },
+    };
   }
 
   /**
