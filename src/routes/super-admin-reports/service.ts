@@ -167,9 +167,10 @@ export async function getAlertsInDb() {
 }
 
 export async function getUserSubscriptionDetailsInDb() {
-  // Primary source: Billing (most recent row per user) for plan name and date.
-  // Subscription lifecycle status comes from UserSubscription (ACTIVE/CANCELLED/EXPIRED).
-  // Users with no billing row yet are still included via the User query.
+  // Plan and status both come from UserSubscription; Billing is only a
+  // fallback plan name for legacy accounts that have invoices but no
+  // subscription row. Users with neither are still listed.
+  //
   // No `take` — the Users Overview widget lists every account, newest first.
   // It scrolls inside a fixed-height card, so the row count is a data question
   // rather than a layout one. OWNER is still excluded: that's platform staff,
@@ -183,7 +184,14 @@ export async function getUserSubscriptionDetailsInDb() {
     where: { role: { not: "OWNER" } },
     orderBy: { createdAt: "desc" },
     include: {
+      // Lead Store purchases write their SERVICE name into Billing.planName
+      // (e.g. "FRBO"), so an unfiltered newest-billing-row lookup reports a
+      // lead product as the account's subscription plan. Excluded via the
+      // `leadStore` back-relation, which is the only reliable discriminator:
+      // those rows carry no stripeSubscriptionId, so the addon-id filter used
+      // elsewhere waves them through on its `stripeSubscriptionId: null` branch.
       billings: {
+        where: { leadStore: { is: null } },
         orderBy: { date: "desc" },
         take: 1,
         select: { planName: true, plan: true, date: true },
@@ -200,7 +208,10 @@ export async function getUserSubscriptionDetailsInDb() {
     const billing = u.billings[0];
     const sub = u.userSubscriptions[0];
     return {
-      plan: billing?.planName || billing?.plan || sub?.plan || "No Plan",
+      // The account's plan is its SUBSCRIPTION's plan. Billing rows describe
+      // individual invoices, so they are a fallback only — for legacy accounts
+      // that have billing history but no subscription row.
+      plan: sub?.plan || billing?.planName || billing?.plan || "No Plan",
       // The comment above always claimed this came from UserSubscription, but
       // it returned `u.status` — the manual moderation field — so the Home
       // table showed ACTIVE for every account and its Active/Inactive tabs
@@ -210,7 +221,10 @@ export async function getUserSubscriptionDetailsInDb() {
         trialStatus: u.trialStatus,
         subscription: sub ? { status: sub.status, endDate: sub.endDate } : null,
       }),
-      createdAt: billing?.date || sub?.createdAt || u.createdAt,
+      // "Created On" in a list of USERS is when the account was created. This
+      // used to prefer the newest billing row's date, so buying anything a day
+      // after signup made the column report the purchase date instead.
+      createdAt: u.createdAt,
       user: {
         fullName: u.fullName,
         email: u.email,
@@ -277,7 +291,13 @@ export async function getRevenueGrowthInDb() {
 }
 
 // Collected revenue = money actually captured from PAID invoices in the Billing
-// ledger. amount is stored as whole dollars — no unit conversion needed.
+// ledger.
+//
+// Billing.amount is in CENTS (Stripe minor units) — it is written from
+// invoice.amount_paid and from LeadStoreService.price, both of which are cents.
+// A previous version of this comment claimed whole dollars, which is how two
+// front-end charts ended up plotting cents as dollars. Values are returned in
+// cents and formatted at the edge; see fmtUSD in SuperAdminBillingWidgets.
 export async function getCollectedRevenueGrowthInDb() {
   const now = new Date();
   const results = [];
@@ -325,7 +345,7 @@ export async function getBillingReportDetailInDb() {
           userSubscriptions: {
             orderBy: { createdAt: "desc" },
             take: 1,
-            select: { status: true, endDate: true },
+            select: { status: true, endDate: true, plan: true },
           },
         },
       },
@@ -355,7 +375,10 @@ export async function getBillingReportDetailInDb() {
       grouped.set(uid, {
         userName: row.user.fullName || "N/A",
         email: row.user.email,
-        plan: row.planName || row.plan || "No Plan",
+        // Subscription plan first. row.planName is the invoice's product name,
+        // which for a Lead Store purchase is the lead SERVICE (e.g. "FRBO") —
+        // reporting that as the customer's plan is what this column used to do.
+        plan: row.user.userSubscriptions[0]?.plan || row.planName || row.plan || "No Plan",
         status: normalizeSubStatus(row.user.userSubscriptions[0]?.status || "PENDING"),
         accountStatus: resolveAccountStatus({
           status: row.user.status,
