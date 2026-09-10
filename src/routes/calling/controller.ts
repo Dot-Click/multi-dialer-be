@@ -10,6 +10,8 @@ import twilio from "twilio";
 import { insertCallerIdInDb, resolveAdminId } from "../systemSettings/callerId/service";
 import { getTwilioClient, getUserTwilioSubAccountSid, transferNumberToSubAccount, releaseNumber } from "../../services/twilio-account.service";
 import { resolveBillableCustomer, addNumberToAddonSubscription, removeAddonSubscriptionItem, getMonthlyPriceCentsForCountry } from "../../services/phoneNumberBilling.service";
+import { isUserOnTrial } from "../../utils/status";
+import { TRIAL_NUMBER_CAP } from "../../constants/trial";
 import { getUserPlanLimits } from "../../services/planLimits.service";
 import { chunkArray } from "@/utils/helpers";
 
@@ -1273,12 +1275,17 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     const effectiveUserId = targetUserId || userId;
     const limits = await getUserPlanLimits(effectiveUserId);
 
+    // Mirror the trial cap the purchase guards enforce, so the UI never
+    // advertises "Free (included in plan)" for a number the server is about
+    // to refuse. During a trial the cap replaces the plan's included count
+    // entirely — under the cap it's free, at the cap nothing can be bought.
     let isWithinIncludedCount = true;
-    if (limits.includedNumbers != null) {
-      const systemSettingIds = (
-        await prisma.system_Setting.findMany({ where: { userId: effectiveUserId }, select: { id: true } })
-      ).map((s) => s.id);
-      const currentCount = await prisma.callerId.count({ where: { systemSettingId: { in: systemSettingIds } } });
+    let trialCapReached = false;
+    if (await isUserOnTrial(effectiveUserId)) {
+      trialCapReached = (await countCallerIdsForUser(effectiveUserId)) >= TRIAL_NUMBER_CAP;
+      isWithinIncludedCount = !trialCapReached;
+    } else if (limits.includedNumbers != null) {
+      const currentCount = await countCallerIdsForUser(effectiveUserId);
       isWithinIncludedCount = currentCount < limits.includedNumbers;
     }
 
@@ -1298,7 +1305,10 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     const data = {
       numbers: enrichedNumbers,
       pricing,
-      billing: { isWithinIncludedCount, effectivePriceCents, effectiveCurrency },
+      // trialCapReached tells the client to offer an upgrade rather than the
+      // pay-for-an-extra-number dialog — during a trial the extra can't be
+      // bought at any price, so effectivePriceCents is not meaningful here.
+      billing: { isWithinIncludedCount, effectivePriceCents, effectiveCurrency, trialCapReached, trialNumberCap: TRIAL_NUMBER_CAP },
     }
 
     console.log("numbers", data);
@@ -1310,6 +1320,38 @@ export const getAvailableUsNumbers: RequestHandler = async (req, res) => {
     errorResponse(res, { message: error.message });
     return;
   }
+}
+
+/**
+ * How many caller-ids an account currently holds, across every System_Setting
+ * row it owns. Shared by the pricing preview and both purchase guards so they
+ * can never disagree about whether a cap has been reached.
+ */
+async function countCallerIdsForUser(userId: string): Promise<number> {
+  const systemSettingIds = (
+    await prisma.system_Setting.findMany({ where: { userId }, select: { id: true } })
+  ).map((s) => s.id);
+  return prisma.callerId.count({ where: { systemSettingId: { in: systemSettingIds } } });
+}
+
+/**
+ * Trial accounts are hard-capped at TRIAL_NUMBER_CAP caller-ids regardless of
+ * what their plan includes. Returns the 402 body to send, or null when the
+ * purchase may proceed.
+ *
+ * Deliberately checked BEFORE the `limits.includedNumbers != null` block:
+ * getUserPlanLimits falls back to unlimited defaults (includedNumbers: null)
+ * whenever no PlanLimit row matches, which would skip that block entirely and
+ * let a trial account buy without limit.
+ */
+async function trialNumberCapBlock(userId: string): Promise<{ requiresUpgrade: true; message: string; trialNumberCap: number } | null> {
+  if (!(await isUserOnTrial(userId))) return null;
+  if ((await countCallerIdsForUser(userId)) < TRIAL_NUMBER_CAP) return null;
+  return {
+    requiresUpgrade: true,
+    trialNumberCap: TRIAL_NUMBER_CAP,
+    message: `Trial accounts can have up to ${TRIAL_NUMBER_CAP} phone numbers. Upgrade to your paid plan to add more.`,
+  };
 }
 
 export const buyNumber: RequestHandler = async (req, res) => {
@@ -1349,14 +1391,19 @@ export const buyNumber: RequestHandler = async (req, res) => {
     // confirmOverageCharge:true (set after the user confirms in a dialog) —
     // same two-step "you can't add this — pay extra to unlock" pattern as
     // the agent-seat overage flow.
+    // Trial cap comes first — it's absolute, and unlike the plan-limit check
+    // below it must still apply when no PlanLimit row matched. A trial account
+    // can't buy its way past this with confirmOverageCharge; the only way
+    // through is converting to a paid plan.
+    const trialBlock = await trialNumberCapBlock(userId);
+    if (trialBlock) {
+      res.status(402).json({ success: false, ...trialBlock });
+      return;
+    }
+
     const limits = await getUserPlanLimits(userId);
     if (limits.includedNumbers != null) {
-      const systemSettingIds = (
-        await prisma.system_Setting.findMany({ where: { userId }, select: { id: true } })
-      ).map((s) => s.id);
-      const currentCount = await prisma.callerId.count({
-        where: { systemSettingId: { in: systemSettingIds } },
-      });
+      const currentCount = await countCallerIdsForUser(userId);
       if (currentCount >= limits.includedNumbers) {
         if (!confirmOverageCharge) {
           let priceCents: number;
@@ -1427,6 +1474,20 @@ async function buyNumberOnBehalfOfUser(
   const subAccountSid = await getUserTwilioSubAccountSid(targetUserId);
   if (!subAccountSid) {
     errorResponse(res, { message: "This user has no Twilio sub-account configured yet." }, 400);
+    return;
+  }
+
+  // The trial cap is a property of the TARGET account, not of the staff member
+  // running the purchase — a super-admin buying on someone's behalf doesn't
+  // exempt that account from it. buyNumber delegates here and returns before
+  // reaching its own guard, so this path needs its own.
+  const trialBlock = await trialNumberCapBlock(targetUserId);
+  if (trialBlock) {
+    res.status(402).json({
+      success: false,
+      ...trialBlock,
+      message: `This account is on a trial and is limited to ${TRIAL_NUMBER_CAP} phone numbers. It needs to be on a paid plan before more can be added.`,
+    });
     return;
   }
 

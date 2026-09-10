@@ -10,6 +10,8 @@ import {
   trialEndingSoonTemp,
   cardExpiringTemp,
 } from "../utils/email";
+import { TRIAL_ENDING_SOON_EMAIL_ADVANCE_DAYS, TRIAL_PERIOD_DAYS } from "../constants/trial";
+import { isUserOnTrial } from "../utils/status";
 
 export const startUserLifecycleJob = () => {
   cron.schedule("0 9 * * *", async () => {
@@ -147,29 +149,66 @@ export const startUserLifecycleJob = () => {
 
     // ── 4. Trial ending soon ──────────────────────────────────────────────────
     // Respects: emailPreferences.trialReminders (default true)
+    //
+    // Anchored on the subscription's endDate where there is one — for a
+    // `trialing` subscription that is Stripe's trial_end, kept fresh by the
+    // customer.subscription.updated webhook — falling back to
+    // `createdAt + TRIAL_PERIOD_DAYS` where there isn't.
+    //
+    // Both halves are load-bearing. A trial whose length changed after signup
+    // (the legacy 30-day cohort truncated by scripts/truncate-trials.ts) has a
+    // createdAt that no longer predicts when it ends, so createdAt alone would
+    // skip it. But endDate is null whenever the checkout webhook couldn't
+    // resolve a period end — true of live trial accounts today — so endDate
+    // alone would skip those instead.
     try {
-      const trialWindowFrom = new Date(now);
-      trialWindowFrom.setDate(now.getDate() - 28);
-      const trialWindowTo = new Date(now);
-      trialWindowTo.setDate(now.getDate() - 27);
+      const remindFrom = new Date(now);
+      remindFrom.setDate(now.getDate() + TRIAL_ENDING_SOON_EMAIL_ADVANCE_DAYS);
+      const remindTo = new Date(now);
+      remindTo.setDate(now.getDate() + TRIAL_ENDING_SOON_EMAIL_ADVANCE_DAYS + 1);
 
-      const trialUsers = await prisma.user.findMany({
-        where: {
-          role: "ADMIN",
-          trialStatus: "ACTIVE",
-          createdAt: { gte: trialWindowFrom, lt: trialWindowTo },
-        },
+      // Candidate set is the trial cohort itself (ADMINs flagged ACTIVE),
+      // which is inherently small, so the window is applied in JS below —
+      // the effective end date can come from either of two places and can't
+      // be expressed as one Prisma filter.
+      const trialAdmins = await prisma.user.findMany({
+        where: { role: "ADMIN", trialStatus: "ACTIVE" },
         select: {
           id: true, email: true, fullName: true, createdAt: true,
           emailPreferences: { select: { trialReminders: true } },
+          userSubscriptions: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { endDate: true },
+          },
         },
       });
 
       let sent = 0;
-      for (const user of trialUsers) {
+      const remindedUserIds = new Set<string>();
+      for (const user of trialAdmins) {
+        // Prefer the subscription's period end (Stripe's trial_end while
+        // trialing, and the only value that reflects a truncated trial).
+        // Not every trial has one — endDate is null whenever the checkout
+        // webhook couldn't resolve a period end — so fall back to the
+        // nominal createdAt + TRIAL_PERIOD_DAYS for those.
+        const subEnd = user.userSubscriptions[0]?.endDate ?? null;
+        const trialEnd = subEnd
+          ? new Date(subEnd)
+          : new Date(user.createdAt.getTime() + TRIAL_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+
+        if (trialEnd < remindFrom || trialEnd >= remindTo) continue;
+        // Skip accounts whose ACTIVE flag is stale (a missed trialing→active
+        // webhook) — they're paying customers, not trials.
+        if (!(await isUserOnTrial(user.id))) continue;
+
+        if (remindedUserIds.has(user.id)) continue;
+        remindedUserIds.add(user.id);
         if (user.emailPreferences?.trialReminders === false) continue;
-        const trialEndMs = new Date(user.createdAt).getTime() + 30 * 24 * 60 * 60 * 1000;
-        const daysLeft = Math.max(1, Math.round((trialEndMs - now.getTime()) / (1000 * 60 * 60 * 24)));
+        const daysLeft = Math.max(
+          1,
+          Math.round((trialEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+        );
         await sendEmail({
           to: user.email,
           from: envConfig.MAILERSEND_FROM_EMAIL || "noreply@slingvo.com",
@@ -181,7 +220,7 @@ export const startUserLifecycleJob = () => {
         sent++;
       }
 
-      console.log(`[UserLifecycle] Trial ending soon sent to ${sent}/${trialUsers.length} user(s).`);
+      console.log(`[UserLifecycle] Trial ending soon sent to ${sent}/${remindedUserIds.size} user(s).`);
     } catch (err: any) {
       console.error("[UserLifecycle] Trial-ending-soon job error:", err?.message);
     }

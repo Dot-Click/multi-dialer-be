@@ -3,6 +3,7 @@ import { successResponse, errorResponse } from "../../utils/handler";
 import { envConfig } from "../../lib/config";
 import Stripe from "stripe";
 import bcrypt from "bcryptjs";
+import { TRIAL_PERIOD_DAYS } from "../../constants/trial";
 
 // Initialize Stripe (requires STRIPE_SECRET_KEY in .env)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
@@ -31,7 +32,7 @@ export const createCheckoutSession = async (req: Request, res: Response): Promis
       ],
       mode: "subscription",
       subscription_data: {
-        trial_period_days: 30,
+        trial_period_days: TRIAL_PERIOD_DAYS,
       },
       success_url: `${envConfig.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${envConfig.FRONTEND_URL}/signup`,

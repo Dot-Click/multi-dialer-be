@@ -10,6 +10,8 @@ import { envConfig } from "../../lib/config";
 import { triggerZapierWebhook } from "../../lib/zapier";
 import { notifyClients } from "../../services/leadStoreNotify.service";
 import { syncBillingFromInvoice } from "../../services/billingLedger.service";
+import { TRIAL_NUMBER_CAP } from "../../constants/trial";
+import { provisionRemainingIncludedNumbers } from "../../services/trialProvisioning.service";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
 import { planKeyFromName } from "../../services/planLimits.service";
 
@@ -678,9 +680,16 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         // fall back to a single starter number, matching prior behavior.
         const planKey = planKeyFromName(planName);
         const planLimit = await prisma.planLimit.findUnique({ where: { planKey } });
-        const includedNumbersToPurchase = planLimit
+        const rawIncludedNumbers = planLimit
           ? Math.max(0, planLimit.includedNumbers ?? 1)
           : 1;
+        // Every account reaching this branch is brand new and therefore in
+        // trial — the checkout that produced this session was created with
+        // `trial_period_days`. Provision at most TRIAL_NUMBER_CAP upfront; the
+        // rest of the plan's allowance unlocks when the trial converts to a
+        // paid subscription and the purchase guards in calling/controller.ts
+        // stop applying. Only bites plans that include 3+ numbers.
+        const includedNumbersToPurchase = Math.min(rawIncludedNumbers, TRIAL_NUMBER_CAP);
 
         console.log(
           `[Stripe Webhook] Purchasing ${includedNumbersToPurchase} included number(s) for ${email} (plan=${planName}).`,
@@ -872,6 +881,17 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         // status) removes access. Without the trialing case, a fresh resub
         // that starts in trial leaves the user locked out.
         const isLive = (status === "active" || status === "trialing") && !cancelAtPeriodEnd;
+
+        // Captured BEFORE the update below overwrites it — this is the only
+        // signal that distinguishes "the trial just converted" from any other
+        // active-subscription sync, and the update clears it.
+        const priorTrialStatus = (
+          await prisma.user.findUnique({
+            where: { id: subRecord.userId },
+            select: { trialStatus: true },
+          })
+        )?.trialStatus;
+
         await prisma.user.update({
           where: { id: subRecord.userId },
           data: {
@@ -882,6 +902,31 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
             ...(isLive ? { trialStatus: status === "trialing" ? ("ACTIVE" as any) : ("NONE" as any) } : {}),
           },
         });
+
+        // Trial -> paid conversion: signup capped provisioning at
+        // TRIAL_NUMBER_CAP, so hand over the rest of the plan's included
+        // numbers now that they're paying. Deliberately scoped to this exact
+        // transition — running it on any active sync would re-buy numbers an
+        // established customer had intentionally released.
+        if (isLive && status === "active" && priorTrialStatus === "ACTIVE") {
+          try {
+            const result = await provisionRemainingIncludedNumbers(subRecord.userId, planName);
+            if (result.bought > 0) {
+              console.log(
+                `[Stripe Webhook] Trial converted for user ${subRecord.userId} — provisioned ${result.bought} additional included number(s) (${result.before} -> ${result.target}).`,
+              );
+            }
+          } catch (err: any) {
+            // Never fail the webhook over this. Subscription status is already
+            // committed above, and these numbers are free and self-serviceable:
+            // the customer can add them from Caller ID settings at no charge,
+            // since they're inside the plan's included count.
+            console.error(
+              `[Stripe Webhook] Included-number top-up failed for user ${subRecord.userId} after trial conversion:`,
+              err?.message,
+            );
+          }
+        }
 
         // Notify the customer on a genuine plan/amount change — not on
         // status-only syncs (e.g. trialing -> active) where nothing billable moved.

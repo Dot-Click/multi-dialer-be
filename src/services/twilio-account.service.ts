@@ -111,6 +111,37 @@ export async function getUserTwilioSubAccountSid(userId: string): Promise<string
 }
 
 /**
+ * Full sub-account credentials for the account that OWNS this user (agents
+ * resolve to their admin, same rule as getUserTwilioSubAccountSid).
+ *
+ * purchaseUSPhoneNumber needs the auth token, not just the SID — the signup
+ * flow had it in hand from createTwilioSubAccount, but anything provisioning
+ * for an EXISTING account has to read it back out of the integration row.
+ */
+export async function getUserTwilioSubAccountCredentials(
+    userId: string
+): Promise<{ accountSid: string; authToken: string } | null> {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, createdById: true },
+    });
+    if (!user) return null;
+
+    const effectiveUserId = user.role === "AGENT" && user.createdById ? user.createdById : userId;
+
+    const integration = await prisma.integration.findFirst({
+        where: {
+            provider: "TWILIO",
+            systemSetting: { userId: effectiveUserId },
+        },
+    });
+
+    const creds = integration?.credentials as any;
+    if (!creds?.accountSid || !creds?.authToken) return null;
+    return { accountSid: creds.accountSid, authToken: creds.authToken };
+}
+
+/**
  * Transfers ownership of a phone number (bought on the master account) into a
  * user's Twilio sub-account, using Twilio's "Exchanging Numbers Between
  * Subaccounts" mechanism — an update call authenticated as the CURRENT owner
