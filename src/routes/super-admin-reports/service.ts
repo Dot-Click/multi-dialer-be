@@ -481,13 +481,19 @@ export async function getDashboardSummaryInDb() {
 }
 
 export async function getBusinessOverviewInDb() {
-  const [mrrRecords, activeSubscriptions, activeUsers, totalAgents] = await Promise.all([
+  const [mrrRecords, activeUsers, totalAgents] = await Promise.all([
+    // Fetched rather than counted so MRR and the subscription count are both
+    // derived from the SAME rows — see the trial exclusion below. Counting
+    // separately is how they drifted apart in the first place.
     prisma.userSubscription.findMany({
       where: { status: "ACTIVE", user: { role: { not: "OWNER" } } },
-      select: { amount: true, billingCycle: true },
-    }),
-    prisma.userSubscription.count({
-      where: { status: "ACTIVE", user: { role: { not: "OWNER" } } },
+      select: {
+        amount: true,
+        billingCycle: true,
+        status: true,
+        endDate: true,
+        user: { select: { status: true, trialStatus: true } },
+      },
     }),
     // "Active Users" = customers whose BILLING is live, so this reconciles
     // with Active Subscriptions above. It used to count `User.status ===
@@ -508,14 +514,44 @@ export async function getBusinessOverviewInDb() {
     }),
   ]);
 
-  const mrr = mrrRecords.reduce((sum, rec) => {
+  // A trial is not revenue. `UserSubscription.status` is ACTIVE for BOTH paying
+  // and trialing subscriptions, because mapStripeSubscriptionStatus collapses
+  // Stripe's `active` and `trialing` into the same enum member — so summing on
+  // that field alone counted every free trial as monthly recurring revenue.
+  // Resolving through accountStatus.service is what separates them, and keeps
+  // this figure consistent with the status badges.
+  const paying = mrrRecords.filter(
+    (rec) =>
+      resolveAccountStatus({
+        status: rec.user.status,
+        trialStatus: rec.user.trialStatus,
+        subscription: { status: rec.status, endDate: rec.endDate },
+      }).status !== "TRIALING",
+  );
+
+  const monthlyValue = (rec: { amount: string | null; billingCycle: string }) => {
     const raw = parseFloat(rec.amount || "0");
-    const monthly = rec.billingCycle === "YEARLY" ? raw / 12 : raw;
-    return sum + monthly;
-  }, 0);
+    return rec.billingCycle === "YEARLY" ? raw / 12 : raw;
+  };
+
+  const mrr = paying.reduce((sum, rec) => sum + monthlyValue(rec), 0);
+
+  // Trials excluded here too. This feeds a card labelled "active paying users",
+  // and if it kept counting trials while MRR did not, the two numbers sitting
+  // beside each other would imply an average revenue per account that is wrong.
+  const activeSubscriptions = paying.length;
 
   return {
     mrr: parseFloat(mrr.toFixed(2)),
+    // Contracted value of trials that have not converted yet — deliberately
+    // NOT part of MRR, but worth surfacing so the money is visible somewhere
+    // rather than vanishing when trials stopped being counted as revenue.
+    trialPipelineMrr: parseFloat(
+      mrrRecords
+        .filter((rec) => !paying.includes(rec))
+        .reduce((sum, rec) => sum + monthlyValue(rec), 0)
+        .toFixed(2),
+    ),
     activeSubscriptions,
     activeUsers,
     totalAgents,
