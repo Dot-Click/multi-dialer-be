@@ -58,3 +58,11 @@ export const getEffectiveLock = async (
 
   return { locked: isFeatureLocked(owner), canPurchase };
 };
+
+/**
+ * Trial helpers now live in services/accountStatus.service.ts, which resolves
+ * trial state the same way every status badge and count does. Re-exported here
+ * so existing importers keep working and there is only ever ONE definition of
+ * "is this account on a trial".
+ */
+export { isUserOnTrial } from "../services/accountStatus.service";

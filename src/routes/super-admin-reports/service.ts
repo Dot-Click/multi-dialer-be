@@ -1,5 +1,6 @@
 import prisma from "../../lib/prisma";
 import { getAddonSubscriptionIds } from "../../services/billingLedger.service";
+import { resolveAccountStatus } from "../../services/accountStatus.service";
 
 
 export async function getUserOverviewInDb() {
@@ -182,7 +183,7 @@ export async function getUserSubscriptionDetailsInDb() {
       userSubscriptions: {
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { status: true, plan: true, createdAt: true },
+        select: { status: true, plan: true, endDate: true, createdAt: true },
       },
     },
   });
@@ -192,7 +193,15 @@ export async function getUserSubscriptionDetailsInDb() {
     const sub = u.userSubscriptions[0];
     return {
       plan: billing?.planName || billing?.plan || sub?.plan || "No Plan",
-      status: u.status,
+      // The comment above always claimed this came from UserSubscription, but
+      // it returned `u.status` — the manual moderation field — so the Home
+      // table showed ACTIVE for every account and its Active/Inactive tabs
+      // filtered on a value that never varied. Now resolved centrally.
+      accountStatus: resolveAccountStatus({
+        status: u.status,
+        trialStatus: u.trialStatus,
+        subscription: sub ? { status: sub.status, endDate: sub.endDate } : null,
+      }),
       createdAt: billing?.date || sub?.createdAt || u.createdAt,
       user: {
         fullName: u.fullName,
@@ -308,7 +317,7 @@ export async function getBillingReportDetailInDb() {
           userSubscriptions: {
             orderBy: { createdAt: "desc" },
             take: 1,
-            select: { status: true },
+            select: { status: true, endDate: true },
           },
         },
       },
@@ -323,6 +332,10 @@ export async function getBillingReportDetailInDb() {
     email: string;
     plan: string;
     status: string;        // subscription status from UserSubscription
+    // The canonical resolved status. `status` above is the raw subscription
+    // value and is kept only so existing consumers of this report keep
+    // working — the Detailed Billing table renders this instead.
+    accountStatus: ReturnType<typeof resolveAccountStatus>;
     invoiceStatus: string; // most recent billing row status
     totalBilled: number;
     lastPaymentDate: Date | null;
@@ -336,6 +349,11 @@ export async function getBillingReportDetailInDb() {
         email: row.user.email,
         plan: row.planName || row.plan || "No Plan",
         status: normalizeSubStatus(row.user.userSubscriptions[0]?.status || "PENDING"),
+        accountStatus: resolveAccountStatus({
+          status: row.user.status,
+          trialStatus: row.user.trialStatus,
+          subscription: row.user.userSubscriptions[0] ?? null,
+        }),
         invoiceStatus: row.status,
         totalBilled: 0,
         lastPaymentDate: null,
@@ -355,6 +373,7 @@ export async function getBillingReportDetailInDb() {
     email: g.email,
     plan: g.plan,
     status: g.status,
+    accountStatus: g.accountStatus,
     invoiceStatus: g.invoiceStatus,
     totalBilled: g.totalBilled,
     lastPayment: g.lastPaymentDate
@@ -439,9 +458,20 @@ export async function getBusinessOverviewInDb() {
     prisma.userSubscription.count({
       where: { status: "ACTIVE", user: { role: { not: "OWNER" } } },
     }),
+    // "Active Users" = customers whose BILLING is live, so this reconciles
+    // with Active Subscriptions above. It used to count `User.status ===
+    // "ACTIVE"` — a manual moderation field nothing automated ever writes —
+    // which meant it silently reported nearly every account that had ever
+    // signed up and could never agree with the subscription count beside it.
     prisma.user.count({
-      where: { status: "ACTIVE", role: { not: "OWNER" } },
+      where: {
+        role: "ADMIN",
+        userSubscriptions: { some: { status: "ACTIVE" } },
+      },
     }),
+    // Agent headcount is deliberately NOT billing-derived: agents are seats on
+    // someone else's subscription. Here `status` is the right field — it counts
+    // agents who aren't suspended or deactivated.
     prisma.user.count({
       where: { status: "ACTIVE", role: "AGENT" },
     }),

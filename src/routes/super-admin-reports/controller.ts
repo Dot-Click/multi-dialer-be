@@ -89,7 +89,10 @@ export const userSubscriptionDetails = async (
       userName: item.user?.fullName || "N/A",
       email: item.user?.email || "N/A",
       subscriptionPlan: item.plan,
-      status: item.status,
+      // Canonical resolved status. `status` is kept as the plain label so any
+      // existing consumer of this endpoint keeps rendering something sensible.
+      accountStatus: item.accountStatus,
+      status: item.accountStatus.label,
       createdAt: item.createdAt.toISOString().split("T")[0],
     }));
 

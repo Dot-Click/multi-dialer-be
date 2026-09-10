@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import prisma from "../../lib/prisma";
 import { successResponse, errorResponse } from "../../utils/handler";
+import { resolveAccountStatus } from "../../services/accountStatus.service";
 import Stripe from "stripe";
 import { envConfig } from "@/lib/config";
 import { resolveInvoiceCard } from "../../services/stripeInvoiceCard.service";
@@ -1338,11 +1339,25 @@ export const getAllSubscriptionsAdmin = async (req: Request, res: Response): Pro
     const subscriptions = await prisma.userSubscription.findMany({
       where: { user: { role: { not: "OWNER" } } },
       include: {
-        user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true } },
+        user: { select: { fullName: true, email: true, trialStatus: true, isSubscribed: true, status: true } },
       },
       orderBy: { createdAt: "desc" },
     });
-    successResponse(res, 200, "All subscriptions retrieved successfully", subscriptions);
+
+    // Attach the one canonical status so the Subscription table stops deriving
+    // its own (its old TRIAL predicate could never be true) and agrees with
+    // every other super-admin surface. Resolved per row from data already
+    // fetched — no extra query.
+    const withStatus = subscriptions.map((sub) => ({
+      ...sub,
+      accountStatus: resolveAccountStatus({
+        status: sub.user?.status,
+        trialStatus: sub.user?.trialStatus,
+        subscription: { status: sub.status, endDate: sub.endDate },
+      }),
+    }));
+
+    successResponse(res, 200, "All subscriptions retrieved successfully", withStatus);
   } catch (error: any) {
     console.error("[Billing] Get All Subscriptions Admin Error:", error);
     errorResponse(res, error.message || "Internal server error", 500);

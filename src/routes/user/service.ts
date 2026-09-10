@@ -13,6 +13,10 @@ import { emailShell, emailParagraph } from "../../utils/emailShell";
 import { envConfig } from "../../lib/config";
 import { buildSetPasswordUrl } from "../../utils/setPasswordLink";
 import { buildVerifyEmailUrl, VERIFY_EMAIL_EXPIRY_HOURS } from "../../utils/verifyEmailLink";
+import { TRIAL_PERIOD_DAYS } from "../../constants/trial";
+import { maskEmail } from "../../utils/maskEmail";
+import { suspendAccountBilling } from "../../services/accountSuspension.service";
+import { resolveAccountStatus, accountStatusInputFromUser } from "../../services/accountStatus.service";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
     apiVersion: "2026-04-22.dahlia",
@@ -283,7 +287,7 @@ async function createPaymentSetupSession(user: { id: string; email: string; full
         customer_email: user.email,
         line_items: [{ price: resolvedPlanId, quantity: 1 }],
         mode: "subscription",
-        subscription_data: { trial_period_days: 30 },
+        subscription_data: { trial_period_days: TRIAL_PERIOD_DAYS },
         success_url: `${envConfig.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${envConfig.FRONTEND_URL}/signup`,
         metadata: {
@@ -453,7 +457,7 @@ export async function initializeUserAccount(userId: string, fullName: string) {
 }
 
 export async function getAllUsersFromDb(where: any = {}) {
-    return prisma.user.findMany({
+    const users = await prisma.user.findMany({
         where,
         orderBy: { createdAt: "desc" },
         select: {
@@ -462,6 +466,7 @@ export async function getAllUsersFromDb(where: any = {}) {
             email: true,
             role: true,
             status: true,
+            trialStatus: true,
             lastLogin: true,
             createdAt: true,
             updatedAt: true,
@@ -479,7 +484,7 @@ export async function getAllUsersFromDb(where: any = {}) {
             userSubscriptions: {
                 orderBy: { createdAt: "desc" },
                 take: 1,
-                select: { plan: true, status: true, cardBrand: true, cardLast4: true },
+                select: { plan: true, status: true, endDate: true, cardBrand: true, cardLast4: true },
             },
             billings: {
                 orderBy: { date: "desc" },
@@ -489,6 +494,16 @@ export async function getAllUsersFromDb(where: any = {}) {
             // Excluding password
         },
     });
+
+    // Every user row carries the one canonical billing status alongside the raw
+    // `status` field. Home and User Management used to render `status` directly
+    // — a manual field nothing automated writes — so every account read ACTIVE
+    // no matter what its billing was actually doing. Resolved from data already
+    // fetched, so this stays a single query.
+    return users.map((user) => ({
+        ...user,
+        accountStatus: resolveAccountStatus(accountStatusInputFromUser(user)),
+    }));
 }
 
 export async function updateUserInDb(
@@ -517,6 +532,24 @@ export async function updateUserInDb(
             defaultCallerId: true,
         }
     });
+
+    // Suspension is a billing action, not just a flag: cancel every Stripe
+    // subscription on the account. Gated on the TRANSITION into SUSPENDED —
+    // re-saving an already-suspended user must not run it again, and because
+    // the cancellation is permanent there is nothing to re-do anyway.
+    //
+    // Awaited rather than fired-and-forgotten so the caller can surface a
+    // partial failure; suspendAccountBilling never throws.
+    if (payload.status === "SUSPENDED" && existing.status !== "SUSPENDED") {
+        const result = await suspendAccountBilling(id);
+        if (result.cancelled.length) {
+            console.log(`[UserService] Suspended ${maskEmail(existing.email)} — cancelled: ${result.cancelled.join("; ")}`);
+        }
+        if (result.failures.length) {
+            console.error(`[UserService] Suspension billing teardown incomplete for ${maskEmail(existing.email)} — needs manual follow-up: ${result.failures.join("; ")}`);
+        }
+        (updated as any).suspensionBilling = result;
+    }
 
     // Notify the user when their role changes
     if (payload.role && payload.role !== existing.role) {
