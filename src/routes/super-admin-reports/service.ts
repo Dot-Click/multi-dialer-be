@@ -170,10 +170,18 @@ export async function getUserSubscriptionDetailsInDb() {
   // Primary source: Billing (most recent row per user) for plan name and date.
   // Subscription lifecycle status comes from UserSubscription (ACTIVE/CANCELLED/EXPIRED).
   // Users with no billing row yet are still included via the User query.
+  // No `take` — the Users Overview widget lists every account, newest first.
+  // It scrolls inside a fixed-height card, so the row count is a data question
+  // rather than a layout one. OWNER is still excluded: that's platform staff,
+  // not a customer.
+  //
+  // This is deliberately unbounded. Fine at the current scale (27 accounts),
+  // but each row pulls its newest billing and subscription rows, so the query
+  // and the payload both grow linearly with the customer base — worth moving
+  // to a paged endpoint before this list gets into the thousands.
   const users = await prisma.user.findMany({
     where: { role: { not: "OWNER" } },
     orderBy: { createdAt: "desc" },
-    take: 5,
     include: {
       billings: {
         orderBy: { date: "desc" },
