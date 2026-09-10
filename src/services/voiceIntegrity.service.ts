@@ -228,14 +228,19 @@ export async function fetchTrustProductRejectionReason(
 
 export async function resolveTwilioContext(
   adminUserId: string
-): Promise<{ client: any; onMaster: boolean } | null> {
+): Promise<{ client: any; onMaster: boolean; accountSid: string; authToken: string } | null> {
   const twilioInt = await prisma.integration.findFirst({
     where: { provider: "TWILIO", systemSetting: { userId: adminUserId } },
     select: { credentials: true },
   });
   const creds = twilioInt?.credentials as any;
   if (creds?.accountSid) {
-    return { client: twilio(creds.accountSid, creds.authToken), onMaster: false };
+    return {
+      client: twilio(creds.accountSid, creds.authToken),
+      onMaster: false,
+      accountSid: creds.accountSid,
+      authToken: creds.authToken,
+    };
   }
 
   // No subaccount — check if this admin has numbers on the master account.
@@ -244,7 +249,12 @@ export async function resolveTwilioContext(
     select: { id: true },
   });
   if (anyCallerId) {
-    return { client: masterClient, onMaster: true };
+    return {
+      client: masterClient,
+      onMaster: true,
+      accountSid: process.env.TWILIO_ACCOUNT_SID as string,
+      authToken: process.env.TWILIO_AUTH_TOKEN as string,
+    };
   }
 
   return null;

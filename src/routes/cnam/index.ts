@@ -39,11 +39,8 @@ router.get("/status", async (req: any, res) => {
 
 /**
  * POST /api/cnam/onboard
- * Runs the Branded Calling Trust Hub sequence.
- * Body: {
- *   displayName, longDisplayName, callPurposeCode, callReason, logoName,
- *   notificationEmail, statusCallbackUrl?, consent
- * }
+ * Runs the Branded Calling v4 Compliance Registration sequence (US Basic).
+ * Body: { displayName, longDisplayName, notificationEmail, statusCallbackUrl?, consent }
  * Idempotent-ish: repeated calls upsert the integration row and resume.
  * Service layer does the detailed field validation; the route only checks
  * the cheap "did the client send it at all" gate + consent.
@@ -52,8 +49,7 @@ router.post("/onboard", async (req: any, res) => {
   try {
     const attrs = req.body as CnamAttributes;
     const required: (keyof CnamAttributes)[] = [
-      "displayName", "longDisplayName", "callPurposeCode",
-      "callReason", "logoName", "notificationEmail",
+      "displayName", "longDisplayName", "notificationEmail",
     ];
     for (const field of required) {
       const v = (attrs as any)?.[field];

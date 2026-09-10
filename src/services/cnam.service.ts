@@ -1,47 +1,142 @@
+import axios from "axios";
 import prisma from "../lib/prisma";
 import {
   resolveTwilioContext,
-  fetchTrustProductRejectionReason,
   getStatus as getVoiceIntegrityStatus,
 } from "./voiceIntegrity.service";
 import { getUserPlanLimits } from "./planLimits.service";
 
 /**
- * Twilio CNAM (branded caller name) — Trust Hub enrolment for displaying
- * a branded business name on outbound calls (e.g. "Slingvo Realty" instead
- * of just "+1 (334) 555-0100").
+ * Twilio CNAM (branded caller name) — Compliance Registrations (v4) enrolment
+ * for displaying a branded business name on outbound calls (e.g. "Slingvo
+ * Realty" instead of just "+1 (334) 555-0100").
  *
- * Ordering: CNAM builds on top of Voice Integrity, which builds on top of
- * A2P's Business Profile. All three cascade off the same customer profile
- * and reuse the same subaccount / master-account context resolution.
+ * IMPORTANT — this targets Twilio's v4 Branded Calling API, which is in
+ * PRIVATE BETA as of writing. The account (or ISV master) must first be
+ * granted access via Twilio's request form:
+ *   https://airtable.com/appU2UfGNjztpFOeu/pagdvnRAJdjGjkPEO/form
+ * Until access is granted, every call below will keep failing with Twilio's
+ * "This endpoint is not supported on v2..." rejection regardless of payload
+ * shape — that is an account-entitlement error, not a code bug.
  *
- * Storage model: one Integration row per admin (provider = TWILIO_CNAM),
- * credentials JSON carries the Trust Hub SIDs, the display name, and the
- * status. No new tables.
+ * This replaces the old Trust Hub `trustProducts` / `endUsers` flow (type
+ * `branded_calls_information`), which Twilio has deprecated for CNAM. The v4
+ * resources live at a different host/path and are NOT exposed via the
+ * `twilio` npm SDK's typed helpers yet, so this service talks to them with
+ * plain HTTP (axios + Basic Auth) instead of `client.trusthub.v1...`.
  *
+ * v4 "US Basic" registration shape (the policy this product already used,
+ * RNca63d1066fbd5e44eac02d0b3cf6d019, is also the v4 US Basic regulation id):
+ *
+ *   POST /v4/Compliance/Registrations
  *   {
- *     customerProfileSid: "BU...",
- *     trustProductSid:    "BU...",
- *     endUserSid:         "IT...",
- *     displayName:        "Slingvo Realty",
- *     status:             "draft" | "pending-review" | "twilio-approved" | "twilio-rejected",
- *     rejectionReason:    string | null,
+ *     regulationId: "RNca63d1066fbd5e44eac02d0b3cf6d019",
+ *     regulationVersion: <int>,        // from GET /v4/Compliance/Regulations/{id}
+ *     friendlyName, statusNotificationEmail, statusCallbackUrl?,
+ *     data: {
+ *       brandedCaller: {
+ *         displayName,                  // 1-15 chars, must start with a letter
+ *         displayLongName,              // 1-32 chars
+ *         voiceIntegrityRegistrationId, // "BU..." — see ASSUMPTION below
+ *       }
+ *     }
  *   }
  *
- * CNAM policy SID is fixed by Twilio and matches the one the client already
- * uses on master for their own account ("Lumina Bridge").
+ * ASSUMPTION (unverified against a live beta account): `voiceIntegrityRegistrationId`
+ * is populated with the admin's already-approved Voice Integrity trust
+ * product SID (still on the older Trust Hub API — VI itself has not been
+ * migrated). Both old Trust Product SIDs and new v4 registration ids share
+ * the "BU" + 32 hex chars format, so this is plausible but NOT confirmed by
+ * Twilio's docs. If Twilio rejects with an "invalid voiceIntegrityRegistrationId"
+ * error once beta access is live, Voice Integrity will likely need its own v4
+ * migration first.
+ *
+ * Storage model: unchanged — one Integration row per admin (provider =
+ * TWILIO_CNAM), credentials JSON now carries the Compliance Registration id
+ * instead of trustProductSid/endUserSid. No new tables. `caller_id.cnamAssignmentSid`
+ * now stores the ResourceAssignment sid ("RA...") instead of the old
+ * trustProductsChannelEndpointAssignment sid.
  */
-// Twilio "Branded Calling" — ISV/subaccount variant that references an
-// already-approved Voice Integrity trust product as its supporting bundle.
-// Confirmed against Twilio's policies list; this policy's End User schema
-// wants `branded_calls_information` with the 5 attributes below.
-//
-// (The old hardcoded SID `RNb0d4771c...` was actually US A2P Messaging
-// Profile — wrong product entirely; Twilio ignored the CNAM-shaped payload
-// or rejected it with the "not mapped to object" error.)
-const CNAM_POLICY_SID = "RNca63d1066fbd5e44eac02d0b3cf6d019";
+const CNAM_REGULATION_ID = "RNca63d1066fbd5e44eac02d0b3cf6d019";
 const CNAM_DISPLAY_NAME_MAX = 15;
-const CNAM_LONG_DISPLAY_NAME_MAX = 100;
+const CNAM_LONG_DISPLAY_NAME_MAX = 32;
+// Twilio's documented pattern for brandedCaller.displayName: must start with
+// a letter, then letters/digits/comma/period/whitespace.
+const CNAM_DISPLAY_NAME_PATTERN = /^[a-zA-Z][A-Za-z0-9,.\s]{1,14}$/;
+
+const COMPLIANCE_BASE_URL = "https://trusthub.twilio.com/v4/Compliance";
+const RESOURCE_ASSIGNMENTS_BASE_URL = "https://trusthub.twilio.com/v1/Compliance";
+
+async function complianceGet(accountSid: string, authToken: string, path: string): Promise<any> {
+  const res = await axios.get(`${COMPLIANCE_BASE_URL}${path}`, {
+    auth: { username: accountSid, password: authToken },
+  });
+  return res.data;
+}
+
+async function compliancePost(accountSid: string, authToken: string, path: string, body: Record<string, any>): Promise<any> {
+  const res = await axios.post(`${COMPLIANCE_BASE_URL}${path}`, body, {
+    auth: { username: accountSid, password: authToken },
+    headers: { "Content-Type": "application/json" },
+  });
+  return res.data;
+}
+
+async function compliancePatch(accountSid: string, authToken: string, path: string, body: Record<string, any>) {
+  const res = await axios.patch(`${COMPLIANCE_BASE_URL}${path}`, body, {
+    auth: { username: accountSid, password: authToken },
+    headers: { "Content-Type": "application/json" },
+  });
+  return res.data;
+}
+
+async function resourceAssignmentCreate(
+  accountSid: string,
+  authToken: string,
+  registrationId: string,
+  resourceSid: string
+) {
+  const form = new URLSearchParams();
+  form.set("Type", "phone-number");
+  form.set("ResourceSid", resourceSid);
+  const res = await axios.post(
+    `${RESOURCE_ASSIGNMENTS_BASE_URL}/Registrations/${registrationId}/ResourceAssignments`,
+    form,
+    {
+      auth: { username: accountSid, password: authToken },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    }
+  );
+  return res.data as { sid: string };
+}
+
+async function resourceAssignmentRemove(
+  accountSid: string,
+  authToken: string,
+  registrationId: string,
+  assignmentSid: string
+) {
+  await axios.delete(
+    `${RESOURCE_ASSIGNMENTS_BASE_URL}/Registrations/${registrationId}/ResourceAssignments/${assignmentSid}`,
+    { auth: { username: accountSid, password: authToken } }
+  );
+}
+
+// Twilio's v4 status enum is upper-snake; the rest of this app (routes,
+// frontend slice, other trust-hub flows) already speaks the old Trust Hub's
+// lower-hyphen style. Normalize at the boundary so nothing else has to change.
+type V4RegistrationStatus = "DRAFT" | "PENDING_REVIEW" | "IN_REVIEW" | "TWILIO_APPROVED" | "TWILIO_REJECTED";
+
+function normalizeV4Status(status: string): CnamStatus {
+  switch (status as V4RegistrationStatus) {
+    case "DRAFT": return "draft";
+    case "PENDING_REVIEW":
+    case "IN_REVIEW": return "pending-review";
+    case "TWILIO_APPROVED": return "twilio-approved";
+    case "TWILIO_REJECTED": return "twilio-rejected";
+    default: return "draft";
+  }
+}
 
 export type CnamStatus =
   | "not-started"
@@ -61,38 +156,28 @@ export type CnamStatus =
   | "blocked-plan-not-eligible";
 
 export interface CnamCredentials {
-  customerProfileSid?: string;
-  trustProductSid?: string;
-  endUserSid?: string;
+  registrationId?: string;
   displayName?: string;
   status: CnamStatus;
   rejectionReason?: string | null;
 }
 
 export interface CnamAttributes {
-  // Short branded caller name shown on the recipient's phone — max 15
-  // chars. Maps to Twilio's `branded_calls_display_name`.
+  // Short branded caller name shown on the recipient's phone. Twilio's v4
+  // US Basic schema: 1-15 chars, must start with a letter, then
+  // letters/digits/comma/period/whitespace only.
   displayName: string;
   // Longer business name shown in richer UIs (iOS with First Orion, etc.).
-  // Maps to `branded_calls_long_display_name`.
+  // Twilio's v4 US Basic schema: 1-32 chars.
   longDisplayName: string;
-  // Purpose-of-call code Twilio surfaces to iOS callers as a category.
-  // Enum values TBD from Twilio's response — we pass whatever the form
-  // sends and let Twilio's evaluation tell us the valid list on rejection.
-  // Common expected values: SALES, SUPPORT, MARKETING, APPOINTMENT_REMINDER.
-  callPurposeCode: string;
-  // Free-text reason the recipient should know about the call. Shown
-  // beneath the display name on Branded Calling-enabled devices.
-  callReason: string;
-  // Name of the logo asset registered with the branded calling provider.
-  // Uploading logo files is a separate manual step in the Twilio Console
-  // for now — this string references the asset by name.
-  logoName: string;
   // Required. Twilio emails this address when review completes.
   notificationEmail: string;
   // Optional webhook for real-time status transitions.
   statusCallbackUrl?: string;
-  // Carrier-terms certification — required before submission.
+  // Carrier-terms certification — required before submission. UI-only; not
+  // sent to Twilio (the v4 US Basic schema has no consent field), but we
+  // still require it locally since it's the same certification the old flow
+  // made admins agree to.
   consent: boolean;
 }
 
@@ -143,8 +228,8 @@ export async function getStatus(adminUserId: string): Promise<CnamCredentials> {
 }
 
 /**
- * Execute the CNAM Trust Hub sequence — same shape as Voice Integrity's,
- * with the CNAM policy SID and cnam_information end-user type.
+ * Execute the v4 Compliance Registration sequence for a "US Basic" branded
+ * caller registration.
  *
  * Prerequisite: VI must already be approved (getStatus returns the appropriate
  * blocked-* status otherwise). Submit is idempotent-ish: partial failures
@@ -159,14 +244,14 @@ export async function submitOnboarding(
   if (displayName.length > CNAM_DISPLAY_NAME_MAX) {
     throw new Error(`Display name must be ${CNAM_DISPLAY_NAME_MAX} characters or fewer.`);
   }
+  if (!CNAM_DISPLAY_NAME_PATTERN.test(displayName)) {
+    throw new Error("Display name must start with a letter and contain only letters, numbers, commas, periods, and spaces.");
+  }
   const longDisplayName = (attrs.longDisplayName || "").trim();
   if (!longDisplayName) throw new Error("Long display name is required.");
   if (longDisplayName.length > CNAM_LONG_DISPLAY_NAME_MAX) {
     throw new Error(`Long display name must be ${CNAM_LONG_DISPLAY_NAME_MAX} characters or fewer.`);
   }
-  if (!attrs.callPurposeCode?.trim()) throw new Error("Call purpose is required.");
-  if (!attrs.callReason?.trim()) throw new Error("Call reason is required.");
-  if (!attrs.logoName?.trim()) throw new Error("Logo name is required.");
   const notificationEmail = (attrs.notificationEmail || "").trim();
   if (!notificationEmail) throw new Error("Notification email is required.");
   if (!/^\S+@\S+\.\S+$/.test(notificationEmail)) {
@@ -184,12 +269,18 @@ export async function submitOnboarding(
   const systemSettingId = await getSystemSettingId(adminUserId);
   const ctx = await resolveTwilioContext(adminUserId);
   if (!ctx) throw new Error("No Twilio context resolved for CNAM onboarding.");
+  const { accountSid, authToken } = ctx;
 
-  // 1. Find the approved Business Profile in the correct account context.
-  const profiles = await ctx.client.trusthub.v1.customerProfiles.list({ limit: 20 });
-  const primary = profiles.find((p: any) => p.status === "twilio-approved") ?? profiles[0];
-  if (!primary) throw new Error("No primary Business Profile found for CNAM.");
-  const customerProfileSid = primary.sid;
+  // Voice Integrity trust product SID, reused as voiceIntegrityRegistrationId.
+  // See the ASSUMPTION note at the top of this file.
+  const viIntegration = await prisma.integration.findFirst({
+    where: { provider: "TWILIO_VOICE_INTEGRITY", systemSetting: { userId: adminUserId } },
+    select: { credentials: true },
+  });
+  const viTrustProductSid = (viIntegration?.credentials as any)?.trustProductSid;
+  if (!viTrustProductSid) {
+    throw new Error("Voice Integrity trust product SID not found — Branded Calling requires an approved VI bundle to reference.");
+  }
 
   // Numbers to enrol — scope to THIS admin's caller_ids only.
   const ownedSids: string[] = ctx.onMaster
@@ -208,117 +299,60 @@ export async function submitOnboarding(
       systemSettingId,
       provider: "TWILIO_CNAM",
       status: "NEED_SETUP",
-      credentials: { customerProfileSid, displayName, status: "draft" } as any,
+      credentials: { displayName, status: "draft" } as any,
     },
     update: {
-      credentials: { customerProfileSid, displayName, status: "draft" } as any,
+      credentials: { displayName, status: "draft" } as any,
       errorMessage: null,
     },
   });
 
-  const hubClient = ctx.client;
   try {
-    // 2. Numbers should already be on the business profile from VI onboarding,
-    //    but re-attach idempotently in case anything's out of sync.
-    for (const sid of ownedSids) {
-      try {
-        await hubClient.trusthub.v1
-          .customerProfiles(customerProfileSid)
-          .customerProfilesChannelEndpointAssignment.create({
-            channelEndpointType: "phone-number",
-            channelEndpointSid: sid,
-          });
-      } catch (err: any) {
-        if (!/already/i.test(err.message || "")) {
-          console.warn(`[CNAM] attach profile skip ${sid}: ${err.message}`);
-        }
-      }
-    }
+    // 1. Look up the regulation to get its current version — required on
+    //    Registration create. Field name unconfirmed against a live
+    //    response; falls back defensively.
+    const regulation = await complianceGet(accountSid, authToken, `/Regulations/${CNAM_REGULATION_ID}`);
+    const regulationVersion = regulation?.version ?? regulation?.regulationVersion ?? 1;
 
-    // 3. Create CNAM Trust Product.
-    //    - email: the address Twilio pings when review completes. Required
-    //      by Twilio's own console form as "Notification email".
-    //    - statusCallbackUrl (optional): webhook for real-time transitions.
-    const trustProduct = await hubClient.trusthub.v1.trustProducts.create({
+    // 2. Create the Compliance Registration (US Basic — display name(s) +
+    //    link to the approved Voice Integrity registration).
+    const registration = await compliancePost(accountSid, authToken, "/Registrations", {
+      regulationId: CNAM_REGULATION_ID,
+      regulationVersion,
       friendlyName: `CNAM — ${displayName}`,
-      email: attrs.notificationEmail.trim(),
-      policySid: CNAM_POLICY_SID,
-      ...(attrs.statusCallbackUrl?.trim()
-        ? { statusCallback: attrs.statusCallbackUrl.trim() }
-        : {}),
-    } as any);
-
-    // 4. Create End User of type branded_calls_information carrying the
-    //    five attributes the Branded Calling policy schema defines. The
-    //    exact enum values for call_purpose_code aren't published; if
-    //    Twilio rejects with "should be one of ...", we'll harvest them
-    //    from the evaluation and constrain the form to that list.
-    const endUser = await hubClient.trusthub.v1.endUsers.create({
-      friendlyName: `Branded Calling End User — ${adminUserId}`,
-      type: "branded_calls_information",
-      attributes: {
-        branded_calls_display_name: displayName,
-        branded_calls_long_display_name: attrs.longDisplayName.trim(),
-        branded_calls_call_purpose_code: attrs.callPurposeCode.trim(),
-        branded_calls_call_reason: attrs.callReason.trim(),
-        branded_calls_logo_name: attrs.logoName.trim(),
+      statusNotificationEmail: notificationEmail,
+      ...(attrs.statusCallbackUrl?.trim() ? { statusCallbackUrl: attrs.statusCallbackUrl.trim() } : {}),
+      data: {
+        brandedCaller: {
+          displayName,
+          displayLongName: longDisplayName,
+          voiceIntegrityRegistrationId: viTrustProductSid,
+        },
       },
     });
+    const registrationId = registration.id as string;
 
-    // 5. Link end user → trust product.
-    await hubClient.trusthub.v1
-      .trustProducts(trustProduct.sid)
-      .trustProductsEntityAssignments.create({ objectSid: endUser.sid });
-
-    // 6. Link business profile → trust product.
-    await hubClient.trusthub.v1
-      .trustProducts(trustProduct.sid)
-      .trustProductsEntityAssignments.create({ objectSid: customerProfileSid });
-
-    // 6a. Link the admin's approved Voice Integrity trust product as the
-    //     required supporting bundle. Branded Calling's ISV policy has:
-    //       supporting_trust_products: [{ type: voice_integrity_trust_product }]
-    //     Without this reference, the evaluation fails.
-    const viIntegration = await prisma.integration.findFirst({
-      where: { provider: "TWILIO_VOICE_INTEGRITY", systemSetting: { userId: adminUserId } },
-      select: { credentials: true },
-    });
-    const viTrustProductSid = (viIntegration?.credentials as any)?.trustProductSid;
-    if (!viTrustProductSid) {
-      throw new Error("Voice Integrity trust product SID not found — Branded Calling requires an approved VI bundle to reference.");
-    }
-    await hubClient.trusthub.v1
-      .trustProducts(trustProduct.sid)
-      .trustProductsEntityAssignments.create({ objectSid: viTrustProductSid });
-
-    // 7. Assign every phone number to the trust product; save assignment SIDs
+    // 3. Assign every phone number to the registration; save assignment SIDs
     //    on caller_id so unassign works cleanly on number release.
     for (const sid of ownedSids) {
       try {
-        const assignment = await hubClient.trusthub.v1
-          .trustProducts(trustProduct.sid)
-          .trustProductsChannelEndpointAssignment.create({
-            channelEndpointType: "phone-number",
-            channelEndpointSid: sid,
-          });
+        const assignment = await resourceAssignmentCreate(accountSid, authToken, registrationId, sid);
         await prisma.callerId.updateMany({
           where: { twillioSid: sid, systemSetting: { userId: adminUserId } },
           data: { cnamAssignmentSid: assignment.sid },
         });
       } catch (err: any) {
-        console.warn(`[CNAM] assign TP skip ${sid}: ${err.message}`);
+        console.warn(`[CNAM] assign resource skip ${sid}: ${err?.response?.data?.message || err.message}`);
       }
     }
 
-    // 8. Submit for vetting.
-    await hubClient.trusthub.v1
-      .trustProducts(trustProduct.sid)
-      .update({ status: "pending-review" });
+    // 4. Submit for vetting.
+    await compliancePatch(accountSid, authToken, `/Registrations/${registrationId}`, {
+      status: "PENDING_REVIEW",
+    });
 
     const credentials: CnamCredentials = {
-      customerProfileSid,
-      trustProductSid: trustProduct.sid,
-      endUserSid: endUser.sid,
+      registrationId,
       displayName,
       status: "pending-review",
       rejectionReason: null,
@@ -331,37 +365,53 @@ export async function submitOnboarding(
 
     return credentials;
   } catch (error: any) {
-    console.error("[CNAM] Onboarding failed:", error?.message);
+    const message = error?.response?.data?.message || error?.message;
+    console.error("[CNAM] Onboarding failed:", message);
     await prisma.integration.update({
       where: { systemSettingId_provider: { systemSettingId, provider: "TWILIO_CNAM" } },
-      data: { errorMessage: error?.message?.slice(0, 500) },
+      data: { errorMessage: (message || "").slice(0, 500) },
     });
-    throw error;
+    throw new Error(message || "CNAM onboarding failed.");
   }
 }
 
 /**
- * Poll Twilio for CNAM trust product status; mirror onto the integration
- * row. On approval, flip cnamRegistered on every assigned caller_id.
+ * Poll Twilio for the Compliance Registration's status; mirror onto the
+ * integration row. On approval, flip cnamRegistered on every assigned
+ * caller_id.
  */
 export async function refreshStatus(adminUserId: string): Promise<CnamCredentials> {
   const current = await getStatus(adminUserId);
-  if (current.status.startsWith("blocked-") || current.status === "not-started" || !current.trustProductSid) {
+  if (current.status.startsWith("blocked-") || current.status === "not-started" || !current.registrationId) {
     return current;
   }
 
   const ctx = await resolveTwilioContext(adminUserId);
   if (!ctx) return current;
+  const { accountSid, authToken } = ctx;
 
-  const tp = await ctx.client.trusthub.v1.trustProducts(current.trustProductSid).fetch();
-  const nextStatus = tp.status as CnamStatus;
-  // Same fix as Voice Integrity — `(tp as any).errors` isn't a thing on
-  // the fetch payload, so we were writing "null" as the rejection reason.
-  // Pull the evaluation record and summarize its failed fields.
+  let registration: any;
+  try {
+    registration = await complianceGet(accountSid, authToken, `/Registrations/${current.registrationId}`);
+  } catch (err: any) {
+    console.warn(`[CNAM] refreshStatus fetch failed for ${adminUserId}:`, err?.response?.data?.message || err.message);
+    return current;
+  }
+
+  const nextStatus = normalizeV4Status(registration.status);
+  // v4 surfaces failures on `dataErrors` rather than the old Trust Hub
+  // evaluations endpoint. Shape unconfirmed against a live rejection —
+  // fall back to a generic message if it's not an array of strings/objects.
   const rejectionReason =
     nextStatus === "twilio-rejected"
-      ? await fetchTrustProductRejectionReason(ctx.client, current.trustProductSid)
+      ? Array.isArray(registration.dataErrors) && registration.dataErrors.length
+        ? registration.dataErrors
+            .map((e: any) => (typeof e === "string" ? e : e?.message || JSON.stringify(e)))
+            .slice(0, 6)
+            .join(" | ")
+        : "Twilio rejected this CNAM registration."
       : null;
+
   const next: CnamCredentials = {
     ...current,
     status: nextStatus,
@@ -392,35 +442,18 @@ export async function refreshStatus(adminUserId: string): Promise<CnamCredential
 
 /**
  * Called on number purchase. Attaches the new number to the admin's CNAM
- * trust product if approved. Silent no-op if CNAM isn't ready yet — the
+ * registration if one exists. Silent no-op if CNAM isn't ready yet — the
  * backfill job picks it up when it is.
  */
 export async function assignNumber(adminUserId: string, twilioSid: string): Promise<void> {
   const status = await getStatus(adminUserId);
-  if (!status.trustProductSid || !status.customerProfileSid) return;
+  if (!status.registrationId) return;
 
   const ctx = await resolveTwilioContext(adminUserId);
   if (!ctx) return;
-  const hubClient = ctx.client;
 
   try {
-    await hubClient.trusthub.v1
-      .customerProfiles(status.customerProfileSid)
-      .customerProfilesChannelEndpointAssignment.create({
-        channelEndpointType: "phone-number",
-        channelEndpointSid: twilioSid,
-      })
-      .catch((err: any) => {
-        if (!/already/i.test(err.message || "")) throw err;
-      });
-
-    const assignment = await hubClient.trusthub.v1
-      .trustProducts(status.trustProductSid)
-      .trustProductsChannelEndpointAssignment.create({
-        channelEndpointType: "phone-number",
-        channelEndpointSid: twilioSid,
-      });
-
+    const assignment = await resourceAssignmentCreate(ctx.accountSid, ctx.authToken, status.registrationId, twilioSid);
     await prisma.callerId.updateMany({
       where: { twillioSid: twilioSid, systemSetting: { userId: adminUserId } },
       data: {
@@ -429,7 +462,7 @@ export async function assignNumber(adminUserId: string, twilioSid: string): Prom
       },
     });
   } catch (error: any) {
-    console.error(`[CNAM] assignNumber ${twilioSid} failed:`, error?.message);
+    console.error(`[CNAM] assignNumber ${twilioSid} failed:`, error?.response?.data?.message || error?.message);
   }
 }
 
@@ -445,17 +478,14 @@ export async function unassignNumber(adminUserId: string, twilioSid: string): Pr
   if (!cid?.cnamAssignmentSid) return;
 
   const status = await getStatus(adminUserId);
-  if (!status.trustProductSid) return;
+  if (!status.registrationId) return;
   const ctx = await resolveTwilioContext(adminUserId);
   if (!ctx) return;
 
   try {
-    await ctx.client.trusthub.v1
-      .trustProducts(status.trustProductSid)
-      .trustProductsChannelEndpointAssignment(cid.cnamAssignmentSid)
-      .remove();
+    await resourceAssignmentRemove(ctx.accountSid, ctx.authToken, status.registrationId, cid.cnamAssignmentSid);
   } catch (error: any) {
-    console.warn(`[CNAM] unassignNumber ${twilioSid}:`, error?.message);
+    console.warn(`[CNAM] unassignNumber ${twilioSid}:`, error?.response?.data?.message || error?.message);
   }
 
   await prisma.callerId.updateMany({
@@ -466,12 +496,12 @@ export async function unassignNumber(adminUserId: string, twilioSid: string): Pr
 
 /**
  * Backfill: attach every one of the admin's already-owned numbers to their
- * approved CNAM trust product. Invoked after approval or manually from
+ * approved CNAM registration. Invoked after approval or manually from
  * settings.
  */
 export async function backfillAssignments(adminUserId: string): Promise<{ attached: number; skipped: number }> {
   const status = await getStatus(adminUserId);
-  if (status.status !== "twilio-approved" || !status.trustProductSid) {
+  if (status.status !== "twilio-approved" || !status.registrationId) {
     return { attached: 0, skipped: 0 };
   }
 
