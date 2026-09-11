@@ -218,6 +218,12 @@ model User {
   trialStatus  TrialStatus @default(NONE)
   isSubscribed Boolean     @default(false)
 
+  // Set when a super-admin unticks "Start with free trial" while creating the
+  // account. Remembered on the user rather than passed per-call, because the
+  // payment-setup link can be re-sent later (sendPaymentSetupEmail) and a
+  // resend must not quietly hand back the trial the admin chose to withhold.
+  trialDisabled Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

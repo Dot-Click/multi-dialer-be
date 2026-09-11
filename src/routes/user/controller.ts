@@ -7,6 +7,7 @@ import { auth } from "../../lib/auth";
 import { generateSecurePassword } from "../../utils/password";
 import { uploadToR2 } from "../../utils/r2-uploader";
 import prisma from "../../lib/prisma";
+import { endTrialAndBillNow } from "../../services/endTrial.service";
 
 /**
  * Confirms `requester` (the authenticated caller) is allowed to modify/delete
@@ -231,4 +232,41 @@ export const uploadProfileImage = async (req: Request, res: Response): Promise<v
     } catch (error: any) {
         errorResponse(res, error?.message || "Internal server error", 500);
     }
+};
+/**
+ * POST /user/:id/end-trial
+ *
+ * Ends a trial immediately, which charges the customer NOW. One-way: turning a
+ * trial back on afterwards does not undo the charge.
+ *
+ * The "only works on accounts actually on a trial" rule is enforced in the
+ * service, not here and not in the UI — a direct call to this route must not be
+ * able to bill someone who is already paying or has cancelled.
+ */
+export const endUserTrial = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      errorResponse(res, "User id is required", 400);
+      return;
+    }
+
+    const result = await endTrialAndBillNow(id);
+
+    if (!result.ok) {
+      // 404 for a missing user; 409 for "the account is not in a state where
+      // this makes sense", which the client shows as an explanation rather
+      // than an error to retry.
+      const status = result.reason === "USER_NOT_FOUND" ? 404
+        : result.reason === "STRIPE_ERROR" ? 502
+        : 409;
+      errorResponse(res, result.message, status);
+      return;
+    }
+
+    console.log(`[User] Trial ended and billed immediately for ${result.email}.`);
+    successResponse(res, 200, "Trial ended — the customer has been billed.", result);
+  } catch (error: any) {
+    errorResponse(res, error.message || "Internal server error", 500);
+  }
 };

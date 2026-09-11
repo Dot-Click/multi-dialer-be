@@ -27,7 +27,11 @@ function throwHttp(statusCode: number, message: string): never {
 }
 
 export async function createUserInDb(payload: any) {
-    const { password, planId, companyName, ...rest } = payload;
+    const { password, planId, companyName, startWithTrial, ...rest } = payload;
+
+    // Inverted into the stored flag: the column defaults to false ("trial
+    // granted"), so existing behaviour is preserved when the field is absent.
+    rest.trialDisabled = startWithTrial === false;
 
     // Normalize the email the same way Better Auth does at sign-in (lowercased +
     // trimmed). Without this, a mixed-case email like "Nate101h@gmail.com" is
@@ -262,6 +266,14 @@ export async function createUserInDb(payload: any) {
  * sent at account creation.
  */
 async function createPaymentSetupSession(user: { id: string; email: string; fullName: string | null }, planId?: string) {
+    // Whether this account was created with the trial withheld. Read from the
+    // user rather than passed in, so a re-sent payment link honours the same
+    // decision as the original.
+    const { trialDisabled } = (await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { trialDisabled: true },
+    })) ?? { trialDisabled: false };
+
     // P0 billing finding: the previous "3. Auto-fetch the first active
     // Stripe price as last resort" step silently picked whatever product
     // Stripe's API happened to list first — which sent a user the admin
@@ -287,7 +299,9 @@ async function createPaymentSetupSession(user: { id: string; email: string; full
         customer_email: user.email,
         line_items: [{ price: resolvedPlanId, quantity: 1 }],
         mode: "subscription",
-        subscription_data: { trial_period_days: TRIAL_PERIOD_DAYS },
+        // Omitting subscription_data entirely (rather than passing 0) is what
+        // makes Stripe charge at checkout instead of starting a trial.
+        ...(trialDisabled ? {} : { subscription_data: { trial_period_days: TRIAL_PERIOD_DAYS } }),
         success_url: `${envConfig.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${envConfig.FRONTEND_URL}/signup`,
         metadata: {
@@ -484,7 +498,9 @@ export async function getAllUsersFromDb(where: any = {}) {
             userSubscriptions: {
                 orderBy: { createdAt: "desc" },
                 take: 1,
-                select: { plan: true, status: true, endDate: true, cardBrand: true, cardLast4: true },
+                // `amount` is needed by the "end trial & bill now" confirmation,
+                // which names the exact figure the customer will be charged.
+                select: { plan: true, status: true, endDate: true, amount: true, cardBrand: true, cardLast4: true },
             },
             billings: {
                 orderBy: { date: "desc" },

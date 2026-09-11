@@ -15,6 +15,10 @@ export const createUserSchema = z.object({
     // — which sent Scale ($497) checkout links to admins who explicitly
     // chose Starter ($97) in the UI. Confirmed live in production logs
     // (GA 4.0 audit).
+    // Defaults to true so nothing changes unless a super-admin deliberately
+    // unticks it. Stored as `trialDisabled` on the user (inverted) so the
+    // database default of false means "trial granted", matching today.
+    startWithTrial: z.boolean().default(true),
     planId: z.string().optional(),
     stripeAgentSeatItemId: z.string().optional(),
     agentSeatMonthlyPriceCents: z.number().optional(),
